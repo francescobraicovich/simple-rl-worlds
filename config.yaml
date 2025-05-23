@@ -1,0 +1,33 @@
+# Environment settings
+# Example: "CartPole-v1", "ALE/Pong-v5" (requires gymnasium[accept-rom-license])
+# For pixel-based environments, try "CarRacing-v2" or Atari games like "ALE/Pong-v5"
+environment_name: "CarRacing-v2" 
+
+# Data generation
+num_episodes_data_collection: 50 # Number of episodes to run for collecting data
+max_steps_per_episode_data_collection: 500 # Max steps per episode during data collection
+
+# Model Hyperparameters (examples, might need tuning)
+image_size: 64 # Image size to resize observations to (e.g., 64x64)
+patch_size: 8   # Patch size for Vision Transformer
+latent_dim: 256 # Latent dimension for encoders
+decoder_dim: 512
+num_heads: 8
+num_encoder_layers: 6
+num_decoder_layers: 6
+mlp_dim: 1024
+
+# JEPA specific
+jepa_predictor_hidden_dim: 128
+ema_decay: 0.996
+
+# VICReg hyperparameters
+vicreg_sim_coeff: 25.0
+vicreg_std_coeff: 25.0
+vicreg_cov_coeff: 1.0
+
+# Training hyperparameters
+batch_size: 32
+learning_rate: 0.0001
+num_epochs: 100
+# Add more specific learning rates if needed, e.g., lr_encoder_decoder, lr_jepa
