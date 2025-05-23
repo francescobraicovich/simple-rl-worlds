@@ -128,5 +128,3 @@ if __name__ == '__main__':
 
     total_reg_good, std_reg_good, cov_reg_good = vicreg.calculate_reg_terms(z_good_embeddings)
     print(f"Reg Terms (Good Embeddings) -> Total: {total_reg_good.item():.4f}, Std: {std_reg_good.item():.4f}, Cov: {cov_reg_good.item():.4f}")
-
-```
