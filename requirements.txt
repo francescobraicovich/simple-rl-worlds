@@ -1,4 +1,4 @@
-gymnasium[all]
+gymnasium
 torch
 numpy
 einops
