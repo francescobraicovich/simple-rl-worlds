@@ -1,7 +1,7 @@
 # Environment settings
 # Example: "CartPole-v1", "ALE/Pong-v5" (requires gymnasium[accept-rom-license])
 # For pixel-based environments, try "CarRacing-v2" or Atari games like "ALE/Pong-v5"
-environment_name: "CarRacing-v2" 
+environment_name: "CarRacing-v3" 
 
 # Data generation
 num_episodes_data_collection: 50 # Number of episodes to run for collecting data
