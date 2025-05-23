@@ -4,6 +4,7 @@ import copy # For deepcopying encoder for target network
 
 from .vit import ViT # Assuming vit.py is in the same directory
 
+
 class JEPA(nn.Module):
     def __init__(self,
                  image_size,
