@@ -1,4 +1,4 @@
-# World Models: Encoder-Decoder and JEPA with VICReg
+# RL World Models: Encoder-Decoder vs. JEPA with VICReg
 
 This project implements two world model architectures for learning from observations in Gymnasium environments:
 1.  A standard Vision Transformer (ViT) based Encoder-Decoder.
