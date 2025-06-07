@@ -16,16 +16,19 @@ class TestExperienceDatasetForRewards(unittest.TestCase):
         print("\nRunning TestExperienceDatasetForRewards.test_yields_reward_tensor...")
         # Create dummy data
         num_samples = 10
-        image_size = (3, 64, 64) # C, H, W (after transform)
+        image_size = (3, 64, 64)  # C, H, W (after transform)
 
         # ExperienceDataset expects raw states (e.g., numpy HWC) to be transformed
         # Let's create dummy raw states (numpy arrays HWC)
         raw_image_h, raw_image_w, raw_channels = 64, 64, 3
 
-        states_list = [np.random.randint(0, 256, (raw_image_h, raw_image_w, raw_channels), dtype=np.uint8) for _ in range(num_samples)]
-        actions_list = [np.random.rand(1).astype(np.float32) for _ in range(num_samples)] # Example continuous action
+        states_list = [np.random.randint(
+            0, 256, (raw_image_h, raw_image_w, raw_channels), dtype=np.uint8) for _ in range(num_samples)]
+        actions_list = [np.random.rand(1).astype(np.float32) for _ in range(
+            num_samples)]  # Example continuous action
         rewards_list = [float(np.random.rand(1)) for _ in range(num_samples)]
-        next_states_list = [np.random.randint(0, 256, (raw_image_h, raw_image_w, raw_channels), dtype=np.uint8) for _ in range(num_samples)]
+        next_states_list = [np.random.randint(
+            0, 256, (raw_image_h, raw_image_w, raw_channels), dtype=np.uint8) for _ in range(num_samples)]
 
         # Basic transform as used in data_utils
         preprocess = T.Compose([
@@ -48,25 +51,33 @@ class TestExperienceDatasetForRewards(unittest.TestCase):
         s, a, r, ns = dataset[0]
 
         # Assertions for state s
-        self.assertIsInstance(s, torch.Tensor, "State should be a torch.Tensor")
-        self.assertEqual(s.shape, image_size, f"State shape incorrect, expected {image_size}, got {s.shape}")
+        self.assertIsInstance(
+            s, torch.Tensor, "State should be a torch.Tensor")
+        self.assertEqual(
+            s.shape, image_size, f"State shape incorrect, expected {image_size}, got {s.shape}")
 
         # Assertions for action a
-        self.assertIsInstance(a, torch.Tensor, "Action should be a torch.Tensor")
+        self.assertIsInstance(
+            a, torch.Tensor, "Action should be a torch.Tensor")
         # Action dtype can vary, but data_utils casts to float32
-        self.assertEqual(a.dtype, torch.float32, "Action tensor dtype should be float32")
-
+        self.assertEqual(a.dtype, torch.float32,
+                         "Action tensor dtype should be float32")
 
         # Assertions for reward r
-        self.assertIsInstance(r, torch.Tensor, "Reward should be a torch.Tensor")
-        self.assertEqual(r.dtype, torch.float32, "Reward tensor dtype should be float32")
+        self.assertIsInstance(
+            r, torch.Tensor, "Reward should be a torch.Tensor")
+        self.assertEqual(r.dtype, torch.float32,
+                         "Reward tensor dtype should be float32")
         # In __getitem__, reward is converted to a tensor but not unsqueezed.
         # It should be a scalar tensor (0-dim). In training, it's unsqueezed to (1,) or (batch, 1).
-        self.assertEqual(r.ndim, 0, f"Reward tensor should be a scalar (0-dim), got {r.ndim}-dim, shape {r.shape}")
+        self.assertEqual(
+            r.ndim, 0, f"Reward tensor should be a scalar (0-dim), got {r.ndim}-dim, shape {r.shape}")
 
         # Assertions for next_state ns
-        self.assertIsInstance(ns, torch.Tensor, "Next state should be a torch.Tensor")
-        self.assertEqual(ns.shape, image_size, f"Next state shape incorrect, expected {image_size}, got {ns.shape}")
+        self.assertIsInstance(
+            ns, torch.Tensor, "Next state should be a torch.Tensor")
+        self.assertEqual(
+            ns.shape, image_size, f"Next state shape incorrect, expected {image_size}, got {ns.shape}")
 
         print("TestExperienceDatasetForRewards.test_yields_reward_tensor completed successfully.")
 
@@ -77,10 +88,14 @@ class TestRewardPredictorMLP(unittest.TestCase):
         batch_size = 8
 
         test_configs = [
-            {"input_dim": 128, "hidden_dims": [64, 32], "name": "Two hidden layers"},
-            {"input_dim": 256, "hidden_dims": [], "name": "No hidden layers (linear)"},
-            {"input_dim": 512, "hidden_dims": [256], "name": "One hidden layer"},
-            {"input_dim": 128, "hidden_dims": [64, 32], "use_batch_norm": True, "name": "With Batch Norm"}
+            {"input_dim": 128, "hidden_dims": [
+                64, 32], "name": "Two hidden layers"},
+            {"input_dim": 256, "hidden_dims": [],
+                "name": "No hidden layers (linear)"},
+            {"input_dim": 512, "hidden_dims": [
+                256], "name": "One hidden layer"},
+            {"input_dim": 128, "hidden_dims": [
+                64, 32], "use_batch_norm": True, "name": "With Batch Norm"}
         ]
 
         for config in test_configs:
@@ -89,10 +104,10 @@ class TestRewardPredictorMLP(unittest.TestCase):
             hidden_dims = config["hidden_dims"]
             use_bn = config.get("use_batch_norm", False)
 
-            mlp = RewardPredictorMLP(input_dim=input_dim, hidden_dims=hidden_dims, use_batch_norm=use_bn)
-            if use_bn: # Set to eval for consistent BN behavior if layers exist
-                 mlp.eval()
-
+            mlp = RewardPredictorMLP(
+                input_dim=input_dim, hidden_dims=hidden_dims, use_batch_norm=use_bn)
+            if use_bn:  # Set to eval for consistent BN behavior if layers exist
+                mlp.eval()
 
             dummy_input = torch.randn(batch_size, input_dim)
             output = mlp(dummy_input)
@@ -108,8 +123,9 @@ class TestRewardPredictorMLP(unittest.TestCase):
         input_dim_mlp = 256  # Example input dimension for the MLP
 
         # Instantiate RewardPredictorMLP
-        reward_mlp = RewardPredictorMLP(input_dim=input_dim_mlp, hidden_dims=[64, 32])
-        reward_mlp.train() # Set to train mode
+        reward_mlp = RewardPredictorMLP(
+            input_dim=input_dim_mlp, hidden_dims=[64, 32])
+        reward_mlp.train()  # Set to train mode
 
         # Create dummy input for the MLP and dummy rewards
         dummy_mlp_input = torch.randn(batch_size, input_dim_mlp)
@@ -131,7 +147,8 @@ class TestRewardPredictorMLP(unittest.TestCase):
 
         # Assert loss is a scalar tensor
         self.assertTrue(torch.is_tensor(loss), "Loss should be a tensor.")
-        self.assertEqual(loss.ndim, 0, f"Loss should be a scalar tensor (0-dim), got {loss.ndim}-dim, shape {loss.shape}")
+        self.assertEqual(
+            loss.ndim, 0, f"Loss should be a scalar tensor (0-dim), got {loss.ndim}-dim, shape {loss.shape}")
 
         loss.backward()
         optimizer.step()

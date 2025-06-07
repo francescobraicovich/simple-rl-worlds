@@ -124,3 +124,14 @@ auxiliary_loss:
       # out_dim for DINOLoss will be set programmatically from model's latent_dim in train.py
       center_ema_decay: 0.9 # Default DINOLoss center_ema_decay
       eps: 0.00001        # Default DINOLoss epsilon
+
+early_stopping:
+  patience: 10 # Number of epochs to wait for improvement before stopping
+  delta: 0.001 # Minimum change in the monitored quantity to qualify as an improvement
+  # Metric for Encoder/Decoder, e.g., "val_loss_enc_dec" or "val_accuracy_enc_dec"
+  metric_enc_dec: "val_loss_enc_dec"
+  # Metric for JEPA, e.g., "val_total_loss_jepa"
+  metric_jepa: "val_total_loss_jepa"
+  checkpoint_path_enc_dec: "best_encoder_decoder.pth"
+  checkpoint_path_jepa: "best_jepa.pth"
+  validation_split: 0.2 # Proportion of data to use for validation

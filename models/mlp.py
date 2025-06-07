@@ -2,10 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class MLPEncoder(nn.Module):
     def __init__(self,
                  input_channels,
-                 image_size, # e.g., (h, w) tuple or int if square
+                 image_size,  # e.g., (h, w) tuple or int if square
                  latent_dim,
                  num_hidden_layers=2,
                  hidden_dim=512,
@@ -29,12 +30,14 @@ class MLPEncoder(nn.Module):
         elif activation_fn_str == 'gelu':
             self.activation_fn = nn.GELU()
         else:
-            raise ValueError(f"Unsupported activation function: {activation_fn_str}")
+            raise ValueError(
+                f"Unsupported activation function: {activation_fn_str}")
 
         input_dim = input_channels * image_h * image_w
 
         if input_dim == 0:
-            raise ValueError("Input dimension for MLP is 0. Check image_size and input_channels.")
+            raise ValueError(
+                "Input dimension for MLP is 0. Check image_size and input_channels.")
 
         layers = []
         current_dim = input_dim
@@ -52,7 +55,7 @@ class MLPEncoder(nn.Module):
 
             # Output layer
             layers.append(nn.Linear(current_dim, latent_dim))
-        else: # No hidden layers, direct projection to latent_dim
+        else:  # No hidden layers, direct projection to latent_dim
             layers.append(nn.Linear(input_dim, latent_dim))
 
         self.mlp_net = nn.Sequential(*layers)
@@ -70,42 +73,47 @@ class MLPEncoder(nn.Module):
                 f"configured dimensions ({self.input_channels, self.image_h, self.image_w})."
             )
 
-        x = img.view(batch_size, -1) # Flatten
+        x = img.view(batch_size, -1)  # Flatten
 
         expected_flattened_dim = self.input_channels * self.image_h * self.image_w
         if x.shape[1] != expected_flattened_dim:
-             raise ValueError(
+            raise ValueError(
                 f"Mismatch between expected flattened dimension ({expected_flattened_dim}) and "
                 f"actual flattened dimension ({x.shape[1]}) in forward pass. "
                 "This should not happen if input image dimensions are validated."
             )
 
-        latent_representation = self.mlp_net(x) # (batch, latent_dim)
+        latent_representation = self.mlp_net(x)  # (batch, latent_dim)
         return latent_representation
+
 
 if __name__ == '__main__':
     # Example Usage:
     bs = 4
     channels = 3
     img_size = 64
-    ld = 128 # latent_dim
+    ld = 128  # latent_dim
 
     try:
-        mlp_encoder = MLPEncoder(input_channels=channels, image_size=img_size, latent_dim=ld, num_hidden_layers=2, hidden_dim=256)
+        mlp_encoder = MLPEncoder(input_channels=channels, image_size=img_size,
+                                 latent_dim=ld, num_hidden_layers=2, hidden_dim=256)
         print(f"MLP Encoder initialized: {mlp_encoder}")
         dummy_img = torch.randn(bs, channels, img_size, img_size)
         output = mlp_encoder(dummy_img)
-        print(f"Output shape: {output.shape}") # Expected: (bs, ld)
+        print(f"Output shape: {output.shape}")  # Expected: (bs, ld)
         assert output.shape == (bs, ld)
 
-        mlp_encoder_no_hidden = MLPEncoder(input_channels=channels, image_size=img_size, latent_dim=ld, num_hidden_layers=0)
-        print(f"MLP Encoder with no hidden layers initialized: {mlp_encoder_no_hidden}")
+        mlp_encoder_no_hidden = MLPEncoder(
+            input_channels=channels, image_size=img_size, latent_dim=ld, num_hidden_layers=0)
+        print(
+            f"MLP Encoder with no hidden layers initialized: {mlp_encoder_no_hidden}")
         output_no_hidden = mlp_encoder_no_hidden(dummy_img)
         print(f"Output shape with no hidden layers: {output_no_hidden.shape}")
         assert output_no_hidden.shape == (bs, ld)
 
         # Test with non-square image
-        mlp_encoder_rect = MLPEncoder(input_channels=channels, image_size=(64,32), latent_dim=ld)
+        mlp_encoder_rect = MLPEncoder(
+            input_channels=channels, image_size=(64, 32), latent_dim=ld)
         dummy_img_rect = torch.randn(bs, channels, 64, 32)
         output_rect = mlp_encoder_rect(dummy_img_rect)
         print(f"Output shape for rectangular image: {output_rect.shape}")
@@ -132,7 +140,8 @@ class RewardPredictorMLP(nn.Module):
         elif activation_fn_str == 'gelu':
             activation_fn = nn.GELU()
         else:
-            raise ValueError(f"Unsupported activation function: {activation_fn_str}")
+            raise ValueError(
+                f"Unsupported activation function: {activation_fn_str}")
 
         current_dim = input_dim
         for hidden_dim in hidden_dims:
@@ -142,13 +151,15 @@ class RewardPredictorMLP(nn.Module):
             self.layers.append(activation_fn)
             current_dim = hidden_dim
 
-        self.layers.append(nn.Linear(current_dim, 1)) # Output a single scalar reward
+        # Output a single scalar reward
+        self.layers.append(nn.Linear(current_dim, 1))
 
     def forward(self, x):
         # x: (batch_size, input_dim)
         for layer in self.layers:
             x = layer(x)
-        return x # (batch_size, 1)
+        return x  # (batch_size, 1)
+
 
 if __name__ == '__main__':
     # Example Usage for MLPEncoder (existing):
@@ -156,24 +167,28 @@ if __name__ == '__main__':
     bs = 4
     channels = 3
     img_size = 64
-    ld = 128 # latent_dim
+    ld = 128  # latent_dim
 
     try:
-        mlp_encoder = MLPEncoder(input_channels=channels, image_size=img_size, latent_dim=ld, num_hidden_layers=2, hidden_dim=256)
+        mlp_encoder = MLPEncoder(input_channels=channels, image_size=img_size,
+                                 latent_dim=ld, num_hidden_layers=2, hidden_dim=256)
         print(f"MLP Encoder initialized: {mlp_encoder}")
         dummy_img = torch.randn(bs, channels, img_size, img_size)
         output = mlp_encoder(dummy_img)
-        print(f"Output shape: {output.shape}") # Expected: (bs, ld)
+        print(f"Output shape: {output.shape}")  # Expected: (bs, ld)
         assert output.shape == (bs, ld)
 
-        mlp_encoder_no_hidden = MLPEncoder(input_channels=channels, image_size=img_size, latent_dim=ld, num_hidden_layers=0)
-        print(f"MLP Encoder with no hidden layers initialized: {mlp_encoder_no_hidden}")
+        mlp_encoder_no_hidden = MLPEncoder(
+            input_channels=channels, image_size=img_size, latent_dim=ld, num_hidden_layers=0)
+        print(
+            f"MLP Encoder with no hidden layers initialized: {mlp_encoder_no_hidden}")
         output_no_hidden = mlp_encoder_no_hidden(dummy_img)
         print(f"Output shape with no hidden layers: {output_no_hidden.shape}")
         assert output_no_hidden.shape == (bs, ld)
 
         # Test with non-square image
-        mlp_encoder_rect = MLPEncoder(input_channels=channels, image_size=(64,32), latent_dim=ld)
+        mlp_encoder_rect = MLPEncoder(
+            input_channels=channels, image_size=(64, 32), latent_dim=ld)
         dummy_img_rect = torch.randn(bs, channels, 64, 32)
         output_rect = mlp_encoder_rect(dummy_img_rect)
         print(f"Output shape for rectangular image: {output_rect.shape}")
@@ -187,49 +202,64 @@ if __name__ == '__main__':
     # Example Usage for RewardPredictorMLP:
     print("\n--- RewardPredictorMLP Examples ---")
     batch_size = 8
-    input_features = 256 # Example input feature dimension
+    input_features = 256  # Example input feature dimension
 
     # Test case 1: With hidden layers
     try:
-        reward_predictor = RewardPredictorMLP(input_dim=input_features, hidden_dims=[128, 64], activation_fn_str='relu')
+        reward_predictor = RewardPredictorMLP(input_dim=input_features, hidden_dims=[
+                                              128, 64], activation_fn_str='relu')
         print(f"\nReward Predictor initialized: {reward_predictor}")
         dummy_input = torch.randn(batch_size, input_features)
         predicted_rewards = reward_predictor(dummy_input)
-        print(f"Predicted rewards shape: {predicted_rewards.shape}") # Expected: (batch_size, 1)
+        # Expected: (batch_size, 1)
+        print(f"Predicted rewards shape: {predicted_rewards.shape}")
         assert predicted_rewards.shape == (batch_size, 1)
         print(f"Predicted rewards sample: {predicted_rewards[0].item()}")
     except Exception as e:
-        print(f"Error during RewardPredictorMLP example (with hidden layers): {e}")
+        print(
+            f"Error during RewardPredictorMLP example (with hidden layers): {e}")
 
     # Test case 2: No hidden layers (linear model)
     try:
-        reward_predictor_linear = RewardPredictorMLP(input_dim=input_features, hidden_dims=[], activation_fn_str='relu')
-        print(f"\nReward Predictor (linear) initialized: {reward_predictor_linear}")
+        reward_predictor_linear = RewardPredictorMLP(
+            input_dim=input_features, hidden_dims=[], activation_fn_str='relu')
+        print(
+            f"\nReward Predictor (linear) initialized: {reward_predictor_linear}")
         dummy_input_linear = torch.randn(batch_size, input_features)
         predicted_rewards_linear = reward_predictor_linear(dummy_input_linear)
-        print(f"Predicted rewards shape (linear): {predicted_rewards_linear.shape}") # Expected: (batch_size, 1)
+        # Expected: (batch_size, 1)
+        print(
+            f"Predicted rewards shape (linear): {predicted_rewards_linear.shape}")
         assert predicted_rewards_linear.shape == (batch_size, 1)
-        print(f"Predicted rewards sample (linear): {predicted_rewards_linear[0].item()}")
+        print(
+            f"Predicted rewards sample (linear): {predicted_rewards_linear[0].item()}")
     except Exception as e:
         print(f"Error during RewardPredictorMLP example (linear): {e}")
 
     # Test case 3: With Batch Norm
     try:
-        reward_predictor_bn = RewardPredictorMLP(input_dim=input_features, hidden_dims=[128, 64], use_batch_norm=True, activation_fn_str='gelu')
-        print(f"\nReward Predictor (with BatchNorm) initialized: {reward_predictor_bn}")
+        reward_predictor_bn = RewardPredictorMLP(input_dim=input_features, hidden_dims=[
+                                                 128, 64], use_batch_norm=True, activation_fn_str='gelu')
+        print(
+            f"\nReward Predictor (with BatchNorm) initialized: {reward_predictor_bn}")
         dummy_input_bn = torch.randn(batch_size, input_features)
         # Set to eval mode if you want BatchNorm to use running stats, or train mode to update them
         # For a simple forward pass test, either is fine, but behavior differs during actual training.
-        reward_predictor_bn.eval() # Use running mean/var
+        reward_predictor_bn.eval()  # Use running mean/var
         predicted_rewards_bn = reward_predictor_bn(dummy_input_bn)
-        print(f"Predicted rewards shape (BatchNorm): {predicted_rewards_bn.shape}") # Expected: (batch_size, 1)
+        # Expected: (batch_size, 1)
+        print(
+            f"Predicted rewards shape (BatchNorm): {predicted_rewards_bn.shape}")
         assert predicted_rewards_bn.shape == (batch_size, 1)
-        print(f"Predicted rewards sample (BatchNorm): {predicted_rewards_bn[0].item()}")
+        print(
+            f"Predicted rewards sample (BatchNorm): {predicted_rewards_bn[0].item()}")
 
         # Test in training mode as well
         reward_predictor_bn.train()
-        predicted_rewards_bn_train = reward_predictor_bn(dummy_input_bn) # BN will use batch stats
-        print(f"Predicted rewards shape (BatchNorm, train mode): {predicted_rewards_bn_train.shape}")
+        predicted_rewards_bn_train = reward_predictor_bn(
+            dummy_input_bn)  # BN will use batch stats
+        print(
+            f"Predicted rewards shape (BatchNorm, train mode): {predicted_rewards_bn_train.shape}")
         assert predicted_rewards_bn_train.shape == (batch_size, 1)
 
     except Exception as e:

@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class BarlowTwinsLoss(nn.Module):
     """
     Barlow Twins Loss implementation.
@@ -18,6 +19,7 @@ class BarlowTwinsLoss(nn.Module):
         scale_loss (float): Scaling factor for the total loss. Not in original paper, but can be useful.
                             Defaults to 1.0.
     """
+
     def __init__(self, lambda_param=5e-3, eps=1e-5, scale_loss=1.0):
         super().__init__()
         self.lambda_param = lambda_param
@@ -55,8 +57,10 @@ class BarlowTwinsLoss(nn.Module):
 
         # 1. Normalize along the batch dimension (batchnorm-like)
         # Each feature dimension should have mean 0 and std 1 over the batch.
-        z1_norm = (z1 - z1.mean(dim=0, keepdim=True)) / (z1.std(dim=0, keepdim=True) + self.eps)
-        z2_norm = (z2 - z2.mean(dim=0, keepdim=True)) / (z2.std(dim=0, keepdim=True) + self.eps)
+        z1_norm = (z1 - z1.mean(dim=0, keepdim=True)) / \
+            (z1.std(dim=0, keepdim=True) + self.eps)
+        z2_norm = (z2 - z2.mean(dim=0, keepdim=True)) / \
+            (z2.std(dim=0, keepdim=True) + self.eps)
 
         # 2. Calculate the cross-correlation matrix
         # c_ij = sum_k (z_norm_1_ki * z_norm_2_kj) / batch_size
@@ -93,7 +97,8 @@ class BarlowTwinsLoss(nn.Module):
         assert z.ndim == 2, "Input tensor must be 2D (batch_size, feature_dim)."
         batch_size, feature_dim = z.shape
 
-        z_norm = (z - z.mean(dim=0, keepdim=True)) / (z.std(dim=0, keepdim=True) + self.eps)
+        z_norm = (z - z.mean(dim=0, keepdim=True)) / \
+            (z.std(dim=0, keepdim=True) + self.eps)
 
         # Auto-correlation matrix
         auto_corr_matrix = (z_norm.T @ z_norm) / batch_size
@@ -105,7 +110,8 @@ class BarlowTwinsLoss(nn.Module):
         redundancy_loss = (off_diag**2).sum()
 
         weighted_redundancy_loss = self.lambda_param * redundancy_loss
-        total_loss = (invariance_loss + weighted_redundancy_loss) * self.scale_loss
+        total_loss = (invariance_loss +
+                      weighted_redundancy_loss) * self.scale_loss
 
         # For compatibility with VICRegLoss output structure (total, term1, term2)
         # Here, term1 is invariance, term2 is weighted redundancy
@@ -115,15 +121,16 @@ class BarlowTwinsLoss(nn.Module):
 if __name__ == '__main__':
     # Example Usage
     batch_size, embed_dim = 128, 256
-    lambda_param = 5e-3 # Default from paper
+    lambda_param = 5e-3  # Default from paper
     loss_fn = BarlowTwinsLoss(lambda_param=lambda_param)
 
     # Test with a single input z (for JEPA regularization style)
-    z_embeddings = torch.randn(batch_size, embed_dim) * 5 # Some scale
-    z_embeddings[:, :embed_dim//2] += 2 # Some mean shift
+    z_embeddings = torch.randn(batch_size, embed_dim) * 5  # Some scale
+    z_embeddings[:, :embed_dim//2] += 2  # Some mean shift
 
     # Using calculate_reg_terms
-    total_loss_reg, inv_loss_reg, red_loss_reg = loss_fn.calculate_reg_terms(z_embeddings)
+    total_loss_reg, inv_loss_reg, red_loss_reg = loss_fn.calculate_reg_terms(
+        z_embeddings)
     print(f"Barlow Twins (Reg Terms for JEPA style on z1 only):")
     print(f"  Total Loss: {total_loss_reg.item():.4f}")
     print(f"  Invariance Loss (scaled): {inv_loss_reg.item():.4f}")
@@ -131,7 +138,7 @@ if __name__ == '__main__':
 
     # Test with two inputs z1, z2 (original Barlow Twins style)
     z1 = torch.randn(batch_size, embed_dim)
-    z2 = z1 + 0.1 * torch.randn_like(z1) # z2 is a slightly perturbed z1
+    z2 = z1 + 0.1 * torch.randn_like(z1)  # z2 is a slightly perturbed z1
 
     total_loss_two_inputs = loss_fn(z1, z2)
     print(f"\nBarlow Twins (Two inputs z1, z2):")
@@ -145,7 +152,8 @@ if __name__ == '__main__':
     # Ideal case: z_norm leads to identity correlation matrix
     # For calculate_reg_terms
     ideal_z = torch.randn(batch_size, embed_dim)
-    ideal_z_norm = (ideal_z - ideal_z.mean(dim=0, keepdim=True)) / (ideal_z.std(dim=0, keepdim=True) + 1e-5)
+    ideal_z_norm = (ideal_z - ideal_z.mean(dim=0, keepdim=True)
+                    ) / (ideal_z.std(dim=0, keepdim=True) + 1e-5)
 
     # If we make ideal_z_norm orthogonal, its auto-correlation will be diagonal.
     # For simplicity, let's test the components.
@@ -158,10 +166,12 @@ if __name__ == '__main__':
     # More practically, let's test the normalization and calculation:
     # Create z where z_norm becomes easily predictable.
     # E.g., if all columns are identical after normalization, correlation matrix is all 1s.
-    z_all_ones_norm = torch.ones(batch_size, embed_dim) # Already mean-centered (mean=1), std=0. Normalization will handle this.
-                                                        # Actually, std=0 will lead to NaN. Let's use randn.
+    # Already mean-centered (mean=1), std=0. Normalization will handle this.
+    z_all_ones_norm = torch.ones(batch_size, embed_dim)
+    # Actually, std=0 will lead to NaN. Let's use randn.
     z_test_norm = torch.randn(batch_size, embed_dim)
-    z_test_norm = (z_test_norm - z_test_norm.mean(dim=0, keepdim=True)) / (z_test_norm.std(dim=0, keepdim=True) + 1e-5)
+    z_test_norm = (z_test_norm - z_test_norm.mean(dim=0, keepdim=True)
+                   ) / (z_test_norm.std(dim=0, keepdim=True) + 1e-5)
 
     # If z_norm's columns are orthogonal, then z_norm.T @ z_norm is diagonal.
     # If z_norm's columns are orthonormal, then z_norm.T @ z_norm is identity (if N=D and z_norm is square orthogonal matrix).
@@ -174,44 +184,53 @@ if __name__ == '__main__':
     print(f"\nTesting with input that should give low loss:")
     # Create a z that is already normalized (features have mean 0, std 1)
     z_pre_normalized = torch.randn(batch_size, embed_dim)
-    z_pre_normalized = (z_pre_normalized - z_pre_normalized.mean(dim=0, keepdim=True)) / (z_pre_normalized.std(dim=0, keepdim=True) + 1e-5)
+    z_pre_normalized = (z_pre_normalized - z_pre_normalized.mean(dim=0,
+                        keepdim=True)) / (z_pre_normalized.std(dim=0, keepdim=True) + 1e-5)
 
     # To make off-diagonal 0, features should be uncorrelated.
     # Using PCA and then whitening could achieve this for a given dataset.
     # For a random matrix, it's unlikely to be perfectly uncorrelated.
     # However, if input is already normalized, the first step in forward() does it again, but it's idempotent.
 
-    loss_val_prenorm, inv_prenorm, red_prenorm = loss_fn.calculate_reg_terms(z_pre_normalized)
+    loss_val_prenorm, inv_prenorm, red_prenorm = loss_fn.calculate_reg_terms(
+        z_pre_normalized)
     print(f"  Loss with pre-normalized input (should be relatively low):")
-    print(f"    Total: {loss_val_prenorm.item():.4f}, Inv: {inv_prenorm.item():.4f}, Red: {red_prenorm.item():.4f}")
+    print(
+        f"    Total: {loss_val_prenorm.item():.4f}, Inv: {inv_prenorm.item():.4f}, Red: {red_prenorm.item():.4f}")
 
     # What if z is such that z_norm.T @ z_norm / N is identity?
     # Example: if embed_dim = batch_size, and z_norm is an orthogonal matrix scaled by sqrt(batch_size)
     if batch_size == embed_dim:
-        q, _ = torch.linalg.qr(torch.randn(batch_size, batch_size)) # q is orthogonal
-        z_orthogonal_norm = q * (batch_size**0.5) # This makes z_norm.T @ z_norm / batch_size = I
+        q, _ = torch.linalg.qr(torch.randn(
+            batch_size, batch_size))  # q is orthogonal
+        # This makes z_norm.T @ z_norm / batch_size = I
+        z_orthogonal_norm = q * (batch_size**0.5)
 
         # We need to construct z such that its normalization becomes z_orthogonal_norm
         # This is tricky. Let's just test the core math with an identity correlation matrix.
         identity_corr = torch.eye(embed_dim, device=z_embeddings.device)
         on_diag_ideal = torch.diagonal(identity_corr)
-        inv_loss_ideal = ((on_diag_ideal - 1)**2).sum() # Should be 0
+        inv_loss_ideal = ((on_diag_ideal - 1)**2).sum()  # Should be 0
 
         off_diag_ideal = loss_fn._off_diagonal(identity_corr)
-        red_loss_ideal = (off_diag_ideal**2).sum() # Should be 0
+        red_loss_ideal = (off_diag_ideal**2).sum()  # Should be 0
 
         print(f"\nIdeal component losses (if correlation matrix is Identity):")
         print(f"  Ideal Invariance Loss: {inv_loss_ideal.item()}")
         print(f"  Ideal Redundancy Loss: {red_loss_ideal.item()}")
-        print(f"  Total Ideal (unscaled by lambda): {inv_loss_ideal.item() + red_loss_ideal.item()}")
+        print(
+            f"  Total Ideal (unscaled by lambda): {inv_loss_ideal.item() + red_loss_ideal.item()}")
 
     # Test the _off_diagonal helper
-    test_matrix = torch.tensor([[1,2,3],[4,5,6],[7,8,9]], dtype=torch.float32)
+    test_matrix = torch.tensor(
+        [[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=torch.float32)
     off_diag_elements = loss_fn._off_diagonal(test_matrix)
-    expected_off_diag = torch.tensor([2,3,4,6,7,8], dtype=torch.float32) # Corrected expected
+    expected_off_diag = torch.tensor(
+        [2, 3, 4, 6, 7, 8], dtype=torch.float32)  # Corrected expected
     # flatten()[:-1] -> 1,2,3,4,5,6,7,8
     # view(2, 4) -> [[1,2,3,4],[5,6,7,8]]
     # [:, 1:] -> [[2,3,4],[6,7,8]]
     # flatten() -> [2,3,4,6,7,8] -> Correct!
-    assert torch.allclose(off_diag_elements, expected_off_diag), f"Off-diagonal failed. Got {off_diag_elements}, expected {expected_off_diag}"
+    assert torch.allclose(
+        off_diag_elements, expected_off_diag), f"Off-diagonal failed. Got {off_diag_elements}, expected {expected_off_diag}"
     print("\n_off_diagonal helper test passed.")

@@ -1,4 +1,5 @@
 import yaml
+import os  # For path joining
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -33,7 +34,8 @@ def get_env_details(env_name):
         action_type = 'continuous'
     else:
         temp_env.close()
-        raise ValueError(f"Unsupported action space type: {type(action_space)}")
+        raise ValueError(
+            f"Unsupported action space type: {type(action_space)}")
 
     temp_env.close()
     print(f"Environment: {env_name}")
@@ -47,7 +49,8 @@ def main():
 
     # Load Reward Predictor Configurations
     reward_pred_config = config.get('reward_predictors', {})
-    enc_dec_mlp_config = reward_pred_config.get('encoder_decoder_reward_mlp', {})
+    enc_dec_mlp_config = reward_pred_config.get(
+        'encoder_decoder_reward_mlp', {})
     jepa_mlp_config = reward_pred_config.get('jepa_reward_mlp', {})
 
     device = torch.device(
@@ -58,6 +61,22 @@ def main():
 
     action_dim, action_type, _ = get_env_details(config['environment_name'])
 
+    # Early Stopping Configuration
+    early_stopping_config = config.get('early_stopping', {})
+    patience = early_stopping_config.get('patience', 10)
+    delta = early_stopping_config.get('delta', 0.001)
+    # metric_enc_dec = early_stopping_config.get('metric_enc_dec', 'val_loss_enc_dec') # Using direct val_loss_std
+    # metric_jepa = early_stopping_config.get('metric_jepa', 'val_total_loss_jepa') # Using direct avg_total_val_loss_jepa
+    checkpoint_path_enc_dec = early_stopping_config.get(
+        'checkpoint_path_enc_dec', 'best_encoder_decoder.pth')
+    checkpoint_path_jepa = early_stopping_config.get(
+        'checkpoint_path_jepa', 'best_jepa.pth')
+    validation_split = early_stopping_config.get('validation_split', 0.2)
+    print(
+        f"Early stopping configuration: patience={patience}, delta={delta}, validation_split={validation_split}")
+    print(
+        f"  Enc/Dec checkpoint: {checkpoint_path_enc_dec}, JEPA checkpoint: {checkpoint_path_jepa}")
+
     input_channels = config.get('input_channels', 3)
     image_h_w = config['image_size']
 
@@ -65,7 +84,8 @@ def main():
     encoder_type = config.get('encoder_type', 'vit')
     all_encoder_params_from_config = config.get('encoder_params', {})
     # Select the sub-dictionary for the chosen encoder_type, ensuring it's a dict
-    specific_encoder_params = all_encoder_params_from_config.get(encoder_type, {})
+    specific_encoder_params = all_encoder_params_from_config.get(
+        encoder_type, {})
     # Handles case where key exists but value is null
     if specific_encoder_params is None:
         specific_encoder_params = {}
@@ -104,21 +124,29 @@ def main():
             vit_params_config.get('emb_dropout', 0.0)
         )
 
-
     print("Starting data collection...")
     key_max_steps = 'max_steps_per_episode_data_collection'
-    dataset = collect_random_episodes(
+    # Pass image_size as a tuple directly as expected by the modified function
+    img_size_tuple = (image_h_w, image_h_w)
+    train_dataset, val_dataset = collect_random_episodes(
         env_name=config['environment_name'],
         num_episodes=config.get('num_episodes_data_collection', 50),
         max_steps_per_episode=config.get(key_max_steps, 200),
-        image_size=(image_h_w, image_h_w)
+        image_size=img_size_tuple,  # Pass the tuple here
+        validation_split_ratio=validation_split
     )
 
-    if len(dataset) == 0:
-        print("No data collected. Exiting.")
+    if len(train_dataset) == 0:
+        print("No training data collected. Exiting.")
         return
 
-    dataloader = DataLoader(dataset, batch_size=config.get('batch_size', 32), shuffle=True, num_workers=config.get('num_workers', 4), pin_memory=True)
+    if validation_split > 0 and len(val_dataset) == 0:
+        print("Warning: Validation split is > 0 but no validation data was collected. Check dataset size and split ratio.")
+
+    train_dataloader = DataLoader(train_dataset, batch_size=config.get(
+        'batch_size', 32), shuffle=True, num_workers=config.get('num_workers', 4), pin_memory=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=config.get(
+        'batch_size', 32), shuffle=False, num_workers=config.get('num_workers', 4), pin_memory=True)
 
     print(
         f"Initializing Standard Encoder-Decoder Model with "
@@ -247,7 +275,8 @@ def main():
         else:
             # Defaulting to latent_dim if not flatten, or could raise error
             # For now, let's assume "flatten" is the primary supported mode from config for enc-dec
-            print(f"Warning: encoder_decoder_reward_mlp input_type is '{enc_dec_mlp_config.get('input_type')}'. Defaulting to flattened image dim.")
+            print(
+                f"Warning: encoder_decoder_reward_mlp input_type is '{enc_dec_mlp_config.get('input_type')}'. Defaulting to flattened image dim.")
             input_dim_enc_dec = input_channels * image_h_w * image_h_w
 
         reward_mlp_enc_dec = RewardPredictorMLP(
@@ -266,7 +295,8 @@ def main():
     optimizer_reward_mlp_jepa = None
     if jepa_mlp_config.get('enabled', False):
         print("Initializing Reward MLP for JEPA...")
-        input_dim_jepa = config.get('latent_dim', 128) # JEPA's reward MLP uses encoder's latent output
+        # JEPA's reward MLP uses encoder's latent output
+        input_dim_jepa = config.get('latent_dim', 128)
         reward_mlp_jepa = RewardPredictorMLP(
             input_dim=input_dim_jepa,
             hidden_dims=jepa_mlp_config.get('hidden_dims', [128, 64]),
@@ -279,199 +309,343 @@ def main():
         )
         print(f"JEPA Reward MLP: {reward_mlp_jepa}")
 
-
     print(f"Starting training for {config.get('num_epochs', 10)} epochs...")
+
+    # Early Stopping Trackers
+    best_val_loss_enc_dec = float('inf')
+    epochs_no_improve_enc_dec = 0
+    best_val_loss_jepa = float('inf')
+    epochs_no_improve_jepa = 0
+    early_stop_enc_dec = False
+    early_stop_jepa = False
+    # checkpoint_path_enc_dec and checkpoint_path_jepa are already loaded from config
+
     for epoch in range(config.get('num_epochs', 10)):
         epoch_loss_std = 0
         epoch_loss_jepa_pred = 0
         epoch_loss_jepa_aux = 0
+        epoch_loss_jepa_aux = 0
         epoch_loss_reward_enc_dec = 0
         epoch_loss_reward_jepa = 0
 
-        num_batches = len(dataloader)
-        if num_batches == 0:
-            print(f"Epoch {epoch+1} has no data. Skipping.")
+        num_train_batches = len(train_dataloader)
+        if num_train_batches == 0:
+            print(f"Epoch {epoch+1} has no training data. Skipping.")
             continue
 
         # Main model training loop
-        std_enc_dec.train() # Ensure main models are in train mode
+        std_enc_dec.train()
         jepa_model.train()
-        for batch_idx, (s_t, a_t, r_t, s_t_plus_1) in enumerate(dataloader):
-            s_t, r_t, s_t_plus_1 = s_t.to(device), r_t.to(device).float().unsqueeze(1), s_t_plus_1.to(device)
+        if hasattr(aux_loss_fn, 'train'):  # Set DINO loss to train mode
+            aux_loss_fn.train()
 
-            # Process actions
-            if action_type == 'discrete':
-                if a_t.ndim == 1: a_t = a_t.unsqueeze(1) # Ensure (batch, 1)
-                # Original a_t for reward MLP might be needed if it's not one-hotted for it
-                a_t_processed = F.one_hot(a_t.long().view(-1), num_classes=action_dim).float().to(device)
-            else: # Continuous
-                a_t_processed = a_t.float().to(device)
+        # === Training Phase ===
+        if not early_stop_enc_dec or not early_stop_jepa:  # Only loop if at least one model is training
+            for batch_idx, (s_t, a_t, r_t, s_t_plus_1) in enumerate(train_dataloader):
+                s_t, r_t, s_t_plus_1 = s_t.to(device), r_t.to(
+                    device).float().unsqueeze(1), s_t_plus_1.to(device)
 
+                # Process actions
+                if action_type == 'discrete':
+                    if a_t.ndim == 1:
+                        a_t = a_t.unsqueeze(1)
+                    a_t_processed = F.one_hot(
+                        a_t.long().view(-1), num_classes=action_dim).float().to(device)
+                else:
+                    a_t_processed = a_t.float().to(device)
 
-            # Standard Encoder-Decoder Training
-            optimizer_std_enc_dec.zero_grad()
-            predicted_s_t_plus_1 = std_enc_dec(s_t, a_t_processed)
-            loss_std = mse_loss_fn(predicted_s_t_plus_1, s_t_plus_1)
-            loss_std.backward()
-            optimizer_std_enc_dec.step()
-            epoch_loss_std += loss_std.item()
+                # Standard Encoder-Decoder Training
+                if not early_stop_enc_dec:
+                    optimizer_std_enc_dec.zero_grad()
+                    predicted_s_t_plus_1 = std_enc_dec(s_t, a_t_processed)
+                    loss_std = mse_loss_fn(predicted_s_t_plus_1, s_t_plus_1)
+                    loss_std.backward()
+                    optimizer_std_enc_dec.step()
+                    epoch_loss_std += loss_std.item()
 
-            # JEPA Training
-            optimizer_jepa.zero_grad()
-            pred_emb, target_emb_detached, online_s_t_emb, online_s_t_plus_1_emb = jepa_model(s_t, a_t_processed, s_t_plus_1)
+                # JEPA Training
+                if not early_stop_jepa:
+                    optimizer_jepa.zero_grad()
+                    pred_emb, target_emb_detached, online_s_t_emb, online_s_t_plus_1_emb = jepa_model(
+                        s_t, a_t_processed, s_t_plus_1)
+                    loss_jepa_pred = mse_loss_fn(pred_emb, target_emb_detached)
 
-            loss_jepa_pred = mse_loss_fn(pred_emb, target_emb_detached)
+                    current_loss_jepa_aux = torch.tensor(0.0, device=device)
+                    if aux_loss_fn is not None and aux_loss_weight > 0:
+                        aux_term_s_t, _, _ = aux_loss_fn.calculate_reg_terms(
+                            online_s_t_emb)
+                        aux_term_s_t_plus_1, _, _ = aux_loss_fn.calculate_reg_terms(
+                            online_s_t_plus_1_emb)
+                        current_loss_jepa_aux = (
+                            aux_term_s_t + aux_term_s_t_plus_1) * 0.5
 
-            if aux_loss_fn is not None and aux_loss_weight > 0:
-                # Set aux_loss_fn to train mode if it has state (e.g. DINO's center)
-                if hasattr(aux_loss_fn, 'train'):
-                    aux_loss_fn.train()
-                aux_term_s_t, _, _ = aux_loss_fn.calculate_reg_terms(
-                    online_s_t_emb
-                )
-                aux_term_s_t_plus_1, _, _ = aux_loss_fn.calculate_reg_terms(
-                    online_s_t_plus_1_emb
-                )
-                current_loss_jepa_aux = (
-                    aux_term_s_t + aux_term_s_t_plus_1
-                ) * 0.5
-            else:
-                current_loss_jepa_aux = torch.tensor(0.0, device=device)
+                    total_loss_jepa = loss_jepa_pred + current_loss_jepa_aux * aux_loss_weight
+                    total_loss_jepa.backward()
+                    optimizer_jepa.step()
+                    jepa_model.update_target_network()
+                    epoch_loss_jepa_pred += loss_jepa_pred.item()
+                    epoch_loss_jepa_aux += current_loss_jepa_aux.item()
 
-            total_loss_jepa = loss_jepa_pred + current_loss_jepa_aux * aux_loss_weight
-            total_loss_jepa.backward()
-            optimizer_jepa.step()
+                if (batch_idx + 1) % config.get('log_interval', 50) == 0:
+                    log_msg = f"  Epoch {epoch+1}, Batch {batch_idx+1}/{num_train_batches}:"
+                    if not early_stop_enc_dec:
+                        log_msg += f" StdEncDec L: {loss_std.item():.4f} |"
+                    if not early_stop_jepa:
+                        weighted_aux_loss_str = f"{(current_loss_jepa_aux.item() * aux_loss_weight):.4f}" if aux_loss_fn else "N/A"
+                        log_msg += (f" JEPA Pred L: {loss_jepa_pred.item():.4f},"
+                                    f" {aux_loss_name} AuxRawL: {current_loss_jepa_aux.item():.4f} (W: {weighted_aux_loss_str}),"
+                                    f" Total JEPA L: {total_loss_jepa.item():.4f}")
+                    print(log_msg)
 
-            jepa_model.update_target_network()
-
-            epoch_loss_jepa_pred += loss_jepa_pred.item()
-            epoch_loss_jepa_aux += current_loss_jepa_aux.item()
-
-            if (batch_idx + 1) % config.get('log_interval', 50) == 0:
-                weighted_formatted_aux_loss = (
-                    f"{(current_loss_jepa_aux * aux_loss_weight):.4f}"
-                )
-                log_parts = [
-                    f"  Epoch {epoch+1}, Batch {batch_idx+1}/{num_batches}:",
-                    f"StdEncDec L: {loss_std.item():.4f} |",  # Shorter key
-                    f"JEPA Pred L: {loss_jepa_pred.item():.4f},",  # Shorter key
-                    f"{aux_loss_name} AuxRawL: {current_loss_jepa_aux.item():.4f}",  # Shorter key
-                    f"(Weighted: {weighted_formatted_aux_loss}),",
-                    f"Total JEPA L: {total_loss_jepa.item():.4f}"  # Shorter key
-                ]
-                print(" ".join(log_parts))
-
-        # --- Reward MLP Training Loop ---
-        if (reward_mlp_enc_dec and enc_dec_mlp_config.get('enabled', False)) or \
-           (reward_mlp_jepa and jepa_mlp_config.get('enabled', False)):
-            print(f"Epoch {epoch+1} - Starting Reward MLP Training...")
-            num_batches_reward_train = 0
-
-            # Set main models to eval mode for generating inputs to reward MLPs
+        # === Validation Phase ===
+        if validation_split > 0 and len(val_dataloader) > 0:
             std_enc_dec.eval()
             jepa_model.eval()
+            if hasattr(aux_loss_fn, 'eval'):  # Set DINO loss to eval mode
+                aux_loss_fn.eval()
 
-            for reward_batch_idx, (s_t_reward, a_t_reward, r_t_reward, s_t_plus_1_reward) in enumerate(dataloader):
+            epoch_val_loss_std = 0
+            epoch_val_loss_jepa_pred = 0
+            epoch_val_loss_jepa_aux = 0
+
+            with torch.no_grad():
+                for s_t_val, a_t_val, r_t_val, s_t_plus_1_val in val_dataloader:
+                    s_t_val, s_t_plus_1_val = s_t_val.to(
+                        device), s_t_plus_1_val.to(device)
+                    if action_type == 'discrete':
+                        if a_t_val.ndim == 1:
+                            a_t_val = a_t_val.unsqueeze(1)
+                        a_t_val_processed = F.one_hot(
+                            a_t_val.long().view(-1), num_classes=action_dim).float().to(device)
+                    else:
+                        a_t_val_processed = a_t_val.float().to(device)
+
+                    # Encoder/Decoder Validation
+                    if not early_stop_enc_dec:
+                        predicted_s_t_plus_1_val = std_enc_dec(
+                            s_t_val, a_t_val_processed)
+                        val_loss_std = mse_loss_fn(
+                            predicted_s_t_plus_1_val, s_t_plus_1_val)
+                        epoch_val_loss_std += val_loss_std.item()
+
+                    # JEPA Validation
+                    if not early_stop_jepa:
+                        pred_emb_val, target_emb_detached_val, online_s_t_emb_val, online_s_t_plus_1_emb_val = jepa_model(
+                            s_t_val, a_t_val_processed, s_t_plus_1_val)
+                        val_loss_jepa_pred = mse_loss_fn(
+                            pred_emb_val, target_emb_detached_val)
+
+                        current_val_loss_jepa_aux = torch.tensor(
+                            0.0, device=device)
+                        if aux_loss_fn is not None and aux_loss_weight > 0:
+                            aux_term_s_t_val, _, _ = aux_loss_fn.calculate_reg_terms(
+                                online_s_t_emb_val)
+                            aux_term_s_t_plus_1_val, _, _ = aux_loss_fn.calculate_reg_terms(
+                                online_s_t_plus_1_emb_val)
+                            current_val_loss_jepa_aux = (
+                                aux_term_s_t_val + aux_term_s_t_plus_1_val) * 0.5
+                        epoch_val_loss_jepa_pred += val_loss_jepa_pred.item()
+                        epoch_val_loss_jepa_aux += current_val_loss_jepa_aux.item()
+
+            num_val_batches = len(val_dataloader)
+            avg_val_loss_std = epoch_val_loss_std / \
+                num_val_batches if num_val_batches > 0 else float('inf')
+            avg_val_loss_jepa_pred = epoch_val_loss_jepa_pred / \
+                num_val_batches if num_val_batches > 0 else float('inf')
+            avg_val_loss_jepa_aux_raw = epoch_val_loss_jepa_aux / \
+                num_val_batches if num_val_batches > 0 else float('inf')
+            avg_total_val_loss_jepa = avg_val_loss_jepa_pred + \
+                avg_val_loss_jepa_aux_raw * aux_loss_weight
+
+            print(f"--- Epoch {epoch+1} Validation Summary ---")
+            if not early_stop_enc_dec:
+                print(f"  Avg Val StdEncDec L: {avg_val_loss_std:.4f}")
+            if not early_stop_jepa:
+                print(
+                    f"  Avg Val JEPA Pred L: {avg_val_loss_jepa_pred:.4f}, {aux_loss_name} AuxRawL: {avg_val_loss_jepa_aux_raw:.4f}, Total Val JEPA L: {avg_total_val_loss_jepa:.4f}")
+
+            # Early Stopping Checks
+            if not early_stop_enc_dec:
+                if avg_val_loss_std < best_val_loss_enc_dec - delta:
+                    best_val_loss_enc_dec = avg_val_loss_std
+                    torch.save(std_enc_dec.state_dict(),
+                               checkpoint_path_enc_dec)
+                    epochs_no_improve_enc_dec = 0
+                    print(
+                        f"  Encoder/Decoder: Val loss improved. Saved model to {checkpoint_path_enc_dec}")
+                else:
+                    epochs_no_improve_enc_dec += 1
+                    print(
+                        f"  Encoder/Decoder: No val improvement for {epochs_no_improve_enc_dec} epochs.")
+                    if epochs_no_improve_enc_dec >= patience:
+                        early_stop_enc_dec = True
+                        print("  Encoder/Decoder: Early stopping triggered.")
+
+            if not early_stop_jepa:
+                if avg_total_val_loss_jepa < best_val_loss_jepa - delta:
+                    best_val_loss_jepa = avg_total_val_loss_jepa
+                    torch.save(jepa_model.state_dict(), checkpoint_path_jepa)
+                    epochs_no_improve_jepa = 0
+                    print(
+                        f"  JEPA: Val loss improved. Saved model to {checkpoint_path_jepa}")
+                else:
+                    epochs_no_improve_jepa += 1
+                    print(
+                        f"  JEPA: No val improvement for {epochs_no_improve_jepa} epochs.")
+                    if epochs_no_improve_jepa >= patience:
+                        early_stop_jepa = True
+                        print("  JEPA: Early stopping triggered.")
+
+        # --- Reward MLP Training Loop ---
+        # This section needs to use train_dataloader and be conditional on models not being stopped
+        num_batches_reward_train = 0  # Reset for each epoch
+        if (reward_mlp_enc_dec and enc_dec_mlp_config.get('enabled', False) and not early_stop_enc_dec) or \
+           (reward_mlp_jepa and jepa_mlp_config.get('enabled', False) and not early_stop_jepa):
+            print(f"Epoch {epoch+1} - Starting Reward MLP Training...")
+
+            std_enc_dec.eval()  # Models providing inputs should be in eval mode
+            jepa_model.eval()
+            if reward_mlp_enc_dec:
+                reward_mlp_enc_dec.train()  # The MLP being trained is in train mode
+            if reward_mlp_jepa:
+                reward_mlp_jepa.train()
+
+            # Use train_dataloader
+            for reward_batch_idx, (s_t_reward, a_t_reward, r_t_reward, s_t_plus_1_reward) in enumerate(train_dataloader):
                 s_t_reward = s_t_reward.to(device)
-                a_t_reward_original = a_t_reward # Keep original for potential non-one-hot use if needed
+                # a_t_reward_original = a_t_reward # Keep original for potential non-one-hot use if needed
                 r_t_reward = r_t_reward.to(device).float().unsqueeze(1)
+                # Not strictly needed for all reward MLPs but good for consistency
                 s_t_plus_1_reward = s_t_plus_1_reward.to(device)
 
-                # Process actions for reward MLP input generation (consistent with main loop)
+                # Process actions for reward MLP input generation
                 if action_type == 'discrete':
-                    if a_t_reward.ndim == 1: a_t_reward = a_t_reward.unsqueeze(1)
-                    a_t_reward_processed = F.one_hot(a_t_reward.long().view(-1), num_classes=action_dim).float().to(device)
-                else: # Continuous
+                    if a_t_reward.ndim == 1:
+                        a_t_reward = a_t_reward.unsqueeze(1)
+                    a_t_reward_processed = F.one_hot(
+                        a_t_reward.long().view(-1), num_classes=action_dim).float().to(device)
+                else:
                     a_t_reward_processed = a_t_reward.float().to(device)
 
-                num_batches_reward_train += 1
+                num_batches_reward_train += 1  # Increment for averaging reward losses correctly
 
                 # Encoder/Decoder Reward MLP Training
-                if reward_mlp_enc_dec and enc_dec_mlp_config.get('enabled', False):
+                if reward_mlp_enc_dec and enc_dec_mlp_config.get('enabled', False) and not early_stop_enc_dec:
                     optimizer_reward_mlp_enc_dec.zero_grad()
-
                     with torch.no_grad():
-                        # Use s_t_reward and a_t_reward_processed for prediction
-                        predicted_s_t_plus_1_for_reward = std_enc_dec(s_t_reward, a_t_reward_processed).detach()
+                        predicted_s_t_plus_1_for_reward = std_enc_dec(
+                            s_t_reward, a_t_reward_processed).detach()
 
-                    # Prepare input for reward MLP
                     if enc_dec_mlp_config.get('input_type') == "flatten":
-                        input_enc_dec_reward_mlp = predicted_s_t_plus_1_for_reward.view(predicted_s_t_plus_1_for_reward.size(0), -1)
-                    else: # Placeholder if other input types were to be supported
-                        input_enc_dec_reward_mlp = predicted_s_t_plus_1_for_reward.view(predicted_s_t_plus_1_for_reward.size(0), -1) # Default to flatten
+                        input_enc_dec_reward_mlp = predicted_s_t_plus_1_for_reward.view(
+                            predicted_s_t_plus_1_for_reward.size(0), -1)
+                    else:
+                        input_enc_dec_reward_mlp = predicted_s_t_plus_1_for_reward.view(
+                            predicted_s_t_plus_1_for_reward.size(0), -1)
 
-                    reward_mlp_enc_dec.train() # Set reward MLP to train mode
-                    pred_reward_enc_dec = reward_mlp_enc_dec(input_enc_dec_reward_mlp)
-                    loss_reward_enc_dec = mse_loss_fn(pred_reward_enc_dec, r_t_reward)
+                    pred_reward_enc_dec = reward_mlp_enc_dec(
+                        input_enc_dec_reward_mlp)
+                    loss_reward_enc_dec = mse_loss_fn(
+                        pred_reward_enc_dec, r_t_reward)
                     loss_reward_enc_dec.backward()
                     optimizer_reward_mlp_enc_dec.step()
                     epoch_loss_reward_enc_dec += loss_reward_enc_dec.item()
 
                     if (reward_batch_idx + 1) % enc_dec_mlp_config.get('log_interval', 50) == 0:
-                        print(f"  Epoch {epoch+1}, Reward MLP (Enc-Dec) Batch {reward_batch_idx+1}/{num_batches}: Loss {loss_reward_enc_dec.item():.4f}")
+                        print(
+                            f"  Epoch {epoch+1}, Reward MLP (Enc-Dec) Batch {reward_batch_idx+1}/{num_train_batches}: Loss {loss_reward_enc_dec.item():.4f}")
 
                 # JEPA Reward MLP Training
-                if reward_mlp_jepa and jepa_mlp_config.get('enabled', False):
+                if reward_mlp_jepa and jepa_mlp_config.get('enabled', False) and not early_stop_jepa:
                     optimizer_reward_mlp_jepa.zero_grad()
-
                     with torch.no_grad():
-                        # JEPA's reward MLP takes the latent embedding of s_t as input
-                        # We use online_s_t_emb from the jepa_model's forward pass on s_t_reward
-                        # The jepa_model.forward() returns: pred_emb, target_emb_detached, online_s_t_emb, online_s_t_plus_1_emb
-                        # We need the representation of s_t, so we pass s_t_reward and a dummy for s_t_plus_1_reward
-                        # as JEPA's main prediction task is on s_t_plus_1.
-                        # For reward prediction on r_t, the input should be derived from s_t (and optionally a_t).
-                        # Let's use the online encoder's output for s_t.
-                        # Note: jepa_model.encoder is the online encoder.
-                        # The output of jepa_model.encoder(s_t_reward, a_t_reward_processed) would be one way.
-                        # Or, if jepa_model.forward can give us the s_t embedding directly:
-                        # Corrected: Use the predicted embedding of the next state (s_t_plus_1_reward)
-                        # The first output of jepa_model is pred_emb for s_t_plus_1 based on s_t and a_t.
-                        pred_emb_for_reward, _, _, _ = jepa_model(s_t_reward, a_t_reward_processed, s_t_plus_1_reward)
+                        # Input to JEPA reward MLP is typically the latent embedding of s_t or s_t+1
+                        # Using online encoder's output for s_t_reward as input
+                        # Assuming jepa_model.encoder is accessible and is the online encoder
+                        # input_jepa_reward_mlp = jepa_model.encoder(s_t_reward, a_t_reward_processed).detach()
+                        # OR, if using the JEPA's predicted embedding of the next state:
+                        pred_emb_for_reward, _, _, _ = jepa_model(
+                            s_t_reward, a_t_reward_processed, s_t_plus_1_reward)  # s_t_plus_1_reward is used by JEPA
                         input_jepa_reward_mlp = pred_emb_for_reward.detach()
 
-
-                    reward_mlp_jepa.train() # Set reward MLP to train mode
                     pred_reward_jepa = reward_mlp_jepa(input_jepa_reward_mlp)
-                    loss_reward_jepa = mse_loss_fn(pred_reward_jepa, r_t_reward)
+                    loss_reward_jepa = mse_loss_fn(
+                        pred_reward_jepa, r_t_reward)
                     loss_reward_jepa.backward()
                     optimizer_reward_mlp_jepa.step()
                     epoch_loss_reward_jepa += loss_reward_jepa.item()
 
                     if (reward_batch_idx + 1) % jepa_mlp_config.get('log_interval', 50) == 0:
-                        print(f"  Epoch {epoch+1}, Reward MLP (JEPA) Batch {reward_batch_idx+1}/{num_batches}: Loss {loss_reward_jepa.item():.4f}")
+                        print(
+                            f"  Epoch {epoch+1}, Reward MLP (JEPA) Batch {reward_batch_idx+1}/{num_train_batches}: Loss {loss_reward_jepa.item():.4f}")
 
-            # After reward training loop, ensure main models are back to train mode if further operations in epoch
-            std_enc_dec.train()
-            jepa_model.train()
+        # After all training for the epoch (main models + reward MLPs)
+        avg_loss_std = epoch_loss_std / \
+            num_train_batches if not early_stop_enc_dec and num_train_batches > 0 else 0
+        avg_loss_jepa_pred = epoch_loss_jepa_pred / \
+            num_train_batches if not early_stop_jepa and num_train_batches > 0 else 0
+        avg_loss_jepa_aux_raw = epoch_loss_jepa_aux / \
+            num_train_batches if not early_stop_jepa and num_train_batches > 0 else 0
 
-        avg_loss_std = epoch_loss_std / num_batches
-        avg_loss_jepa_pred = epoch_loss_jepa_pred / num_batches
-        avg_loss_jepa_aux_raw = (
-            epoch_loss_jepa_aux / num_batches if num_batches > 0 else 0
-        )
-        avg_loss_reward_enc_dec = epoch_loss_reward_enc_dec / num_batches_reward_train if num_batches_reward_train > 0 else 0
-        avg_loss_reward_jepa = epoch_loss_reward_jepa / num_batches_reward_train if num_batches_reward_train > 0 else 0
+        avg_loss_reward_enc_dec = epoch_loss_reward_enc_dec / \
+            num_batches_reward_train if num_batches_reward_train > 0 and not early_stop_enc_dec else 0
+        avg_loss_reward_jepa = epoch_loss_reward_jepa / \
+            num_batches_reward_train if num_batches_reward_train > 0 and not early_stop_jepa else 0
 
-
-        print(f"Epoch {epoch+1}/{config.get('num_epochs', 10)} Summary:")
-        print(f"  Avg StdEncDec L: {avg_loss_std:.4f}") # Shorter
-        print(f"  Avg JEPA Pred L: {avg_loss_jepa_pred:.4f}") # Shorter
         print(
-            f"  Avg JEPA {aux_loss_name} AuxRawL: " # Shorter
-            f"{avg_loss_jepa_aux_raw:.4f}"
-        )
-        avg_total_jepa_loss = (
-            avg_loss_jepa_pred + avg_loss_jepa_aux_raw * aux_loss_weight
-        )
-        print(f"  Avg Total JEPA L: {avg_total_jepa_loss:.4f}") # Shorter
-        if enc_dec_mlp_config.get('enabled', False) and reward_mlp_enc_dec:
-            print(f"  Avg Reward MLP (Enc-Dec) L: {avg_loss_reward_enc_dec:.4f}")
-        if jepa_mlp_config.get('enabled', False) and reward_mlp_jepa:
-            print(f"  Avg Reward MLP (JEPA) L: {avg_loss_reward_jepa:.4f}")
+            f"--- Epoch {epoch+1}/{config.get('num_epochs', 10)} Training Summary ---")
+        if not early_stop_enc_dec:
+            print(f"  Avg Train StdEncDec L: {avg_loss_std:.4f}")
+        if not early_stop_jepa:
+            avg_total_jepa_loss = avg_loss_jepa_pred + \
+                avg_loss_jepa_aux_raw * aux_loss_weight
+            print(
+                f"  Avg Train JEPA Pred L: {avg_loss_jepa_pred:.4f}, {aux_loss_name} AuxRawL: {avg_loss_jepa_aux_raw:.4f}, Total Train JEPA L: {avg_total_jepa_loss:.4f}")
+        if enc_dec_mlp_config.get('enabled', False) and reward_mlp_enc_dec and not early_stop_enc_dec:
+            print(
+                f"  Avg Train Reward MLP (Enc-Dec) L: {avg_loss_reward_enc_dec:.4f}")
+        if jepa_mlp_config.get('enabled', False) and reward_mlp_jepa and not early_stop_jepa:
+            print(
+                f"  Avg Train Reward MLP (JEPA) L: {avg_loss_reward_jepa:.4f}")
 
+        if early_stop_enc_dec and early_stop_jepa:
+            print("Both models triggered early stopping. Ending training.")
+            break
 
-    print("Training finished.")
+    print("Main training loop finished.")
+
+    # Load best models
+    print("Loading best models...")
+    if os.path.exists(checkpoint_path_enc_dec):
+        print(
+            f"Loading best Encoder/Decoder model from {checkpoint_path_enc_dec}")
+        std_enc_dec.load_state_dict(torch.load(
+            checkpoint_path_enc_dec, map_location=device))
+    else:
+        print(
+            f"No checkpoint found for Encoder/Decoder at {checkpoint_path_enc_dec}. Using last trained model.")
+    std_enc_dec.eval()
+
+    if os.path.exists(checkpoint_path_jepa):
+        print(f"Loading best JEPA model from {checkpoint_path_jepa}")
+        jepa_model.load_state_dict(torch.load(
+            checkpoint_path_jepa, map_location=device))
+    else:
+        print(
+            f"No checkpoint found for JEPA at {checkpoint_path_jepa}. Using last trained model.")
+    jepa_model.eval()
+
+    # Potentially set aux_loss_fn to eval if it has state and is used post-training
+    if hasattr(aux_loss_fn, 'eval'):
+        aux_loss_fn.eval()
+
+    # Also set reward MLPs to eval mode
+    if reward_mlp_enc_dec:
+        reward_mlp_enc_dec.eval()
+    if reward_mlp_jepa:
+        reward_mlp_jepa.eval()
+
+    print("Process complete. Models are in eval mode with best weights loaded (if available).")
 
 
 if __name__ == '__main__':
