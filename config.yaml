@@ -1,11 +1,11 @@
 # Environment Configuration
-environment_name: "CartPole-v1" # Example, choose a relevant Gym environment (e.g., "CarRacing-v2", "ALE/Pong-v5")
+environment_name: "CarRacing-v3" # Example, choose a relevant Gym environment (e.g., "CarRacing-v2", "ALE/Pong-v5")
 # For image-based environments like CarRacing or Atari, ensure appropriate wrappers are used if needed by the env.
 input_channels: 3 # Number of channels in the input image (e.g., 3 for RGB, 1 for grayscale, 4 if using FrameStack)
 image_size: 64    # Target size (height and width) for processed images
 
 # Data Collection
-num_episodes_data_collection: 50 # Number of episodes to collect for the dataset
+num_episodes_data_collection: 10 # Number of episodes to collect for the dataset
 max_steps_per_episode_data_collection: 200 # Max steps per episode during data collection
 
 # Training Configuration
@@ -17,7 +17,7 @@ num_workers: 4 # For DataLoader
 log_interval: 50 # Log training progress every N batches
 
 # Encoder Configuration
-encoder_type: "vit"  # Options: "vit", "cnn", "mlp"
+encoder_type: "cnn"  # Options: "vit", "cnn", "mlp"
 # Global patch_size:
 # - Used by ViT encoder (it expects 'patch_size' in its specific params; train.py ensures this).
 # - Used as the default for 'decoder_patch_size' in StandardEncoderDecoder if not explicitly set there.
@@ -29,7 +29,7 @@ encoder_params:
   vit:
     # patch_size for ViT is handled by train.py using the global 'patch_size' above.
     depth: 4                # Number of Transformer blocks in ViT
-    heads: 6                # Number of attention heads in ViT
+    heads: 4                # Number of attention heads in ViT
     mlp_dim: 256            # Dimension of the MLP within ViT Transformer blocks
     pool: 'cls'             # Type of pooling ('cls' token or 'mean' pooling)
     dropout: 0.1            # Dropout rate in ViT
@@ -61,7 +61,7 @@ decoder_dim: 128        # Internal dimension of the Transformer decoder
 # or falls back to legacy keys like 'num_decoder_layers', 'num_heads', 'mlp_dim'.
 # It's recommended to use specific keys for clarity if they differ from encoder/legacy values.
 decoder_depth: 3        # Number of layers in the Transformer decoder (preferred key)
-decoder_heads: 6        # Number of attention heads in the Transformer decoder (preferred key)
+decoder_heads: 4        # Number of attention heads in the Transformer decoder (preferred key)
 decoder_mlp_dim: 256    # MLP dimension in the Transformer decoder (preferred key)
 decoder_dropout: 0.0    # Dropout for the decoder
 decoder_patch_size: 8   # Patch size for reconstructing the output image by the decoder.
