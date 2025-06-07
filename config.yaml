@@ -1,33 +1,86 @@
-# Environment settings
-# Example: "CartPole-v1", "ALE/Pong-v5" (requires gymnasium[accept-rom-license])
-# For pixel-based environments, try "CarRacing-v2" or Atari games like "ALE/Pong-v5"
-environment_name: "CarRacing-v3" 
+# Environment Configuration
+environment_name: "CartPole-v1" # Example, choose a relevant Gym environment (e.g., "CarRacing-v2", "ALE/Pong-v5")
+# For image-based environments like CarRacing or Atari, ensure appropriate wrappers are used if needed by the env.
+input_channels: 3 # Number of channels in the input image (e.g., 3 for RGB, 1 for grayscale, 4 if using FrameStack)
+image_size: 64    # Target size (height and width) for processed images
 
-# Data generation
-num_episodes_data_collection: 50 # Number of episodes to run for collecting data
-max_steps_per_episode_data_collection: 500 # Max steps per episode during data collection
+# Data Collection
+num_episodes_data_collection: 50 # Number of episodes to collect for the dataset
+max_steps_per_episode_data_collection: 200 # Max steps per episode during data collection
 
-# Model Hyperparameters (examples, might need tuning)
-image_size: 64 # Image size to resize observations to (e.g., 64x64)
-patch_size: 8   # Patch size for Vision Transformer
-latent_dim: 256 # Latent dimension for encoders
-decoder_dim: 512
-num_heads: 8
-num_encoder_layers: 6
-num_decoder_layers: 6
-mlp_dim: 1024
-
-# JEPA specific
-jepa_predictor_hidden_dim: 128
-ema_decay: 0.996
-
-# VICReg hyperparameters
-vicreg_sim_coeff: 25.0
-vicreg_std_coeff: 25.0
-vicreg_cov_coeff: 1.0
-
-# Training hyperparameters
+# Training Configuration
+num_epochs: 10
 batch_size: 32
-learning_rate: 0.0001
-num_epochs: 100
-# Add more specific learning rates if needed, e.g., lr_encoder_decoder, lr_jepa
+learning_rate: 0.0003
+learning_rate_jepa: 0.0003 # Can be different from the main learning_rate
+num_workers: 4 # For DataLoader
+log_interval: 50 # Log training progress every N batches
+
+# Encoder Configuration
+encoder_type: "vit"  # Options: "vit", "cnn", "mlp"
+# Global patch_size:
+# - Used by ViT encoder (it expects 'patch_size' in its specific params; train.py ensures this).
+# - Used as the default for 'decoder_patch_size' in StandardEncoderDecoder if not explicitly set there.
+patch_size: 8
+
+# encoder_params: Specific parameters for the chosen encoder_type.
+# train.py will select the appropriate sub-dictionary based on 'encoder_type'.
+encoder_params:
+  vit:
+    # patch_size for ViT is handled by train.py using the global 'patch_size' above.
+    depth: 4                # Number of Transformer blocks in ViT
+    heads: 6                # Number of attention heads in ViT
+    mlp_dim: 256            # Dimension of the MLP within ViT Transformer blocks
+    pool: 'cls'             # Type of pooling ('cls' token or 'mean' pooling)
+    dropout: 0.1            # Dropout rate in ViT
+    emb_dropout: 0.1        # Embedding dropout rate in ViT
+
+  cnn:
+    num_conv_layers: 3      # Number of convolutional layers
+    base_filters: 32        # Number of filters in the first convolutional layer
+    kernel_size: 3          # Kernel size for convolutional layers
+    stride: 2               # Stride for convolutional layers
+    padding: 1              # Padding for convolutional layers
+    activation_fn_str: 'relu' # Activation function ('relu' or 'gelu')
+    fc_hidden_dim: null     # Dimension of an optional fully connected layer before the latent output (null for direct)
+
+  mlp:
+    num_hidden_layers: 2    # Number of hidden layers in the MLP encoder
+    hidden_dim: 256         # Dimension of hidden layers in the MLP encoder
+    activation_fn_str: 'relu' # Activation function ('relu' or 'gelu')
+
+# Model-Specific Configurations
+
+# Shared Latent Dimension
+latent_dim: 128 # Output dimension of the encoder, input to predictor/decoder logic for JEPA/StandardEncoderDecoder
+
+# Standard Encoder-Decoder Model
+action_emb_dim: 64      # Dimension for embedding actions
+decoder_dim: 128        # Internal dimension of the Transformer decoder
+# For decoder_depth, decoder_heads, decoder_mlp_dim, train.py attempts to read specific keys like 'decoder_depth'
+# or falls back to legacy keys like 'num_decoder_layers', 'num_heads', 'mlp_dim'.
+# It's recommended to use specific keys for clarity if they differ from encoder/legacy values.
+decoder_depth: 3        # Number of layers in the Transformer decoder (preferred key)
+decoder_heads: 6        # Number of attention heads in the Transformer decoder (preferred key)
+decoder_mlp_dim: 256    # MLP dimension in the Transformer decoder (preferred key)
+decoder_dropout: 0.0    # Dropout for the decoder
+decoder_patch_size: 8   # Patch size for reconstructing the output image by the decoder.
+                        # If null or not specified, train.py defaults this to global 'patch_size'.
+
+# JEPA Model
+jepa_predictor_hidden_dim: 256 # Hidden dimension for the JEPA predictor MLP
+ema_decay: 0.996              # EMA decay rate for updating the target encoder in JEPA
+vicreg_loss_weight: 1.0       # Weight for the VICReg loss component in JEPA's total loss
+# VICRegLoss coefficients (sim_coeff, std_coeff, cov_coeff) are currently set to defaults
+# within train.py when VICRegLoss is instantiated. To configure them from here,
+# add them to this config file (e.g., vicreg_sim_coeff: 25.0) and modify train.py
+# to pass these values to the VICRegLoss constructor.
+# Example:
+# vicreg_sim_coeff: 25.0
+# vicreg_std_coeff: 25.0
+# vicreg_cov_coeff: 1.0
+
+# Legacy/Shared Transformer parameters (These are less critical if using encoder_params and specific decoder params above)
+# num_encoder_layers: 4 # Primarily for old ViT direct init, now effectively superseded by encoder_params.vit.depth
+# num_heads: 6          # Legacy, consider using encoder_params.vit.heads and specific decoder_heads
+# mlp_dim: 256          # Legacy, consider using encoder_params.vit.mlp_dim and specific decoder_mlp_dim
