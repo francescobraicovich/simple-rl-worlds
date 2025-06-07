@@ -171,7 +171,3 @@ The data collection process and `main.py` are designed to run headlessly (`rende
     2.  *Auxiliary Loss*: Applied to the outputs of the *online encoder* to prevent representational collapse and encourage informative embeddings. Configurable options include VICReg, Barlow Twins, and DINO.
 
 The training script (`main.py`) allows selection and training of one of these primary architectures based on the `config.yaml` settings.
-
-## Contributing
-Contributions are welcome! Please feel free to submit pull requests or open issues for bugs, feature requests, or improvements.
-```
