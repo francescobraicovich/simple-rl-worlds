@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from utils.data_utils import collect_random_episodes, ExperienceDataset
 from models.encoder_decoder import StandardEncoderDecoder
 from models.jepa import JEPA
-from utils.losses import VICRegLoss
+from losses import VICRegLoss, BarlowTwinsLoss, DINOLoss
 
 def load_config(config_path='config.yaml'):
     with open(config_path, 'r') as f:
@@ -20,7 +20,7 @@ def get_env_details(env_name):
     temp_env = gym.make(env_name)
     action_space = temp_env.action_space
     observation_space = temp_env.observation_space
-    
+
     if isinstance(action_space, gym.spaces.Discrete):
         action_dim = action_space.n
         action_type = 'discrete'
@@ -30,7 +30,7 @@ def get_env_details(env_name):
     else:
         temp_env.close()
         raise ValueError(f"Unsupported action space type: {type(action_space)}")
-    
+
     temp_env.close()
     print(f"Environment: {env_name}")
     print(f"Action space type: {action_type}, Action dimension: {action_dim}")
@@ -44,7 +44,7 @@ def main():
     print(f"Using device: {device}")
 
     action_dim, action_type, _ = get_env_details(config['environment_name'])
-    
+
     input_channels = config.get('input_channels', 3)
     image_h_w = config['image_size']
 
@@ -83,7 +83,7 @@ def main():
         max_steps_per_episode=config.get('max_steps_per_episode_data_collection', 200),
         image_size=(image_h_w, image_h_w)
     )
-    
+
     if len(dataset) == 0:
         print("No data collected. Exiting.")
         return
@@ -129,18 +129,57 @@ def main():
     ).to(device)
     optimizer_jepa = optim.AdamW(jepa_model.parameters(), lr=config.get('learning_rate_jepa', config.get('learning_rate', 0.0003)))
 
-    vicreg_loss_fn = VICRegLoss(
-        sim_coeff=config.get('vicreg_sim_coeff', 0.0), # Default to 0 as per some VICReg variants
-        std_coeff=config.get('vicreg_std_coeff', 25.0),
-        cov_coeff=config.get('vicreg_cov_coeff', 1.0)
-    ).to(device)
+    # --- New Auxiliary Loss Setup ---
+    aux_loss_config = config.get('auxiliary_loss', {})
+    aux_loss_type = aux_loss_config.get('type', 'vicreg').lower()
+    aux_loss_weight = aux_loss_config.get('weight', 1.0)
+    aux_loss_params_all = aux_loss_config.get('params', {})
+
+    print(f"Initializing auxiliary loss: Type={aux_loss_type}, Weight={aux_loss_weight}")
+
+    if aux_loss_type == 'vicreg':
+        vicreg_params = aux_loss_params_all.get('vicreg', {})
+        # Ensure default values if not in config, matching old behavior
+        aux_loss_fn = VICRegLoss(
+            sim_coeff=vicreg_params.get('sim_coeff', 0.0),
+            std_coeff=vicreg_params.get('std_coeff', 25.0),
+            cov_coeff=vicreg_params.get('cov_coeff', 1.0),
+            eps=vicreg_params.get('eps', 1e-4)
+        ).to(device)
+        aux_loss_name = "VICReg"
+    elif aux_loss_type == 'barlow_twins':
+        bt_params = aux_loss_params_all.get('barlow_twins', {})
+        aux_loss_fn = BarlowTwinsLoss(
+            lambda_param=bt_params.get('lambda_param', 5e-3),
+            eps=bt_params.get('eps', 1e-5),
+            scale_loss=bt_params.get('scale_loss', 1.0)
+        ).to(device)
+        aux_loss_name = "BarlowTwins"
+    elif aux_loss_type == 'dino':
+        dino_params = aux_loss_params_all.get('dino', {})
+        # DINOLoss requires out_dim, which is the latent_dim of the JEPA model
+        # jepa_model should be initialized before this section.
+        model_latent_dim = jepa_model.latent_dim # Or config.get('latent_dim') as fallback
+        aux_loss_fn = DINOLoss(
+            out_dim=model_latent_dim,
+            center_ema_decay=dino_params.get('center_ema_decay', 0.9),
+            eps=dino_params.get('eps', 1e-5) # eps in DINOLoss is for consistency, not heavily used
+        ).to(device)
+        aux_loss_name = "DINO"
+    else:
+        print(f"Warning: Unknown auxiliary loss type '{aux_loss_type}'. No auxiliary loss will be applied.")
+        aux_loss_fn = None
+        aux_loss_name = "None"
+        aux_loss_weight = 0 # Ensure no impact if not configured
+
+    # --- End New Auxiliary Loss Setup ---
 
     print(f"Starting training for {config.get('num_epochs', 10)} epochs...")
     for epoch in range(config.get('num_epochs', 10)):
         epoch_loss_std = 0
         epoch_loss_jepa_pred = 0
-        epoch_loss_jepa_vicreg = 0
-        
+        epoch_loss_jepa_aux = 0
+
         num_batches = len(dataloader)
         if num_batches == 0:
             print(f"Epoch {epoch+1} has no data. Skipping.")
@@ -166,39 +205,43 @@ def main():
             # JEPA Training
             optimizer_jepa.zero_grad()
             pred_emb, target_emb_detached, online_s_t_emb, online_s_t_plus_1_emb = jepa_model(s_t, a_t_processed, s_t_plus_1)
-            
+
             loss_jepa_pred = mse_loss_fn(pred_emb, target_emb_detached)
-            
-            reg_loss_s_t, _, _ = vicreg_loss_fn.calculate_reg_terms(online_s_t_emb)
-            reg_loss_s_t_plus_1, _, _ = vicreg_loss_fn.calculate_reg_terms(online_s_t_plus_1_emb)
-            current_loss_jepa_vicreg = (reg_loss_s_t + reg_loss_s_t_plus_1) * 0.5
-            
-            vicreg_weight = config.get('vicreg_loss_weight', 1.0)
-            total_loss_jepa = loss_jepa_pred + current_loss_jepa_vicreg * vicreg_weight
+
+            if aux_loss_fn is not None and aux_loss_weight > 0:
+                # Set aux_loss_fn to train mode if it has state (like DINO's center)
+                if hasattr(aux_loss_fn, 'train'): aux_loss_fn.train()
+                aux_term_s_t, _, _ = aux_loss_fn.calculate_reg_terms(online_s_t_emb)
+                aux_term_s_t_plus_1, _, _ = aux_loss_fn.calculate_reg_terms(online_s_t_plus_1_emb)
+                current_loss_jepa_aux = (aux_term_s_t + aux_term_s_t_plus_1) * 0.5
+            else:
+                current_loss_jepa_aux = torch.tensor(0.0, device=device)
+
+            total_loss_jepa = loss_jepa_pred + current_loss_jepa_aux * aux_loss_weight
             total_loss_jepa.backward()
             optimizer_jepa.step()
-            
+
             jepa_model.update_target_network()
-            
+
             epoch_loss_jepa_pred += loss_jepa_pred.item()
-            epoch_loss_jepa_vicreg += current_loss_jepa_vicreg.item()
+            epoch_loss_jepa_aux += current_loss_jepa_aux.item()
 
             if (batch_idx + 1) % config.get('log_interval', 50) == 0:
                 print(f"  Epoch {epoch+1}, Batch {batch_idx+1}/{num_batches}: "
                       f"StdEncDec Loss: {loss_std.item():.4f} | "
-                      f"JEPA Pred Loss: {loss_jepa_pred.item():.4f}, VICReg Raw Loss: {current_loss_jepa_vicreg.item():.4f} "
-                      f"(Weighted: {(current_loss_jepa_vicreg * vicreg_weight):.4f}), "
+                      f"JEPA Pred Loss: {loss_jepa_pred.item():.4f}, {aux_loss_name} Aux Raw Loss: {current_loss_jepa_aux.item():.4f} "
+                      f"(Weighted: {(current_loss_jepa_aux * aux_loss_weight):.4f}), "
                       f"Total JEPA Loss: {total_loss_jepa.item():.4f}")
 
         avg_loss_std = epoch_loss_std / num_batches
         avg_loss_jepa_pred = epoch_loss_jepa_pred / num_batches
-        avg_loss_jepa_vicreg_raw = epoch_loss_jepa_vicreg / num_batches
-        
+        avg_loss_jepa_aux_raw = epoch_loss_jepa_aux / num_batches if num_batches > 0 else 0
+
         print(f"Epoch {epoch+1}/{config.get('num_epochs', 10)} Summary:")
         print(f"  Avg Standard Encoder-Decoder Loss: {avg_loss_std:.4f}")
         print(f"  Avg JEPA Prediction Loss: {avg_loss_jepa_pred:.4f}")
-        print(f"  Avg JEPA VICReg Loss (Raw): {avg_loss_jepa_vicreg_raw:.4f}")
-        avg_total_jepa_loss = avg_loss_jepa_pred + avg_loss_jepa_vicreg_raw * vicreg_weight
+        print(f"  Avg JEPA {aux_loss_name} Aux Loss (Raw): {avg_loss_jepa_aux_raw:.4f}")
+        avg_total_jepa_loss = avg_loss_jepa_pred + avg_loss_jepa_aux_raw * aux_loss_weight
         print(f"  Avg Total JEPA Loss: {avg_total_jepa_loss:.4f}")
 
     print("Training finished.")
