@@ -124,5 +124,3 @@ if __name__ == '__main__':
         dino_loss_fn(wrong_ndim_z)
     except ValueError as e:
         print(f"\nSuccessfully caught error for wrong input ndim: {e}")
-
-EOL
