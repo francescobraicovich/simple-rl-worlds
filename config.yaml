@@ -80,6 +80,26 @@ ema_decay: 0.996              # EMA decay rate for updating the target encoder i
 # #vicreg_std_coeff: 25.0
 # #vicreg_cov_coeff: 1.0
 
+# Reward Predictor MLPs
+reward_predictors:
+  encoder_decoder_reward_mlp:
+    enabled: true
+    input_type: "flatten" # Assumes flattened decoded image from StandardEncoderDecoder
+    hidden_dims: [128, 64]
+    activation: "relu"
+    use_batch_norm: false
+    learning_rate: 0.0003
+    log_interval: 50
+  jepa_reward_mlp:
+    enabled: true
+    # Input for JEPA's reward MLP will typically be the output of JEPA's encoder (target or online)
+    # This will be handled in train.py logic. No explicit 'input_type' needed here like for enc-dec.
+    hidden_dims: [128, 64]
+    activation: "relu"
+    use_batch_norm: false
+    learning_rate: 0.0003
+    log_interval: 50
+
 # Legacy/Shared Transformer parameters (These are less critical if using encoder_params and specific decoder params above)
 # num_encoder_layers: 4 # Primarily for old ViT direct init, now effectively superseded by encoder_params.vit.depth
 # num_heads: 6          # Legacy, consider using encoder_params.vit.heads and specific decoder_heads

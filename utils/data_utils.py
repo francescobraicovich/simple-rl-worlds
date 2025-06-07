@@ -6,9 +6,10 @@ from torchvision import transforms as T
 # import cv2 # For image resizing - Removed as torchvision.transforms is used
 
 class ExperienceDataset(Dataset):
-    def __init__(self, states, actions, next_states, transform=None):
+    def __init__(self, states, actions, rewards, next_states, transform=None):
         self.states = states
         self.actions = actions
+        self.rewards = rewards
         self.next_states = next_states
         self.transform = transform
 
@@ -18,6 +19,7 @@ class ExperienceDataset(Dataset):
     def __getitem__(self, idx):
         state = self.states[idx]
         action = self.actions[idx]
+        reward = self.rewards[idx]
         next_state = self.next_states[idx]
 
         if self.transform:
@@ -29,8 +31,9 @@ class ExperienceDataset(Dataset):
         # For simplicity, let's assume actions will be made float.
         # If discrete, they might be indices; ensure they are handled appropriately later (e.g. one-hot or embedding layer).
         action_tensor = torch.tensor(action, dtype=torch.float32)
+        reward_tensor = torch.tensor(reward, dtype=torch.float32)
 
-        return state, action_tensor, next_state
+        return state, action_tensor, reward_tensor, next_state
 
 def collect_random_episodes(env_name, num_episodes, max_steps_per_episode, image_size=(64, 64)):
     print(f"Collecting data from environment: {env_name}")
@@ -47,6 +50,7 @@ def collect_random_episodes(env_name, num_episodes, max_steps_per_episode, image
 
     states_list = []
     actions_list = []
+    rewards_list = []
     next_states_list = []
 
     # Define a basic transform for images: Resize and convert to CHW tensor
@@ -108,6 +112,7 @@ def collect_random_episodes(env_name, num_episodes, max_steps_per_episode, image
             
             states_list.append(current_state_img) # HWC numpy array
             actions_list.append(action)
+            rewards_list.append(reward)
             next_states_list.append(next_state_img) # HWC numpy array
 
             current_state_img = next_state_img
@@ -120,14 +125,14 @@ def collect_random_episodes(env_name, num_episodes, max_steps_per_episode, image
     if not states_list:
         print("No data collected. Check environment compatibility and observation space.")
         # Return empty tensors or raise error
-        return torch.empty(0), torch.empty(0), torch.empty(0)
+        return torch.empty(0), torch.empty(0), torch.empty(0), torch.empty(0)
 
 
     # Create the dataset
     # The ExperienceDataset will apply the 'preprocess' transform
-    dataset = ExperienceDataset(states_list, actions_list, next_states_list, transform=preprocess)
+    dataset = ExperienceDataset(states_list, actions_list, rewards_list, next_states_list, transform=preprocess)
     
-    print(f"Collected {len(dataset)} (state, action, next_state) pairs.")
+    print(f"Collected {len(dataset)} (state, action, reward, next_state) pairs.")
     
     # This function can return the dataset directly, or the raw lists.
     # Returning the dataset is often more convenient.
@@ -179,11 +184,12 @@ if __name__ == '__main__':
                 dataloader = DataLoader(dataset, batch_size=4, shuffle=True)
                 
                 # Sample a batch
-                s_batch, a_batch, s_next_batch = next(iter(dataloader))
+                s_batch, a_batch, r_batch, s_next_batch = next(iter(dataloader))
                 
                 print(f"Sample batch shapes:")
                 print(f"States (s_t): {s_batch.shape}, dtype: {s_batch.dtype}")
                 print(f"Actions (a_t): {a_batch.shape}, dtype: {a_batch.dtype}")
+                print(f"Rewards (r_t): {r_batch.shape}, dtype: {r_batch.dtype}")
                 print(f"Next States (s_t+1): {s_next_batch.shape}, dtype: {s_next_batch.dtype}")
 
                 # Check action tensor type for discrete vs continuous
