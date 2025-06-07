@@ -10,8 +10,7 @@ def prepare_dataloaders(config, validation_split):
     img_size_tuple = (image_h_w, image_h_w)
 
     train_dataset, val_dataset = collect_random_episodes(
-        env_name=config['environment_name'],
-        num_episodes=config.get('num_episodes_data_collection', 50),
+        config=config, # Pass the full config object
         max_steps_per_episode=config.get(key_max_steps, 200),
         image_size=img_size_tuple,
         validation_split_ratio=validation_split

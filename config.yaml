@@ -8,6 +8,10 @@ image_size: 64    # Target size (height and width) for processed images
 num_episodes_data_collection: 200 # Number of episodes to collect for the dataset
 max_steps_per_episode_data_collection: 250 # Max steps per episode during data collection
 
+# Dataset Management
+load_dataset: false
+dataset_name: ""
+
 # Training Configuration
 num_epochs: 100
 batch_size: 64

@@ -4,6 +4,8 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms as T
 import random  # Added for shuffling episodes
+import os
+import pickle
 # import cv2 # For image resizing - Removed as torchvision.transforms is used
 
 
@@ -38,9 +40,46 @@ class ExperienceDataset(Dataset):
         return state, action_tensor, reward_tensor, next_state
 
 
-def collect_random_episodes(env_name, num_episodes, max_steps_per_episode, image_size, validation_split_ratio):
-    # Default image_size removed from signature to match common practice when it's passed from config.
-    # Ensure image_size is provided when calling.
+def collect_random_episodes(config, max_steps_per_episode, image_size, validation_split_ratio):
+    env_name = config['environment_name']
+    num_episodes = config['num_episodes_data_collection']
+    load_dataset = config.get('load_dataset', False)
+    dataset_to_load_name = config.get('dataset_name', '')
+
+    dataset_dir = config.get('dataset_output_dir_override', "datasets") # Added override for testing
+    os.makedirs(dataset_dir, exist_ok=True)
+
+    if load_dataset:
+        if not dataset_to_load_name:
+            print("Warning: `load_dataset` is True, but `dataset_name` is empty. Proceeding to data collection.")
+        else:
+            dataset_path = os.path.join(dataset_dir, dataset_to_load_name)
+            if os.path.exists(dataset_path):
+                print(f"Loading dataset from {dataset_path}...")
+                try:
+                    with open(dataset_path, 'rb') as f:
+                        data = pickle.load(f)
+
+                    loaded_train_dataset = data['train_dataset']
+                    loaded_val_dataset = data['val_dataset']
+                    metadata = data['metadata']
+
+                    loaded_env_name = metadata.get('environment_name')
+                    if loaded_env_name != env_name:
+                        print(f"Error: Mismatch between loaded dataset environment ('{loaded_env_name}') and config environment ('{env_name}').")
+                        raise ValueError("Environment mismatch in loaded dataset.")
+
+                    print(f"Successfully loaded dataset for environment '{loaded_env_name}' with {metadata.get('num_episodes_collected', 'N/A')} episodes from {dataset_path}.")
+                    # Ensure the loaded datasets have their transforms if they were saved with them.
+                    # If transforms are not saved with dataset objects, they might need to be re-applied here,
+                    # but ExperienceDataset saves its transform attribute.
+                    return loaded_train_dataset, loaded_val_dataset
+                except Exception as e:
+                    print(f"Error loading dataset from {dataset_path}: {e}. Proceeding to data collection.")
+            else:
+                print(f"Warning: Dataset {dataset_path} not found. Proceeding to data collection.")
+
+    # If not loading or loading failed, proceed with data collection
     print(f"Collecting data from environment: {env_name}")
     # Try to make the environment, prioritizing 'rgb_array' for image collection,
     # as this function is designed to feed an image-based preprocessing pipeline.
@@ -197,6 +236,39 @@ def collect_random_episodes(env_name, num_episodes, max_steps_per_episode, image
     print(f"Training dataset: {len(train_dataset)} transitions.")
     print(f"Validation dataset: {len(validation_dataset)} transitions.")
 
+    # Save the collected dataset if data was collected in this run
+    if not load_dataset or not os.path.exists(os.path.join(dataset_dir, dataset_to_load_name if dataset_to_load_name else "")): # ensure it runs if loading failed or was skipped
+        if all_episodes_raw_data: # Check if new data was actually collected
+            num_episodes_collected = config['num_episodes_data_collection'] # Or len(all_episodes_raw_data) if actual count is preferred
+            save_filename = f"{env_name.replace('/', '_')}_{num_episodes_collected}.pkl" # Replace slashes in env_name for valid filename
+            save_path = os.path.join(dataset_dir, save_filename)
+
+            metadata_to_save = {
+                'environment_name': env_name,
+                'num_episodes_collected': num_episodes_collected, # Using config value as per plan
+                'image_size': image_size,
+                'max_steps_per_episode': max_steps_per_episode,
+                'validation_split_ratio': validation_split_ratio,
+                'num_train_transitions': len(train_dataset),
+                'num_val_transitions': len(validation_dataset)
+            }
+
+            data_to_save = {
+                'train_dataset': train_dataset,
+                'val_dataset': validation_dataset,
+                'metadata': metadata_to_save
+            }
+
+            try:
+                with open(save_path, 'wb') as f:
+                    pickle.dump(data_to_save, f)
+                print(f"Dataset saved to {save_path}")
+            except Exception as e:
+                print(f"Error saving dataset to {save_path}: {e}")
+        else:
+            print("No new data was collected, so dataset will not be saved.")
+
+
     return train_dataset, validation_dataset
 
 
@@ -206,82 +278,92 @@ if __name__ == '__main__':
     # For servers, use Xvfb: Xvfb :1 -screen 0 1024x768x24 &
     # export DISPLAY=:1
 
-    # Test with a simpler environment first if CarRacing-v2 causes issues
-    # env_name_test = "CartPole-v1" # This is not pixel based by default
-    # Atari, pixel based. Needs AutoROM: pip install gymnasium[accept-rom-license]
-    env_name_test = "PongNoFrameskip-v4"
-    # env_name_test = "CarRacing-v2" # Needs Box2D
-
-    # To run CarRacing-v2, you might need:
-    # sudo apt-get install swig
-    # pip install gymnasium[box2d]
-
-    # For Atari games:
-    # pip install gymnasium[atari] gymnasium[accept-rom-license]
-
     print(f"Testing data collection with a sample environment...")
     try:
         # Attempt to use a known pixel-based environment
-        # If 'CarRacing-v2' is in config, it will be tried by default by train.py
-        # For this standalone test, let's try Pong if available, else a warning.
         try:
-            gym.make("PongNoFrameskip-v4")  # Check if env is available
-            test_env = "PongNoFrameskip-v4"
+            gym.make("PongNoFrameskip-v4")
+            test_env_name = "PongNoFrameskip-v4"
             print("Using PongNoFrameskip-v4 for testing data collection.")
-        except gym.error.MissingEnvDependency:  # Corrected exception type
-            print(
-                "PongNoFrameskip-v4 not available (Atari ROMs likely missing or 'gymnasium[accept-rom-license]' not used).")
-            print("Skipping data_utils.py example run.")
-            test_env = None
+        except gym.error.MissingEnvDependency:
+            print("PongNoFrameskip-v4 not available. Skipping data_utils.py example run.")
+            test_env_name = None
 
-        if test_env:
-            # Example: Collect 5 episodes, split 60% train / 40% validation
-            # image_size must be passed as it's no longer defaulted in the function signature
+        if test_env_name:
+            # Dummy config for testing
+            dummy_config = {
+                'environment_name': test_env_name,
+                'num_episodes_data_collection': 5, # Small number for test
+                'load_dataset': False, # Test data collection and saving
+                'dataset_name': ''
+            }
+
+            # Test case 1: Collect and save
+            print("\n--- Test Case 1: Collect and Save ---")
             train_d, val_d = collect_random_episodes(
-                env_name=test_env,
-                num_episodes=5,
+                config=dummy_config,
                 max_steps_per_episode=50,
-                image_size=(64, 64),  # Explicitly pass image_size
+                image_size=(64, 64),
                 validation_split_ratio=0.4
             )
 
             print(f"\n--- Training Dataset (Size: {len(train_d)}) ---")
             if len(train_d) > 0:
-                train_dataloader = DataLoader(
-                    train_d, batch_size=4, shuffle=True)
-                s_batch, a_batch, r_batch, s_next_batch = next(
-                    iter(train_dataloader))
-                print(f"Training Sample batch shapes:")
-                print(
-                    f"  States (s_t): {s_batch.shape}, dtype: {s_batch.dtype}")
-                print(
-                    f"  Actions (a_t): {a_batch.shape}, dtype: {a_batch.dtype}")
-                print(
-                    f"  Rewards (r_t): {r_batch.shape}, dtype: {r_batch.dtype}")
-                print(
-                    f"  Next States (s_t+1): {s_next_batch.shape}, dtype: {s_next_batch.dtype}")
+                train_dataloader = DataLoader(train_d, batch_size=4, shuffle=True)
+                s_batch, a_batch, r_batch, s_next_batch = next(iter(train_dataloader))
+                print(f"Training Sample batch shapes: States {s_batch.shape}, Actions {a_batch.shape}, Rewards {r_batch.shape}, Next States {s_next_batch.shape}")
             else:
                 print("Training dataset is empty.")
 
             print(f"\n--- Validation Dataset (Size: {len(val_d)}) ---")
             if len(val_d) > 0:
                 val_dataloader = DataLoader(val_d, batch_size=4, shuffle=False)
-                s_val_batch, a_val_batch, r_val_batch, s_next_val_batch = next(
-                    iter(val_dataloader))
-                print(f"Validation Sample batch shapes:")
-                print(
-                    f"  States (s_t): {s_val_batch.shape}, dtype: {s_val_batch.dtype}")
-                print(
-                    f"  Actions (a_t): {a_val_batch.shape}, dtype: {a_val_batch.dtype}")
-                print(
-                    f"  Rewards (r_t): {r_val_batch.shape}, dtype: {r_val_batch.dtype}")
-                print(
-                    f"  Next States (s_t+1): {s_next_val_batch.shape}, dtype: {s_next_val_batch.dtype}")
+                s_val_batch, a_val_batch, r_val_batch, s_next_val_batch = next(iter(val_dataloader))
+                print(f"Validation Sample batch shapes: States {s_val_batch.shape}, Actions {a_val_batch.shape}, Rewards {r_val_batch.shape}, Next States {s_next_val_batch.shape}")
             else:
                 print("Validation dataset is empty.")
 
+            # Test case 2: Load the saved dataset
+            print("\n--- Test Case 2: Load Saved Dataset ---")
+            saved_dataset_filename = f"{test_env_name.replace('/', '_')}_{dummy_config['num_episodes_data_collection']}.pkl"
+            dummy_config_load = {
+                'environment_name': test_env_name,
+                'num_episodes_data_collection': dummy_config['num_episodes_data_collection'], # Not strictly needed for loading if metadata sufficient
+                'load_dataset': True,
+                'dataset_name': saved_dataset_filename
+            }
+
+            # Check if the file actually exists before attempting to load
+            dataset_file_path = os.path.join("datasets", saved_dataset_filename)
+            if os.path.exists(dataset_file_path):
+                train_d_loaded, val_d_loaded = collect_random_episodes(
+                    config=dummy_config_load,
+                    max_steps_per_episode=50, # These are not used when loading but function expects them
+                    image_size=(64, 64),    # Same here
+                    validation_split_ratio=0.4 # Same here
+                )
+
+                print(f"\n--- Loaded Training Dataset (Size: {len(train_d_loaded)}) ---")
+                if len(train_d_loaded) > 0:
+                    # Basic check: compare sizes with originally collected data
+                    assert len(train_d_loaded) == len(train_d), "Loaded train dataset size mismatch!"
+                    print("Loaded training dataset size matches original.")
+                    # Deeper checks could involve comparing actual data points if necessary
+                else:
+                    print("Loaded training dataset is empty.")
+
+                print(f"\n--- Loaded Validation Dataset (Size: {len(val_d_loaded)}) ---")
+                if len(val_d_loaded) > 0:
+                    assert len(val_d_loaded) == len(val_d), "Loaded validation dataset size mismatch!"
+                    print("Loaded validation dataset size matches original.")
+                else:
+                    print("Loaded validation dataset is empty.")
+            else:
+                print(f"Dataset file {dataset_file_path} not found for Test Case 2. Skipping loading test.")
+
     except ImportError as e:
-        print(
-            f"Import error, likely missing a dependency for the test environment: {e}")
+        print(f"Import error, likely missing a dependency for the test environment: {e}")
     except Exception as e:
         print(f"An error occurred during the example run: {e}")
+        import traceback
+        traceback.print_exc()
