@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-import copy # For deepcopying encoder for target network
+import copy  # For deepcopying encoder for target network
 
 # Import available encoders
 from .vit import ViT
@@ -10,22 +10,23 @@ from .mlp import MLPEncoder
 
 class JEPA(nn.Module):
     def __init__(self,
-                 image_size, # int or tuple (h,w)
-                 patch_size, # Primarily for ViT
+                 image_size,  # int or tuple (h,w)
+                 patch_size,  # Primarily for ViT
                  input_channels,
                  action_dim,
                  action_emb_dim,
-                 latent_dim, # Output dim of any encoder
+                 latent_dim,  # Output dim of any encoder
                  predictor_hidden_dim,
                  predictor_output_dim,
                  ema_decay=0.996,
-                 encoder_type='vit', # New: 'vit', 'cnn', 'mlp'
-                 encoder_params: dict = None # New: dict to hold encoder-specific params
+                 encoder_type='vit',  # New: 'vit', 'cnn', 'mlp'
+                 encoder_params: dict = None  # New: dict to hold encoder-specific params
                  ):
         super().__init__()
 
         self.ema_decay = ema_decay
-        self._image_size_tuple = image_size if isinstance(image_size, tuple) else (image_size, image_size)
+        self._image_size_tuple = image_size if isinstance(
+            image_size, tuple) else (image_size, image_size)
 
         # Encoder Instantiation (Online Encoder)
         if encoder_params is None:
@@ -40,13 +41,14 @@ class JEPA(nn.Module):
             vit_constructor_params = {
                 'image_size': self._image_size_tuple,
                 'patch_size': patch_size,
-                'channels': input_channels, # ViT expects 'channels'
+                'channels': input_channels,  # ViT expects 'channels'
                 'num_classes': 0,           # For feature extraction, not classification
                 'dim': latent_dim,          # ViT expects 'dim' for the latent dimension
                 'depth': encoder_params.get('depth', 6),
                 'heads': encoder_params.get('heads', 8),
                 'mlp_dim': encoder_params.get('mlp_dim', 1024),
-                'pool': encoder_params.get('pool', 'cls'), # Ensures (batch, dim) output
+                # Ensures (batch, dim) output
+                'pool': encoder_params.get('pool', 'cls'),
                 'dropout': encoder_params.get('dropout', 0.),
                 'emb_dropout': encoder_params.get('emb_dropout', 0.)
             }
@@ -80,7 +82,7 @@ class JEPA(nn.Module):
 
         # Target Encoder - initialized as a deep copy of online, non-trainable
         self.target_encoder = self._create_target_encoder()
-        self._copy_weights_to_target_encoder() # Initial copy
+        self._copy_weights_to_target_encoder()  # Initial copy
         for param in self.target_encoder.parameters():
             param.requires_grad = False
 
@@ -96,7 +98,7 @@ class JEPA(nn.Module):
             nn.GELU(),
             nn.Linear(predictor_hidden_dim, predictor_output_dim)
         )
-        
+
         assert predictor_output_dim == latent_dim, \
             "Predictor output dimension must match encoder latent dimension for JEPA loss."
 
@@ -111,7 +113,8 @@ class JEPA(nn.Module):
     @torch.no_grad()
     def _update_target_encoder_ema(self):
         for param_online, param_target in zip(self.online_encoder.parameters(), self.target_encoder.parameters()):
-            param_target.data = param_target.data * self.ema_decay + param_online.data * (1. - self.ema_decay)
+            param_target.data = param_target.data * self.ema_decay + \
+                param_online.data * (1. - self.ema_decay)
 
     def forward(self, s_t, action, s_t_plus_1):
         # s_t: current state image (batch, c, h, w)
@@ -120,22 +123,26 @@ class JEPA(nn.Module):
 
         # Generate representations using TARGET encoder (EMA updated, no gradients for these ops)
         with torch.no_grad():
-            target_encoded_s_t = self.target_encoder(s_t).detach()         # z_t'
-            target_encoded_s_t_plus_1 = self.target_encoder(s_t_plus_1).detach() # z_{t+1}' (this is the prediction target)
+            target_encoded_s_t = self.target_encoder(
+                s_t).detach()         # z_t'
+            target_encoded_s_t_plus_1 = self.target_encoder(
+                s_t_plus_1).detach()  # z_{t+1}' (this is the prediction target)
 
         # Embed action
-        embedded_action = self.action_embedding(action) # a_t_emb
+        embedded_action = self.action_embedding(action)  # a_t_emb
 
         # Predict the target representation of s_t+1 using target_encoded_s_t and action
         # Input to predictor: representation of s_t from target network, and action
-        predictor_input = torch.cat((target_encoded_s_t, embedded_action), dim=-1)
-        predicted_s_t_plus_1_embedding = self.predictor(predictor_input) # \hat{z}_{t+1} (output of predictor)
-        
+        predictor_input = torch.cat(
+            (target_encoded_s_t, embedded_action), dim=-1)
+        predicted_s_t_plus_1_embedding = self.predictor(
+            predictor_input)  # \hat{z}_{t+1} (output of predictor)
+
         # Generate representations using ONLINE encoder (these are learnable, for VICReg etc.)
         # These are typically NOT used for the main JEPA prediction loss but for auxiliary losses.
         online_encoded_s_t = self.online_encoder(s_t)                 # z_t
         online_encoded_s_t_plus_1 = self.online_encoder(s_t_plus_1)   # z_{t+1}
-        
+
         # Return values for loss calculation:
         # 1. predicted_s_t_plus_1_embedding: Output of the predictor. This is compared against target_encoded_s_t_plus_1.
         # 2. target_encoded_s_t_plus_1:    The target for the predictor (from target net, detached).

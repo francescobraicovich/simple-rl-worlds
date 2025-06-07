@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
 class DINOLoss(nn.Module):
     """
     A DINO-inspired auxiliary loss focusing on embedding centering.
@@ -16,6 +17,7 @@ class DINOLoss(nn.Module):
         eps (float): Small epsilon for numerical stability if needed (not directly used in current formulation
                      but good practice for similar modules). Defaults to 1e-5.
     """
+
     def __init__(self, out_dim: int, center_ema_decay: float = 0.9, eps: float = 1e-5):
         super().__init__()
         self.out_dim = out_dim
@@ -33,7 +35,8 @@ class DINOLoss(nn.Module):
         Args:
             batch_mean (torch.Tensor): The mean of the current batch of embeddings.
         """
-        self.center = self.center * self.center_ema_decay + batch_mean * (1 - self.center_ema_decay)
+        self.center = self.center * self.center_ema_decay + \
+            batch_mean * (1 - self.center_ema_decay)
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         """
@@ -51,15 +54,17 @@ class DINOLoss(nn.Module):
                 f"and feature_dim must match out_dim={self.out_dim}. Got shape {z.shape}"
             )
 
-        batch_mean = torch.mean(z, dim=0, keepdim=True) # Shape (1, D)
+        batch_mean = torch.mean(z, dim=0, keepdim=True)  # Shape (1, D)
 
         # Calculate the loss: (batch_mean - self.center)^2
         # This encourages the batch mean to be close to the EMA center.
-        centering_loss = (batch_mean - self.center.detach()).pow(2).sum() # Detach center as it's target
+        centering_loss = (batch_mean - self.center.detach()
+                          ).pow(2).sum()  # Detach center as it's target
 
         # Update the center using EMA after computing the loss with the old center
-        if self.training: # Only update center during training
-             self._update_center(batch_mean.detach()) # Detach batch_mean for update if z requires grad
+        if self.training:  # Only update center during training
+            # Detach batch_mean for update if z requires grad
+            self._update_center(batch_mean.detach())
 
         return centering_loss
 
@@ -86,31 +91,37 @@ if __name__ == '__main__':
     # Example Usage
     batch_size, embed_dim = 128, 256
     dino_loss_fn = DINOLoss(out_dim=embed_dim, center_ema_decay=0.9)
-    dino_loss_fn.train() # Set to training mode to update center
+    dino_loss_fn.train()  # Set to training mode to update center
 
     print(f"Initial center: {dino_loss_fn.center}")
 
     # Simulate a few batches
     for i in range(5):
-        z_embeddings = torch.randn(batch_size, embed_dim) + i # Shift mean over batches
+        # Shift mean over batches
+        z_embeddings = torch.randn(batch_size, embed_dim) + i
 
         # Using calculate_reg_terms
-        total_loss, main_loss_component, _ = dino_loss_fn.calculate_reg_terms(z_embeddings)
+        total_loss, main_loss_component, _ = dino_loss_fn.calculate_reg_terms(
+            z_embeddings)
         # Alternatively, use forward directly:
         # total_loss = dino_loss_fn(z_embeddings)
 
         print(f"\nBatch {i+1}:")
-        print(f"  Input z mean: {z_embeddings.mean(dim=0, keepdim=True)[0, :3]}...") # Print first 3 dims
+        # Print first 3 dims
+        print(
+            f"  Input z mean: {z_embeddings.mean(dim=0, keepdim=True)[0, :3]}...")
         print(f"  Centering Loss: {total_loss.item():.4f}")
         print(f"  Updated center: {dino_loss_fn.center[0, :3]}...")
 
     # Test in eval mode (center should not update)
     dino_loss_fn.eval()
-    print(f"\nCenter before eval batch (should remain same): {dino_loss_fn.center[0, :3]}...")
+    print(
+        f"\nCenter before eval batch (should remain same): {dino_loss_fn.center[0, :3]}...")
     z_eval_embeddings = torch.randn(batch_size, embed_dim) + 10
     eval_loss, _, _ = dino_loss_fn.calculate_reg_terms(z_eval_embeddings)
     print(f"Eval batch loss: {eval_loss.item():.4f}")
-    print(f"Center after eval batch (should remain same): {dino_loss_fn.center[0, :3]}...")
+    print(
+        f"Center after eval batch (should remain same): {dino_loss_fn.center[0, :3]}...")
 
     # Test input validation
     try:
