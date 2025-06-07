@@ -5,16 +5,16 @@ input_channels: 3 # Number of channels in the input image (e.g., 3 for RGB, 1 fo
 image_size: 64    # Target size (height and width) for processed images
 
 # Data Collection
-num_episodes_data_collection: 100 # Number of episodes to collect for the dataset
-max_steps_per_episode_data_collection: 100 # Max steps per episode during data collection
+num_episodes_data_collection: 200 # Number of episodes to collect for the dataset
+max_steps_per_episode_data_collection: 250 # Max steps per episode during data collection
 
 # Training Configuration
-num_epochs: 10
-batch_size: 32
+num_epochs: 100
+batch_size: 64
 learning_rate: 0.0003
 learning_rate_jepa: 0.0003 # Can be different from the main learning_rate
-num_workers: 4 # For DataLoader
-log_interval: 50 # Log training progress every N batches
+num_workers: 6 # For DataLoader
+log_interval: 100000 # Log training progress every N batches
 
 # Encoder Configuration
 encoder_type: "cnn"  # Options: "vit", "cnn", "mlp"
@@ -52,10 +52,10 @@ encoder_params:
 # Model-Specific Configurations
 
 # Shared Latent Dimension
-latent_dim: 128 # Output dimension of the encoder, input to predictor/decoder logic for JEPA/StandardEncoderDecoder
+latent_dim: 32 # Output dimension of the encoder, input to predictor/decoder logic for JEPA/StandardEncoderDecoder
 
 # Standard Encoder-Decoder Model
-action_emb_dim: 64      # Dimension for embedding actions
+action_emb_dim: 32      # Dimension for embedding actions
 decoder_dim: 128        # Internal dimension of the Transformer decoder
 # For decoder_depth, decoder_heads, decoder_mlp_dim, train.py attempts to read specific keys like 'decoder_depth'
 # or falls back to legacy keys like 'num_decoder_layers', 'num_heads', 'mlp_dim'.
@@ -89,7 +89,7 @@ reward_predictors:
     activation: "relu"
     use_batch_norm: false
     learning_rate: 0.0003
-    log_interval: 50
+    log_interval: 10000
   jepa_reward_mlp:
     enabled: true
     # Input for JEPA's reward MLP will typically be the output of JEPA's encoder (target or online)
@@ -98,7 +98,7 @@ reward_predictors:
     activation: "relu"
     use_batch_norm: false
     learning_rate: 0.0003
-    log_interval: 50
+    log_interval: 100000
 
 # Legacy/Shared Transformer parameters (These are less critical if using encoder_params and specific decoder params above)
 # num_encoder_layers: 4 # Primarily for old ViT direct init, now effectively superseded by encoder_params.vit.depth
