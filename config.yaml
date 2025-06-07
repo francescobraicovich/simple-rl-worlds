@@ -5,8 +5,8 @@ input_channels: 3 # Number of channels in the input image (e.g., 3 for RGB, 1 fo
 image_size: 64    # Target size (height and width) for processed images
 
 # Data Collection
-num_episodes_data_collection: 10 # Number of episodes to collect for the dataset
-max_steps_per_episode_data_collection: 200 # Max steps per episode during data collection
+num_episodes_data_collection: 100 # Number of episodes to collect for the dataset
+max_steps_per_episode_data_collection: 100 # Max steps per episode during data collection
 
 # Training Configuration
 num_epochs: 10
