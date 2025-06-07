@@ -575,10 +575,6 @@ def main():
                     optimizer_reward_mlp_jepa.step()
                     epoch_loss_reward_jepa += loss_reward_jepa.item()
 
-                    if (reward_batch_idx + 1) % jepa_mlp_config.get('log_interval', 50) == 0:
-                        print(
-                            f"  Epoch {epoch+1}, Reward MLP (JEPA) Batch {reward_batch_idx+1}/{num_train_batches}: Loss {loss_reward_jepa.item():.4f}")
-
         # After all training for the epoch (main models + reward MLPs)
         avg_loss_std = epoch_loss_std / \
             num_train_batches if not early_stop_enc_dec and num_train_batches > 0 else 0
