@@ -70,17 +70,37 @@ decoder_patch_size: 8   # Patch size for reconstructing the output image by the 
 # JEPA Model
 jepa_predictor_hidden_dim: 256 # Hidden dimension for the JEPA predictor MLP
 ema_decay: 0.996              # EMA decay rate for updating the target encoder in JEPA
-vicreg_loss_weight: 1.0       # Weight for the VICReg loss component in JEPA's total loss
+#vicreg_loss_weight: 1.0       # Weight for the VICReg loss component in JEPA's total loss
 # VICRegLoss coefficients (sim_coeff, std_coeff, cov_coeff) are currently set to defaults
 # within train.py when VICRegLoss is instantiated. To configure them from here,
 # add them to this config file (e.g., vicreg_sim_coeff: 25.0) and modify train.py
 # to pass these values to the VICRegLoss constructor.
 # Example:
-# vicreg_sim_coeff: 25.0
-# vicreg_std_coeff: 25.0
-# vicreg_cov_coeff: 1.0
+# #vicreg_sim_coeff: 25.0
+# #vicreg_std_coeff: 25.0
+# #vicreg_cov_coeff: 1.0
 
 # Legacy/Shared Transformer parameters (These are less critical if using encoder_params and specific decoder params above)
 # num_encoder_layers: 4 # Primarily for old ViT direct init, now effectively superseded by encoder_params.vit.depth
 # num_heads: 6          # Legacy, consider using encoder_params.vit.heads and specific decoder_heads
 # mlp_dim: 256          # Legacy, consider using encoder_params.vit.mlp_dim and specific decoder_mlp_dim
+
+auxiliary_loss:
+  type: "vicreg"  # Options: "vicreg", "barlow_twins", "dino"
+  weight: 1.0     # General weight for the chosen auxiliary loss
+  params:
+    vicreg:
+      # sim_coeff is not used by calculate_reg_terms, but kept for completeness if full VICReg was used.
+      # For JEPA's use of calculate_reg_terms, only std_coeff and cov_coeff are relevant.
+      sim_coeff: 0.0  # Default to 0 as per current train.py for reg_terms
+      std_coeff: 25.0
+      cov_coeff: 1.0
+      eps: 0.0001     # Default VICRegLoss epsilon
+    barlow_twins:
+      lambda_param: 0.0051 # Common value, e.g. from SimCLR paper for similar scale
+      eps: 0.00001    # Default BarlowTwinsLoss epsilon
+      scale_loss: 1.0   # Default BarlowTwinsLoss scale_loss
+    dino:
+      # out_dim for DINOLoss will be set programmatically from model's latent_dim in train.py
+      center_ema_decay: 0.9 # Default DINOLoss center_ema_decay
+      eps: 0.00001        # Default DINOLoss epsilon
