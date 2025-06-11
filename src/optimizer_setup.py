@@ -1,47 +1,76 @@
 # Contents for src/optimizer_setup.py
+import torch
 import torch.optim as optim
 
-def initialize_optimizers(models, config):
+def initialize_optimizers(models_map, config): # Renamed models to models_map for clarity
     optimizers = {}
 
     # Optimizer for Standard Encoder-Decoder
-    if models.get('std_enc_dec'):
+    std_enc_dec_model = models_map.get('std_enc_dec')
+    if std_enc_dec_model:
         optimizer_std_enc_dec = optim.AdamW(
-            models['std_enc_dec'].parameters(),
+            std_enc_dec_model.parameters(),
             lr=config.get('learning_rate', 0.0003)
         )
         optimizers['std_enc_dec'] = optimizer_std_enc_dec
+        print(f"Standard Encoder-Decoder optimizer initialized with LR: {config.get('learning_rate', 0.0003)}")
 
     # Optimizer for JEPA
-    if models.get('jepa'):
+    jepa_model = models_map.get('jepa')
+    if jepa_model:
+        lr_jepa = config.get('learning_rate_jepa', config.get('learning_rate', 0.0003))
         optimizer_jepa = optim.AdamW(
-            models['jepa'].parameters(),
-            lr=config.get('learning_rate_jepa', config.get('learning_rate', 0.0003))
+            jepa_model.parameters(),
+            lr=lr_jepa
         )
         optimizers['jepa'] = optimizer_jepa
+        print(f"JEPA optimizer initialized with LR: {lr_jepa}")
 
     # Optimizer for Encoder-Decoder Reward MLP (if enabled and model exists)
     reward_pred_config = config.get('reward_predictors', {})
     enc_dec_mlp_config = reward_pred_config.get('encoder_decoder_reward_mlp', {})
-    if enc_dec_mlp_config.get('enabled', False) and models.get('reward_mlp_enc_dec'):
+    reward_mlp_enc_dec_model = models_map.get('reward_mlp_enc_dec')
+    if enc_dec_mlp_config.get('enabled', False) and reward_mlp_enc_dec_model:
+        lr_enc_dec_reward = enc_dec_mlp_config.get('learning_rate', 0.0003)
         optimizer_reward_mlp_enc_dec = optim.AdamW(
-            models['reward_mlp_enc_dec'].parameters(),
-            lr=enc_dec_mlp_config.get('learning_rate', 0.0003)
+            reward_mlp_enc_dec_model.parameters(),
+            lr=lr_enc_dec_reward
         )
         optimizers['reward_mlp_enc_dec'] = optimizer_reward_mlp_enc_dec
+        print(f"Encoder-Decoder Reward MLP optimizer initialized with LR: {lr_enc_dec_reward}")
     else:
         optimizers['reward_mlp_enc_dec'] = None
 
-
     # Optimizer for JEPA Reward MLP (if enabled and model exists)
     jepa_mlp_config = reward_pred_config.get('jepa_reward_mlp', {})
-    if jepa_mlp_config.get('enabled', False) and models.get('reward_mlp_jepa'):
+    reward_mlp_jepa_model = models_map.get('reward_mlp_jepa')
+    if jepa_mlp_config.get('enabled', False) and reward_mlp_jepa_model:
+        lr_jepa_reward = jepa_mlp_config.get('learning_rate', 0.0003)
         optimizer_reward_mlp_jepa = optim.AdamW(
-            models['reward_mlp_jepa'].parameters(),
-            lr=jepa_mlp_config.get('learning_rate', 0.0003)
+            reward_mlp_jepa_model.parameters(),
+            lr=lr_jepa_reward
         )
         optimizers['reward_mlp_jepa'] = optimizer_reward_mlp_jepa
+        print(f"JEPA Reward MLP optimizer initialized with LR: {lr_jepa_reward}")
     else:
         optimizers['reward_mlp_jepa'] = None
+
+    # Optimizer for JEPA State Decoder (if model exists)
+    jepa_decoder_model = models_map.get('jepa_decoder')
+    if jepa_decoder_model:
+        jepa_decoder_training_config = config.get('jepa_decoder_training', {})
+        # Fallback: jepa_decoder LR -> global LR -> default 0.0003
+        learning_rate_jepa_decoder = jepa_decoder_training_config.get('learning_rate', config.get('learning_rate', 0.0003))
+
+        # Using Adam for JEPA State Decoder as specified, not AdamW like others, can be changed if needed.
+        optimizer_jepa_decoder = torch.optim.Adam(
+            jepa_decoder_model.parameters(),
+            lr=learning_rate_jepa_decoder
+        )
+        optimizers['jepa_decoder'] = optimizer_jepa_decoder
+        print(f"JEPA State Decoder optimizer initialized with LR: {learning_rate_jepa_decoder}")
+    else:
+        optimizers['jepa_decoder'] = None
+        # No message needed if decoder itself is None, model_setup would have printed it's disabled.
 
     return optimizers

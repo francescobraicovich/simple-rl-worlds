@@ -3,6 +3,7 @@ import torch
 from src.models.encoder_decoder import StandardEncoderDecoder
 from src.models.jepa import JEPA
 from src.models.mlp import RewardPredictorMLP
+from src.models.jepa_state_decoder import JEPAStateDecoder # Added import
 
 def initialize_models(config, action_dim, device, image_h_w, input_channels):
     models = {}
@@ -45,7 +46,7 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
         decoder_heads=config.get('decoder_heads', config.get('num_heads', 6)),
         decoder_mlp_dim=config.get('decoder_mlp_dim', config.get('mlp_dim', 256)),
         output_channels=input_channels,
-        output_image_size=image_h_w,
+        output_image_size=image_h_w if isinstance(image_h_w, tuple) else (image_h_w, image_h_w),
         decoder_dropout=config.get('decoder_dropout', 0.0),
         encoder_type=encoder_type,
         encoder_params=specific_encoder_params,
@@ -62,7 +63,7 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
         action_emb_dim=config.get('action_emb_dim', config.get('latent_dim', 128)),
         latent_dim=config.get('latent_dim', 128),
         predictor_hidden_dim=config.get('jepa_predictor_hidden_dim', 256),
-        predictor_output_dim=config.get('latent_dim', 128),
+        predictor_output_dim=config.get('latent_dim', 128), # JEPA predictor output dim is same as latent_dim
         ema_decay=config.get('ema_decay', 0.996),
         encoder_type=encoder_type,
         encoder_params=specific_encoder_params
@@ -72,11 +73,14 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
     reward_mlp_enc_dec = None
     if enc_dec_mlp_config.get('enabled', False):
         print("Initializing Reward MLP for Encoder-Decoder...")
+        # Ensure image_h_w is treated as a single dimension if it's an int for area calculation
+        img_h = image_h_w[0] if isinstance(image_h_w, tuple) else image_h_w
+        img_w = image_h_w[1] if isinstance(image_h_w, tuple) else image_h_w
         if enc_dec_mlp_config.get('input_type') == "flatten":
-            input_dim_enc_dec = input_channels * image_h_w * image_h_w
+            input_dim_enc_dec = input_channels * img_h * img_w
         else:
             print(f"Warning: encoder_decoder_reward_mlp input_type is '{enc_dec_mlp_config.get('input_type')}'. Defaulting to flattened image dim.")
-            input_dim_enc_dec = input_channels * image_h_w * image_h_w
+            input_dim_enc_dec = input_channels * img_h * img_w
 
         reward_mlp_enc_dec = RewardPredictorMLP(
             input_dim=input_dim_enc_dec,
@@ -85,12 +89,12 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
             use_batch_norm=enc_dec_mlp_config.get('use_batch_norm', False)
         ).to(device)
         print(f"Encoder-Decoder Reward MLP: {reward_mlp_enc_dec}")
-    models['reward_mlp_enc_dec'] = reward_mlp_enc_dec # Will be None if not enabled
+    models['reward_mlp_enc_dec'] = reward_mlp_enc_dec
 
     reward_mlp_jepa = None
     if jepa_mlp_config.get('enabled', False):
         print("Initializing Reward MLP for JEPA...")
-        input_dim_jepa = config.get('latent_dim', 128)
+        input_dim_jepa = config.get('latent_dim', 128) # JEPA's reward MLP uses latent_dim
         reward_mlp_jepa = RewardPredictorMLP(
             input_dim=input_dim_jepa,
             hidden_dims=jepa_mlp_config.get('hidden_dims', [128, 64]),
@@ -98,6 +102,31 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
             use_batch_norm=jepa_mlp_config.get('use_batch_norm', False)
         ).to(device)
         print(f"JEPA Reward MLP: {reward_mlp_jepa}")
-    models['reward_mlp_jepa'] = reward_mlp_jepa # Will be None if not enabled
+    models['reward_mlp_jepa'] = reward_mlp_jepa
+
+    # Initialize JEPA State Decoder
+    jepa_decoder_config = config.get('jepa_decoder_training', {})
+    if jepa_decoder_config.get('enabled', False):
+        print("Initializing JEPA State Decoder...")
+
+        # Ensure image_h_w is a tuple for JEPAStateDecoder
+        current_image_h_w = image_h_w if isinstance(image_h_w, tuple) else (image_h_w, image_h_w)
+
+        jepa_decoder = JEPAStateDecoder(
+            input_latent_dim=config.get('latent_dim'), # JEPA's predictor output dim
+            decoder_dim=config.get('decoder_dim', 128),
+            decoder_depth=config.get('decoder_depth', 3),
+            decoder_heads=config.get('decoder_heads', 4),
+            decoder_mlp_dim=config.get('decoder_mlp_dim', 256),
+            output_channels=input_channels,
+            output_image_size=current_image_h_w,
+            decoder_dropout=config.get('decoder_dropout', 0.0),
+            decoder_patch_size=config.get('decoder_patch_size', config.get('patch_size', 8)) # Default to global patch_size if specific not found
+        ).to(device)
+        models['jepa_decoder'] = jepa_decoder
+        print(f"JEPA State Decoder: {jepa_decoder}")
+    else:
+        models['jepa_decoder'] = None
+        print("JEPA State Decoder is disabled in the configuration.")
 
     return models
