@@ -145,3 +145,18 @@ early_stopping:
   checkpoint_path_enc_dec: "best_encoder_decoder.pth"
   checkpoint_path_jepa: "best_jepa.pth"
   validation_split: 0.2 # Proportion of data to use for validation
+
+jepa_decoder_training:
+  enabled: false # Set to true to enable training this decoder
+  num_epochs: 50
+  learning_rate: 0.0003
+  checkpoint_path: "best_jepa_decoder.pth"
+  # Add early stopping parameters similar to the main ones if desired
+  early_stopping:
+    patience: 10
+    delta: 0.001
+    metric: "val_loss_jepa_decoder" # Example metric
+
+training_options: # New section name, as 'training_configuration' is too generic
+  skip_std_enc_dec_training_if_loaded: false
+  skip_jepa_training_if_loaded: false
