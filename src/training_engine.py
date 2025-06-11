@@ -136,7 +136,7 @@ def run_training_epochs(
                     if aux_loss_fn is not None and aux_loss_weight > 0:
                         aux_term_s_t, _, _ = aux_loss_fn.calculate_reg_terms(online_s_t_emb)
                         aux_term_s_t_plus_1, _, _ = aux_loss_fn.calculate_reg_terms(online_s_t_plus_1_emb)
-                        current_loss_jepa_aux = (aux_term_s_t + aux_term_s_t_plus_1_val) * 0.5 # Typo fixed: aux_term_s_t_plus_1_val -> aux_term_s_t_plus_1
+                        current_loss_jepa_aux = (aux_term_s_t + aux_term_s_t_plus_1) * 0.5
 
                     current_loss_jepa_aux_item = current_loss_jepa_aux.item()
                     total_loss_jepa = loss_jepa_pred + current_loss_jepa_aux * aux_loss_weight
