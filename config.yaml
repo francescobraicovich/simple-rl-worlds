@@ -151,6 +151,7 @@ jepa_decoder_training:
   num_epochs: 50
   learning_rate: 0.0003
   checkpoint_path: "best_jepa_decoder.pth"
+  validation_plot_dir: "validation_plots/" # New line
   # Add early stopping parameters similar to the main ones if desired
   early_stopping:
     patience: 10
