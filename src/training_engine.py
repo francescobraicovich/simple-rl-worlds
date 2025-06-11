@@ -384,7 +384,8 @@ def run_training_epochs(
                             os.makedirs(validation_plot_dir, exist_ok=True)
 
                             num_plot_samples = min(4, s_t_val.shape[0]) # Plot up to 4 samples
-                            for i in range(num_plot_samples):
+                            random_indices = np.random.choice(s_t_val.shape[0], num_plot_samples, replace=False) if s_t_val.shape[0] > num_plot_samples else range(s_t_val.shape[0])
+                            for i in random_indices:
                                 true_img = s_t_plus_1_val[i].cpu().numpy()
                                 pred_img = reconstructed_s_t_plus_1_val[i].cpu().numpy()
 
