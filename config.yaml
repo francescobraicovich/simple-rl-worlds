@@ -9,8 +9,14 @@ num_episodes_data_collection: 200 # Number of episodes to collect for the datase
 max_steps_per_episode_data_collection: 250 # Max steps per episode during data collection
 
 # Dataset Management
-load_dataset: false
-dataset_name: ""
+dataset_dir: "datasets/"
+load_dataset_path: "" # empty string means don't load, otherwise it's a path relative to dataset_dir
+dataset_filename: "collected_data.pkl"
+
+# Model Loading Configuration
+model_dir: "trained_models/"
+load_model_path: "" # empty string means don't load, otherwise it's a path relative to model_dir
+model_type_to_load: "std_enc_dec" # options: "std_enc_dec", "jepa", or potentially others if the system supports more
 
 # Training Configuration
 num_epochs: 100

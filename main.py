@@ -22,6 +22,14 @@ def main():
     )
     print(f"Using device: {device}")
 
+    # Create dataset and model directories early
+    model_dir = config.get('model_dir', 'trained_models/')
+    dataset_dir = config.get('dataset_dir', 'datasets/')
+    os.makedirs(model_dir, exist_ok=True)
+    os.makedirs(dataset_dir, exist_ok=True)
+    print(f"Ensured model directory exists: {model_dir}")
+    print(f"Ensured dataset directory exists: {dataset_dir}")
+
     # 3. Get Environment Details
     action_dim, action_type, observation_space = get_env_details(config['environment_name'])
 
@@ -42,6 +50,34 @@ def main():
     image_h_w = config['image_size']
     input_channels = config.get('input_channels', 3)
     models_map = initialize_models(config, action_dim, device, image_h_w, input_channels)
+
+    # --- Model Loading Logic (Part 2) ---
+    load_model_path = config.get('load_model_path', '')
+    model_type_to_load = config.get('model_type_to_load', 'std_enc_dec')
+    # model_dir is already available from directory creation step above
+
+    if load_model_path:
+        full_model_load_path = os.path.join(model_dir, load_model_path)
+        if os.path.exists(full_model_load_path):
+            print(f"Attempting to load pre-trained model from: {full_model_load_path}")
+            loaded_successfully = False
+            if model_type_to_load == 'std_enc_dec' and models_map.get('std_enc_dec'):
+                models_map['std_enc_dec'].load_state_dict(torch.load(full_model_load_path, map_location=device))
+                print(f"Loaded Standard Encoder/Decoder model from {full_model_load_path}")
+                loaded_successfully = True
+            elif model_type_to_load == 'jepa' and models_map.get('jepa'):
+                models_map['jepa'].load_state_dict(torch.load(full_model_load_path, map_location=device))
+                print(f"Loaded JEPA model from {full_model_load_path}")
+                loaded_successfully = True
+            # Add other model types here if needed, e.g., for reward MLPs if they are saved/loaded independently
+
+            if not loaded_successfully:
+                print(f"Warning: Model type '{model_type_to_load}' specified for loading, but not found in configured models_map or not supported by current loading logic.")
+        else:
+            print(f"Warning: Specified model path '{full_model_load_path}' not found. Proceeding with default initialization.")
+    else:
+        print("No pre-trained model path specified in 'load_model_path'. Models will be initialized from scratch or use their default initialization.")
+    # --- End of Model Loading Logic ---
 
     # Extract models for convenience if needed, or just pass models_map
     std_enc_dec = models_map.get('std_enc_dec')
@@ -77,25 +113,29 @@ def main():
 
     # 9. Post-Training: Load best models and set to eval mode
     # Checkpoint paths from config (used by training_engine for saving, here for loading)
-    checkpoint_path_enc_dec = early_stopping_config.get('checkpoint_path_enc_dec', 'best_encoder_decoder.pth')
-    checkpoint_path_jepa = early_stopping_config.get('checkpoint_path_jepa', 'best_jepa.pth')
+    # model_dir is available from the beginning of main()
+    best_checkpoint_filename_enc_dec = early_stopping_config.get('checkpoint_path_enc_dec', 'best_encoder_decoder.pth')
+    best_checkpoint_filename_jepa = early_stopping_config.get('checkpoint_path_jepa', 'best_jepa.pth')
+
+    full_checkpoint_path_enc_dec = os.path.join(model_dir, best_checkpoint_filename_enc_dec)
+    full_checkpoint_path_jepa = os.path.join(model_dir, best_checkpoint_filename_jepa)
 
     print("Loading best models (if available) after training...")
-    if std_enc_dec and os.path.exists(checkpoint_path_enc_dec):
-        print(f"Loading best Encoder/Decoder model from {checkpoint_path_enc_dec}")
-        std_enc_dec.load_state_dict(torch.load(checkpoint_path_enc_dec, map_location=device))
+    if std_enc_dec and os.path.exists(full_checkpoint_path_enc_dec):
+        print(f"Loading best Encoder/Decoder model from {full_checkpoint_path_enc_dec}")
+        std_enc_dec.load_state_dict(torch.load(full_checkpoint_path_enc_dec, map_location=device))
     elif std_enc_dec:
-        print(f"No checkpoint found for Encoder/Decoder at {checkpoint_path_enc_dec}. Model remains in its last training state.")
+        print(f"No checkpoint found for Encoder/Decoder at {full_checkpoint_path_enc_dec}. Model remains in its last training state.")
 
     # Ensure model is in eval mode even if no checkpoint was loaded
     if std_enc_dec:
         std_enc_dec.eval()
 
-    if jepa_model and os.path.exists(checkpoint_path_jepa):
-        print(f"Loading best JEPA model from {checkpoint_path_jepa}")
-        jepa_model.load_state_dict(torch.load(checkpoint_path_jepa, map_location=device))
+    if jepa_model and os.path.exists(full_checkpoint_path_jepa):
+        print(f"Loading best JEPA model from {full_checkpoint_path_jepa}")
+        jepa_model.load_state_dict(torch.load(full_checkpoint_path_jepa, map_location=device))
     elif jepa_model:
-        print(f"No checkpoint found for JEPA at {checkpoint_path_jepa}. Model remains in its last training state.")
+        print(f"No checkpoint found for JEPA at {full_checkpoint_path_jepa}. Model remains in its last training state.")
 
     if jepa_model:
         jepa_model.eval()

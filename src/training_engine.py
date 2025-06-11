@@ -37,10 +37,12 @@ def run_training_epochs(
 
     # Configs
     early_stopping_config = config.get('early_stopping', {})
+    model_dir = config.get('model_dir', 'trained_models/') # Read model_dir
     patience = early_stopping_config.get('patience', 10)
     delta = early_stopping_config.get('delta', 0.001)
-    checkpoint_path_enc_dec = early_stopping_config.get('checkpoint_path_enc_dec', 'best_encoder_decoder.pth')
-    checkpoint_path_jepa = early_stopping_config.get('checkpoint_path_jepa', 'best_jepa.pth')
+    # Prepend model_dir to checkpoint paths
+    checkpoint_path_enc_dec = os.path.join(model_dir, early_stopping_config.get('checkpoint_path_enc_dec', 'best_encoder_decoder.pth'))
+    checkpoint_path_jepa = os.path.join(model_dir, early_stopping_config.get('checkpoint_path_jepa', 'best_jepa.pth'))
     # validation_split is used to decide if validation runs, passed implicitly by val_dataloader's existence
 
     enc_dec_mlp_config = config.get('reward_predictors', {}).get('encoder_decoder_reward_mlp', {})
@@ -190,7 +192,9 @@ def run_training_epochs(
             if std_enc_dec and not early_stop_enc_dec:
                 if avg_val_loss_std < best_val_loss_enc_dec - delta:
                     best_val_loss_enc_dec = avg_val_loss_std
-                    if checkpoint_path_enc_dec: torch.save(std_enc_dec.state_dict(), checkpoint_path_enc_dec)
+                    if checkpoint_path_enc_dec:
+                        os.makedirs(model_dir, exist_ok=True) # Ensure model_dir exists
+                        torch.save(std_enc_dec.state_dict(), checkpoint_path_enc_dec)
                     epochs_no_improve_enc_dec = 0
                     print(f"  Encoder/Decoder: Val loss improved. Saved model to {checkpoint_path_enc_dec}")
                 else:
@@ -203,7 +207,9 @@ def run_training_epochs(
             if jepa_model and not early_stop_jepa:
                 if avg_total_val_loss_jepa < best_val_loss_jepa - delta:
                     best_val_loss_jepa = avg_total_val_loss_jepa
-                    if checkpoint_path_jepa: torch.save(jepa_model.state_dict(), checkpoint_path_jepa)
+                    if checkpoint_path_jepa:
+                        os.makedirs(model_dir, exist_ok=True) # Ensure model_dir exists
+                        torch.save(jepa_model.state_dict(), checkpoint_path_jepa)
                     epochs_no_improve_jepa = 0
                     print(f"  JEPA: Val loss improved. Saved model to {checkpoint_path_jepa}")
                 else:
