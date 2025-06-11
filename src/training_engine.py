@@ -2,6 +2,8 @@
 import torch
 import torch.nn.functional as F # For F.one_hot
 import os # For os.path.exists in early stopping save/load
+import matplotlib.pyplot as plt
+import numpy as np
 
 # Note: Loss functions (mse_loss_fn, aux_loss_fn, aux_loss_name, aux_loss_weight)
 # will be passed in via the 'losses_map' dictionary.
@@ -358,7 +360,7 @@ def run_training_epochs(
                 num_val_batches_decoder = len(val_dataloader)
 
                 with torch.no_grad():
-                    for s_t_val, a_t_val, _, s_t_plus_1_val in val_dataloader:
+                    for val_batch_idx, (s_t_val, a_t_val, _, s_t_plus_1_val) in enumerate(val_dataloader): # Added enumerate for val_batch_idx
                         s_t_val, s_t_plus_1_val = s_t_val.to(device), s_t_plus_1_val.to(device)
                         if action_type == 'discrete':
                             if a_t_val.ndim == 1: a_t_val = a_t_val.unsqueeze(1)
@@ -375,6 +377,46 @@ def run_training_epochs(
                         reconstructed_s_t_plus_1_val = jepa_decoder(jepa_predictor_output_val)
                         val_loss_dec = mse_loss_fn(reconstructed_s_t_plus_1_val, s_t_plus_1_val)
                         epoch_val_loss_jepa_decoder += val_loss_dec.item()
+
+                        # --- Plotting logic for JEPA State Decoder validation ---
+                        if val_batch_idx == 0: # Plot only for the first validation batch to save time/space, or make configurable
+                            validation_plot_dir = jepa_decoder_training_config.get('validation_plot_dir', "validation_plots/")
+                            os.makedirs(validation_plot_dir, exist_ok=True)
+
+                            num_plot_samples = min(4, s_t_val.shape[0]) # Plot up to 4 samples
+                            for i in range(num_plot_samples):
+                                true_img = s_t_plus_1_val[i].cpu().numpy()
+                                pred_img = reconstructed_s_t_plus_1_val[i].cpu().numpy()
+
+                                # Handle image tensor format (C, H, W) -> (H, W, C) or (H, W)
+                                if true_img.shape[0] == 1 or true_img.shape[0] == 3: # Grayscale or RGB
+                                    true_img = np.transpose(true_img, (1, 2, 0))
+                                    pred_img = np.transpose(pred_img, (1, 2, 0))
+
+                                if true_img.shape[-1] == 1: # Grayscale, squeeze channel dim
+                                    true_img = true_img.squeeze(axis=2)
+                                    pred_img = pred_img.squeeze(axis=2)
+
+                                # Clip values for visualization if they are floats
+                                if true_img.dtype == np.float32 or true_img.dtype == np.float64:
+                                    true_img = np.clip(true_img, 0, 1)
+                                    pred_img = np.clip(pred_img, 0, 1)
+
+                                fig, axes = plt.subplots(1, 2, figsize=(8, 4))
+                                axes[0].imshow(true_img)
+                                axes[0].set_title("True Image")
+                                axes[0].axis('off')
+
+                                axes[1].imshow(pred_img)
+                                axes[1].set_title("Predicted Image")
+                                axes[1].axis('off')
+
+                                plot_filename = os.path.join(validation_plot_dir, f"epoch_{decoder_epoch+1}_valbatch_{val_batch_idx}_sample_{i}.png")
+                                plt.savefig(plot_filename)
+                                plt.close(fig)
+                            print(f"  JEPA Decoder: Saved {num_plot_samples} validation image samples to {validation_plot_dir} for epoch {decoder_epoch+1}, batch {val_batch_idx}")
+                        # --- End plotting logic ---
+
                 if early_stop_jepa_decoder: break # from epoch loop if error in val
 
                 avg_val_loss_jepa_decoder = epoch_val_loss_jepa_decoder / num_val_batches_decoder if num_val_batches_decoder > 0 else float('inf')
