@@ -29,6 +29,7 @@ def main():
     print(f"Ensured dataset directory exists: {dataset_dir}")
 
     # 3. Get Environment Details
+    print("Fetching environment details...")
     action_dim, action_type, observation_space = get_env_details(config['environment_name'])
 
     # 4. Prepare Dataloaders
