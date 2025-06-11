@@ -3,3 +3,5 @@ torch
 numpy
 einops
 pyyaml
+matplotlib
+ale-py
