@@ -2,8 +2,8 @@ import torch
 import os # For path joining and checking existence
 
 # Import functions from the new modules in the 'src' directory
-from src.config_utils import load_config
-from src.env_utils import get_env_details
+from utils.config_utils import load_config
+from utils.env_utils import get_env_details
 from src.data_handling import prepare_dataloaders
 from src.model_setup import initialize_models
 from src.loss_setup import initialize_loss_functions
