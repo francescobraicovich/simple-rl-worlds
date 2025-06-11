@@ -1,5 +1,5 @@
 # Environment Configuration
-environment_name: "CarRacing-v3" # Example, choose a relevant Gym environment (e.g., "CarRacing-v2", "ALE/Pong-v5")
+environment_name: "CarRacing-v3" # Example, choose a relevant Gym environment (e.g., "CarRacing-v3", "ALE/Pong-v5")
 # For image-based environments like CarRacing or Atari, ensure appropriate wrappers are used if needed by the env.
 input_channels: 3 # Number of channels in the input image (e.g., 3 for RGB, 1 for grayscale, 4 if using FrameStack)
 image_size: 64    # Target size (height and width) for processed images
@@ -10,16 +10,16 @@ max_steps_per_episode_data_collection: 250 # Max steps per episode during data c
 
 # Dataset Management
 dataset_dir: "datasets/"
-load_dataset_path: "" # empty string means don't load, otherwise it's a path relative to dataset_dir
+load_dataset_path: "car_racing_v3.pkl" # empty string means don't load, otherwise it's a path relative to dataset_dir
 dataset_filename: "collected_data.pkl"
 
 # Model Loading Configuration
 model_dir: "trained_models/"
-load_model_path: "" # empty string means don't load, otherwise it's a path relative to model_dir
-model_type_to_load: "std_enc_dec" # options: "std_enc_dec", "jepa", or potentially others if the system supports more
+load_model_path: "best_jepa.pth" # empty string means don't load, otherwise it's a path relative to model_dir
+model_type_to_load: "jepa" # options: "std_enc_dec", "jepa", or potentially others if the system supports more
 
 # Training Configuration
-num_epochs: 100
+num_epochs: 1
 batch_size: 64
 learning_rate: 0.0003
 learning_rate_jepa: 0.0003 # Can be different from the main learning_rate
@@ -147,7 +147,7 @@ early_stopping:
   validation_split: 0.2 # Proportion of data to use for validation
 
 jepa_decoder_training:
-  enabled: false # Set to true to enable training this decoder
+  enabled: true # Set to true to enable training this decoder
   num_epochs: 50
   learning_rate: 0.0003
   checkpoint_path: "best_jepa_decoder.pth"
