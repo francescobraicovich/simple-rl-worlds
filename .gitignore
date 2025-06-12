@@ -176,3 +176,5 @@ cython_debug/
 /datasets
 /validation_plots
 /trained_models
+
+.DS_Store
