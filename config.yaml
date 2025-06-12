@@ -10,16 +10,16 @@ max_steps_per_episode_data_collection: 250 # Max steps per episode during data c
 
 # Dataset Management
 dataset_dir: "datasets/"
-load_dataset_path: "" # empty string means don't load, otherwise it's a path relative to dataset_dir
+load_dataset_path: "car_racing_v3.pkl" # empty string means don't load, otherwise it's a path relative to dataset_dir
 dataset_filename: "collected_data.pkl"
 
 # Model Loading Configuration
 model_dir: "trained_models/"
 load_model_path: "" # empty string means don't load, otherwise it's a path relative to model_dir
-model_type_to_load: "jepa" # options: "std_enc_dec", "jepa", or potentially others if the system supports more
+model_type_to_load: "" # options: "std_enc_dec", "jepa", or potentially others if the system supports more
 
 # Training Configuration
-num_epochs: 1
+num_epochs: 10
 batch_size: 64
 learning_rate: 0.0003
 learning_rate_jepa: 0.0003 # Can be different from the main learning_rate
@@ -124,7 +124,7 @@ auxiliary_loss:
       # For JEPA's use of calculate_reg_terms, only std_coeff and cov_coeff are relevant.
       sim_coeff: 0.0  # Default to 0 as per current train.py for reg_terms
       std_coeff: 25.0
-      cov_coeff: 1.0
+      cov_coeff: 25.0
       eps: 0.0001     # Default VICRegLoss epsilon
     barlow_twins:
       lambda_param: 0.0051 # Common value, e.g. from SimCLR paper for similar scale
