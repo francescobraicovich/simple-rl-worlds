@@ -1,7 +1,7 @@
 # Contents for src/data_handling.py
 import torch
 from torch.utils.data import DataLoader
-from src.utils.data_utils import collect_random_episodes # Absolute import from src
+from src.utils.data_utils import collect_random_episodes, collect_ppo_episodes # Absolute import from src
 
 def prepare_dataloaders(config, validation_split):
     print("Starting data collection...")
@@ -9,12 +9,25 @@ def prepare_dataloaders(config, validation_split):
     image_h_w = config['image_size']
     img_size_tuple = (image_h_w, image_h_w)
 
-    train_dataset, val_dataset = collect_random_episodes(
-        config=config, # Pass the full config object
-        max_steps_per_episode=config.get(key_max_steps, 200),
-        image_size=img_size_tuple,
-        validation_split_ratio=validation_split
-    )
+    ppo_config = config.get('ppo_agent', {})
+    use_ppo = ppo_config.get('enabled', False)
+
+    if use_ppo:
+        print("Using PPO agent for data collection.")
+        train_dataset, val_dataset = collect_ppo_episodes(
+            config=config, # Pass the full config object
+            max_steps_per_episode=config.get(key_max_steps, 200),
+            image_size=img_size_tuple,
+            validation_split_ratio=validation_split
+        )
+    else:
+        print("Using random actions for data collection.")
+        train_dataset, val_dataset = collect_random_episodes(
+            config=config, # Pass the full config object
+            max_steps_per_episode=config.get(key_max_steps, 200),
+            image_size=img_size_tuple,
+            validation_split_ratio=validation_split
+        )
 
     if len(train_dataset) == 0:
         print("No training data collected. Exiting program or handling as error.")
