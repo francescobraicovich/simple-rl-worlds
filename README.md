@@ -6,11 +6,11 @@ This project implements and compares two world model architectures for learning 
 
 Both architectures are designed to learn representations of the environment and predict future states or state embeddings. The primary goal is to investigate the quality of learned representations and their utility for downstream tasks, particularly for research purposes.
 
-## 📚 Full Documentation
+## Full Documentation
 
 For detailed information on the project, including in-depth explanations of the models, data collection, configuration, and evaluation methodologies, please refer to our comprehensive documentation:
 
-➡️ **[View Full Documentation in `docs/`](docs/)**
+**[View Full Documentation in `docs/`](docs/)**
 
 We recommend starting with `docs/index.md` (if available) or browsing the individual Markdown files in the `docs/` directory for specific topics. The `docs/06_usage_guide.md` is particularly helpful for getting started.
 
@@ -47,7 +47,7 @@ We recommend starting with `docs/index.md` (if available) or browsing the indivi
 └── tests/              # Unit and integration tests
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Setup
 
@@ -67,7 +67,7 @@ We recommend starting with `docs/index.md` (if available) or browsing the indivi
     ```
     For specific Gymnasium environments (e.g., Atari, Box2D), additional installations might be needed.
 
-👉 For detailed setup instructions, including environment-specific installations, please see **[`docs/06_usage_guide.md`](docs/06_usage_guide.md)**.
+For detailed setup instructions, including environment-specific installations, please see **[`docs/06_usage_guide.md`](docs/06_usage_guide.md)**.
 
 ### Running the Training
 
@@ -77,7 +77,7 @@ We recommend starting with `docs/index.md` (if available) or browsing the indivi
     python main.py
     ```
 
-👉 For a comprehensive explanation of all configuration options in `config.yaml` and details on the execution flow, refer to **[`docs/06_usage_guide.md`](docs/06_usage_guide.md)**.
+For a comprehensive explanation of all configuration options in `config.yaml` and details on the execution flow, refer to **[`docs/06_usage_guide.md`](docs/06_usage_guide.md)**.
 
 ## Implemented Architectures
 
@@ -88,14 +88,14 @@ This project provides implementations of the following world model architectures
 *   **Decoder**: A Transformer-based decoder takes the latent state and an embedded action `a_t` to predict the next state image `s_t+1` in pixel space.
 *   **Loss**: Typically Mean Squared Error (MSE) between the predicted `s_t+1` and the actual `s_t+1`.
 
-👉 For a detailed description, see **[`docs/03_encoder_decoder_model.md`](docs/03_encoder_decoder_model.md)**.
+For a detailed description, see **[`docs/03_encoder_decoder_model.md`](docs/03_encoder_decoder_model.md)**.
 
 ### 2. JEPA (Joint Embedding Predictive Architecture)
 *   **Encoders**: Utilizes an *Online Encoder* and an EMA-updated *Target Encoder* (ViT, CNN, or MLP) to process states into embeddings.
 *   **Predictor**: An MLP (or Transformer) predicts the target encoder's embedding of the next state `s_{t+1}` based on the target-encoded current state `s_t` and action `a_t`.
 *   **Loss**: Combines a primary *Prediction Loss* (MSE in embedding space) with an *Auxiliary Loss* (e.g., VICReg, Barlow Twins, DINO) applied to the online encoder's outputs to encourage informative representations.
 
-👉 For a detailed description, see **[`docs/04_jepa_model.md`](docs/04_jepa_model.md)**.
+For a detailed description, see **[`docs/04_jepa_model.md`](docs/04_jepa_model.md)**.
 
 ## Contributing
 
