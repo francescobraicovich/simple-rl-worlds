@@ -6,6 +6,9 @@ from torchvision import transforms as T
 import random  # Added for shuffling episodes
 import os
 import pickle
+from stable_baselines3 import PPO
+from src.rl_agent import create_ppo_agent, train_ppo_agent
+# from stable_baselines3.common.vec_env import DummyVecEnv # Not strictly needed here if rl_agent handles it
 # import cv2 # For image resizing - Removed as torchvision.transforms is used
 
 
@@ -251,7 +254,8 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
                 'max_steps_per_episode': max_steps_per_episode,
                 'validation_split_ratio': validation_split_ratio,
                 'num_train_transitions': len(train_dataset),
-                'num_val_transitions': len(validation_dataset)
+                'num_val_transitions': len(validation_dataset),
+                'collection_method': 'random' # Added collection method
             }
 
             data_to_save = {
@@ -269,6 +273,211 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
         else:
             print("No new data was collected, so dataset will not be saved.")
 
+
+    return train_dataset, validation_dataset
+
+
+def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_split_ratio):
+    env_name = config['environment_name']
+    num_episodes = config['num_episodes_data_collection']
+
+    dataset_dir = config['dataset_dir']
+    load_dataset_filename = config['load_dataset_path']
+    save_dataset_filename = config['dataset_filename']
+
+    os.makedirs(dataset_dir, exist_ok=True)
+
+    data_loaded_successfully = False
+    if load_dataset_filename:
+        dataset_path = os.path.join(dataset_dir, load_dataset_filename)
+        if os.path.exists(dataset_path):
+            print(f"Loading dataset from {dataset_path}...")
+            try:
+                with open(dataset_path, 'rb') as f:
+                    data = pickle.load(f)
+                loaded_train_dataset = data['train_dataset']
+                loaded_val_dataset = data['val_dataset']
+                metadata = data['metadata']
+                loaded_env_name = metadata.get('environment_name')
+                if loaded_env_name != env_name:
+                    print(f"Error: Mismatch between loaded dataset environment ('{loaded_env_name}') and config environment ('{env_name}').")
+                    raise ValueError("Environment mismatch in loaded dataset.")
+                # Check if collection method was PPO, if so, it's likely compatible or what user wants
+                if metadata.get('collection_method') == 'ppo':
+                    print(f"Successfully loaded PPO-collected dataset for environment '{loaded_env_name}' with {metadata.get('num_episodes_collected', 'N/A')} episodes from {dataset_path}.")
+                    data_loaded_successfully = True
+                    return loaded_train_dataset, loaded_val_dataset
+                else:
+                    print(f"Warning: Loaded dataset from {dataset_path} was not collected using PPO (method: {metadata.get('collection_method', 'unknown')}). Proceeding to collect new data with PPO.")
+            except Exception as e:
+                print(f"Error loading dataset from {dataset_path}: {e}. Proceeding to PPO data collection.")
+        else:
+            print(f"Warning: Dataset {dataset_path} not found. Proceeding to PPO data collection.")
+    else:
+        print("`load_dataset_path` is empty. Proceeding to PPO data collection.")
+
+
+    print(f"Collecting data from environment: {env_name} using PPO agent.")
+    try:
+        env = gym.make(env_name, render_mode='rgb_array')
+        print(f"Successfully created env '{env_name}' with render_mode='rgb_array' for PPO collection.")
+    except Exception as e_rgb:
+        print(f"Failed to create env '{env_name}' with render_mode='rgb_array': {e_rgb}. Trying with render_mode=None...")
+        try:
+            env = gym.make(env_name, render_mode=None)
+            print(f"Successfully created env '{env_name}' with render_mode=None for PPO collection.")
+        except Exception as e_none:
+            print(f"Failed to create env '{env_name}' with render_mode=None: {e_none}. Trying without render_mode arg...")
+            env = gym.make(env_name)
+            print(f"Successfully created env '{env_name}' with default render_mode ('{env.render_mode if hasattr(env, 'render_mode') else 'unknown'}') for PPO collection.")
+
+    # PPO Agent Setup
+    ppo_specific_config = config.get('ppo_agent', {})
+    if not ppo_specific_config or not ppo_specific_config.get('enabled', False):
+        print("PPO agent configuration is missing or disabled in config. Cannot collect PPO episodes.")
+        # Return empty datasets or raise an error
+        empty_dataset = ExperienceDataset([], [], [], [], transform=T.Compose([T.ToPILImage(),T.Resize(image_size),T.ToTensor()]))
+        return empty_dataset, empty_dataset
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {device} for PPO agent.")
+
+    # Create a temporary env for PPO training if needed, or use the main `env`
+    # It's better to pass the same env instance to ensure compatibility of obs/action spaces
+    ppo_agent = create_ppo_agent(env, ppo_specific_config, device=device)
+    train_ppo_agent(ppo_agent, ppo_specific_config, task_name="Initial PPO Training for Data Collection")
+    # After training, the env used by PPO (which is `env` wrapped in DummyVecEnv) should still be usable
+    # as SB3 usually doesn't close the original envs passed to DummyVecEnv unless DummyVecEnv.close() is called,
+    # which happens if ppo_agent.env.close() is called. `learn()` does not close it.
+
+    all_episodes_raw_data = []
+    preprocess = T.Compose([
+        T.ToPILImage(),
+        T.Resize(image_size),
+        T.ToTensor()
+    ])
+
+    for episode_idx in range(num_episodes):
+        current_state_img, info = env.reset()
+        initial_obs_is_uint8_image = isinstance(current_state_img, np.ndarray) and current_state_img.dtype == np.uint8
+
+        if not initial_obs_is_uint8_image:
+            if env.render_mode == 'rgb_array':
+                current_state_img = env.render()
+                if not (isinstance(current_state_img, np.ndarray) and current_state_img.dtype == np.uint8):
+                    print(f"Error: env.render() did not return a uint8 numpy array for PPO ep {episode_idx+1}. Skipping.")
+                    continue
+            else:
+                print(f"Warning: Initial PPO obs for ep {episode_idx+1} not uint8 and env not in 'rgb_array' mode. Skipping. Obs: {current_state_img}")
+                continue
+
+        if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2):
+            print(f"Skipping PPO episode {episode_idx+1} due to unsuitable initial state. State: {current_state_img}")
+            continue
+
+        episode_transitions = []
+        terminated = False
+        truncated = False
+        step_count = 0
+
+        while not (terminated or truncated) and step_count < max_steps_per_episode:
+            # Action selection by PPO agent
+            # current_state_img is HWC, uint8 numpy array. SB3 CnnPolicy expects this.
+            action, _ = ppo_agent.predict(current_state_img, deterministic=True) # Use deterministic for collection consistency
+
+            next_state_img, reward, terminated, truncated, info = env.step(action)
+            next_obs_is_uint8_image = isinstance(next_state_img, np.ndarray) and next_state_img.dtype == np.uint8
+
+            if not next_obs_is_uint8_image:
+                if env.render_mode == 'rgb_array':
+                    next_state_img = env.render()
+                    if not (isinstance(next_state_img, np.ndarray) and next_state_img.dtype == np.uint8):
+                        print(f"Error: env.render() for next_state (PPO) did not return uint8 array for ep {episode_idx+1}, step {step_count+1}. Skipping step.")
+                        step_count += 1
+                        if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2): break
+                        else: continue
+                else:
+                    print(f"Warning: Next PPO obs for ep {episode_idx+1}, step {step_count+1} not uint8 and env not 'rgb_array'. Skipping step. Obs: {next_state_img}")
+                    step_count += 1
+                    if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2): break
+                    else: continue
+
+            if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2 and
+                    isinstance(next_state_img, np.ndarray) and next_state_img.ndim >= 2):
+                print(f"Warning: Skipping PPO step in ep {episode_idx+1}, step {step_count+1} due to unsuitable state dims. Current: {current_state_img.shape if hasattr(current_state_img, 'shape') else 'N/A'}, Next: {next_state_img.shape if hasattr(next_state_img, 'shape') else 'N/A'}")
+                current_state_img = next_state_img
+                step_count += 1
+                if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2): break
+                else: continue
+
+            episode_transitions.append((current_state_img, action.item() if isinstance(action, np.ndarray) and env.action_space.shape == () else action, reward, next_state_img))
+            current_state_img = next_state_img
+            step_count += 1
+
+        if episode_transitions:
+            all_episodes_raw_data.append(episode_transitions)
+        print(f"PPO Episode {episode_idx+1}/{num_episodes} finished after {step_count} steps. Collected {len(episode_transitions)} transitions.")
+
+    env.close() # Close the environment used for PPO collection
+
+    if not all_episodes_raw_data:
+        print("No data collected with PPO. Returning empty datasets.")
+        empty_dataset = ExperienceDataset([], [], [], [], transform=preprocess)
+        return empty_dataset, empty_dataset
+
+    random.shuffle(all_episodes_raw_data)
+    num_total_episodes = len(all_episodes_raw_data)
+    split_idx = int((1.0 - validation_split_ratio) * num_total_episodes)
+    train_episodes_list = all_episodes_raw_data[:split_idx]
+    val_episodes_list = all_episodes_raw_data[split_idx:]
+
+    print(f"Total PPO episodes collected: {num_total_episodes}")
+    print(f"Splitting into {len(train_episodes_list)} training episodes and {len(val_episodes_list)} validation episodes.")
+
+    def create_dataset_from_episode_list(episode_list, transform_fn):
+        flat_states, flat_actions, flat_rewards, flat_next_states = [], [], [], []
+        for episode_data in episode_list:
+            for s, a, r, ns in episode_data:
+                flat_states.append(s)
+                flat_actions.append(a)
+                flat_rewards.append(r)
+                flat_next_states.append(ns)
+        return ExperienceDataset(flat_states, flat_actions, flat_rewards, flat_next_states, transform=transform_fn)
+
+    train_dataset = create_dataset_from_episode_list(train_episodes_list, preprocess)
+    validation_dataset = create_dataset_from_episode_list(val_episodes_list, preprocess)
+
+    print(f"PPO Training dataset: {len(train_dataset)} transitions.")
+    print(f"PPO Validation dataset: {len(validation_dataset)} transitions.")
+
+    if not data_loaded_successfully:
+        if all_episodes_raw_data:
+            num_episodes_collected = config['num_episodes_data_collection']
+            save_path = os.path.join(dataset_dir, save_dataset_filename)
+            metadata_to_save = {
+                'environment_name': env_name,
+                'num_episodes_collected': num_episodes_collected,
+                'image_size': image_size,
+                'max_steps_per_episode': max_steps_per_episode,
+                'validation_split_ratio': validation_split_ratio,
+                'num_train_transitions': len(train_dataset),
+                'num_val_transitions': len(validation_dataset),
+                'collection_method': 'ppo', # Added collection method
+                'ppo_config_params': ppo_specific_config # Save PPO params used for collection
+            }
+            data_to_save = {
+                'train_dataset': train_dataset,
+                'val_dataset': validation_dataset,
+                'metadata': metadata_to_save
+            }
+            try:
+                with open(save_path, 'wb') as f:
+                    pickle.dump(data_to_save, f)
+                print(f"PPO collected dataset saved to {save_path}")
+            except Exception as e:
+                print(f"Error saving PPO dataset to {save_path}: {e}")
+        else:
+            print("No new PPO data was collected, so dataset will not be saved.")
 
     return train_dataset, validation_dataset
 
