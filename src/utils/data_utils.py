@@ -340,6 +340,7 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
         return empty_dataset, empty_dataset
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "mps" if torch.backends.mps.is_available() else device  # For Apple Silicon Macs
     print(f"Using device: {device} for PPO agent.")
 
     # Create a temporary env for PPO training if needed, or use the main `env`
