@@ -219,5 +219,3 @@ This framework is designed with research extensibility in mind. Here are general
 -   **Configuration is Key:** For any new component or major feature, ensure you add corresponding configuration options to `config.yaml`. This maintains the flexibility and reproducibility of experiments.
 
 By following these guidelines, users can effectively utilize and contribute to this world model research framework, tailoring it to their specific research questions and hypotheses.The content for `docs/06_usage_guide.md` has been successfully written. It provides a comprehensive guide for users, covering prerequisites, setup, detailed configuration of `config.yaml`, instructions for running experiments, interpreting outputs, and pointers for extending the codebase.
-
-I will now submit the subtask report.
