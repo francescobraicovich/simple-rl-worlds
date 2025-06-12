@@ -3,7 +3,7 @@ import torch
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 
-def create_ppo_agent(env, ppo_config: dict, device: str = 'auto'):
+def create_ppo_agent(env, ppo_config: dict, device: str = 'mps'):
     """
     Creates a PPO agent.
 
@@ -17,6 +17,7 @@ def create_ppo_agent(env, ppo_config: dict, device: str = 'auto'):
     Returns:
         A PPO agent.
     """
+
     # Wrap the environment in a DummyVecEnv for SB3
     # SB3 typically expects a vectorized environment
     vec_env = DummyVecEnv([lambda: env])
