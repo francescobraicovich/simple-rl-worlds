@@ -146,6 +146,7 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
         terminated = False
         truncated = False
         step_count = 0
+        cumulative_reward_episode = 0.0  # Initialize cumulative reward
 
         while not (terminated or truncated) and step_count < max_steps_per_episode:
             action = env.action_space.sample()
@@ -347,6 +348,26 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
     # It's better to pass the same env instance to ensure compatibility of obs/action spaces
     ppo_agent = create_ppo_agent(env, ppo_specific_config, device=device)
     train_ppo_agent(ppo_agent, ppo_specific_config, task_name="Initial PPO Training for Data Collection")
+
+    additional_noise = ppo_specific_config.get('additional_log_std_noise', 0.0)
+    if additional_noise != 0.0: # Only proceed if noise is non-zero
+        if hasattr(ppo_agent.policy, 'log_std') and isinstance(ppo_agent.policy.log_std, torch.Tensor):
+            current_log_std = ppo_agent.policy.log_std.data
+            noise_tensor = torch.tensor(additional_noise, device=current_log_std.device, dtype=current_log_std.dtype)
+            ppo_agent.policy.log_std.data += noise_tensor
+            print(f"Adjusted PPO policy log_std by {additional_noise:.4f}")
+        elif hasattr(ppo_agent.policy, 'action_dist') and hasattr(ppo_agent.policy.action_dist, 'log_std_param'): # For SquashedGaussian
+            current_log_std_param = ppo_agent.policy.action_dist.log_std_param
+            if isinstance(current_log_std_param, torch.Tensor):
+                noise_tensor = torch.tensor(additional_noise, device=current_log_std_param.device, dtype=current_log_std_param.dtype)
+                # For nn.Parameters, modification should be in-place on .data or via an optimizer step if it were training
+                current_log_std_param.data += noise_tensor
+                print(f"Adjusted PPO policy action_dist.log_std_param by {additional_noise:.4f}")
+            else:
+                print(f"Warning: PPO policy action_dist.log_std_param found but is not a Tensor. Type: {type(ppo_agent.policy.action_dist.log_std_param)}. Skipping noise addition.")
+        else:
+            print(f"Warning: PPO policy does not have a 'log_std' Tensor or 'action_dist.log_std_param' Tensor. Skipping noise addition to log_std.")
+
     # After training, the env used by PPO (which is `env` wrapped in DummyVecEnv) should still be usable
     # as SB3 usually doesn't close the original envs passed to DummyVecEnv unless DummyVecEnv.close() is called,
     # which happens if ppo_agent.env.close() is called. `learn()` does not close it.
@@ -380,6 +401,7 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
         terminated = False
         truncated = False
         step_count = 0
+        cumulative_reward_episode = 0.0  # Initialize cumulative reward
 
         while not (terminated or truncated) and step_count < max_steps_per_episode:
             # Action selection by PPO agent
@@ -387,6 +409,7 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
             action, _ = ppo_agent.predict(current_state_img, deterministic=True) # Use deterministic for collection consistency
 
             next_state_img, reward, terminated, truncated, info = env.step(action)
+            cumulative_reward_episode += reward  # Add reward to cumulative sum
             next_obs_is_uint8_image = isinstance(next_state_img, np.ndarray) and next_state_img.dtype == np.uint8
 
             if not next_obs_is_uint8_image:
@@ -417,7 +440,7 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
 
         if episode_transitions:
             all_episodes_raw_data.append(episode_transitions)
-        print(f"PPO Episode {episode_idx+1}/{num_episodes} finished after {step_count} steps. Collected {len(episode_transitions)} transitions.")
+        print(f"PPO Episode {episode_idx+1}/{num_episodes} finished after {step_count} steps. Cumulative Reward: {cumulative_reward_episode:.2f}. Collected {len(episode_transitions)} transitions.")
 
     env.close() # Close the environment used for PPO collection
 
