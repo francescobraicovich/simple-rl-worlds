@@ -174,4 +174,5 @@ ppo_agent:
   gamma: 0.99         # PPO gamma parameter (discount factor)
   gae_lambda: 0.95    # PPO gae_lambda parameter (factor for trade-off General Advantage Estimation)
   clip_range: 0.2     # PPO clip_range parameter (clipping parameter)
+  additional_log_std_noise: 0.0 # New parameter
   policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
