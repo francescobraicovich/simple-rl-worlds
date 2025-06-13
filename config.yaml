@@ -80,6 +80,7 @@ decoder_patch_size: 8   # Patch size for reconstructing the output image by the 
 # JEPA Model
 jepa_predictor_hidden_dim: 256 # Hidden dimension for the JEPA predictor MLP
 ema_decay: 0.996              # EMA decay rate for updating the target encoder in JEPA
+target_encoder_mode: "default" # Options: "default", "vjepa2", "none"
 #vicreg_loss_weight: 1.0       # Weight for the VICReg loss component in JEPA's total loss
 # VICRegLoss coefficients (sim_coeff, std_coeff, cov_coeff) are currently set to defaults
 # within train.py when VICRegLoss is instantiated. To configure them from here,

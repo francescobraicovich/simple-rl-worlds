@@ -62,8 +62,11 @@ def _train_validate_model_epoch(
             current_loss_aux = torch.tensor(0.0, device=device)
             if aux_loss_fn is not None and aux_loss_weight > 0:
                 aux_term_s_t, _, _ = aux_loss_fn.calculate_reg_terms(online_s_t_emb)
-                aux_term_s_t_plus_1, _, _ = aux_loss_fn.calculate_reg_terms(online_s_t_plus_1_emb)
-                current_loss_aux = (aux_term_s_t + aux_term_s_t_plus_1) * 0.5
+                if online_s_t_plus_1_emb is not None:
+                    aux_term_s_t_plus_1, _, _ = aux_loss_fn.calculate_reg_terms(online_s_t_plus_1_emb)
+                    current_loss_aux = (aux_term_s_t + aux_term_s_t_plus_1) * 0.5
+                else: # online_s_t_plus_1_emb is None (e.g., for vjepa2 mode)
+                    current_loss_aux = aux_term_s_t
             current_loss_aux_item = current_loss_aux.item()
             total_loss = loss_primary + current_loss_aux * aux_loss_weight
             total_loss_item = total_loss.item()
@@ -130,8 +133,11 @@ def _train_validate_model_epoch(
                     current_val_loss_aux = torch.tensor(0.0, device=device)
                     if aux_loss_fn is not None and aux_loss_weight > 0:
                         aux_term_s_t_val, _, _ = aux_loss_fn.calculate_reg_terms(online_s_t_emb_val)
-                        aux_term_s_t_plus_1_val, _, _ = aux_loss_fn.calculate_reg_terms(online_s_t_plus_1_emb_val)
-                        current_val_loss_aux = (aux_term_s_t_val + aux_term_s_t_plus_1_val) * 0.5
+                        if online_s_t_plus_1_emb_val is not None:
+                            aux_term_s_t_plus_1_val, _, _ = aux_loss_fn.calculate_reg_terms(online_s_t_plus_1_emb_val)
+                            current_val_loss_aux = (aux_term_s_t_val + aux_term_s_t_plus_1_val) * 0.5
+                        else: # online_s_t_plus_1_emb_val is None
+                            current_val_loss_aux = aux_term_s_t_val
                     val_loss_aux_item = current_val_loss_aux.item()
                 else: # Standard Encoder-Decoder
                     predicted_s_t_plus_1_val = model(s_t_val, a_t_val_processed)
@@ -572,7 +578,7 @@ def run_training_epochs(
                 early_stopping_state=early_stopping_state_jepa,
                 checkpoint_path=early_stopping_state_jepa['checkpoint_path'],
                 model_name_log_prefix="JEPA",
-                update_target_fn=lambda: jepa_model.update_target_network() # Pass target update function
+                update_target_fn=lambda: jepa_model.perform_ema_update() # Pass target update function
             )
             epoch_loss_jepa_train_primary = train_loss_jepa_pred
             epoch_loss_jepa_train_aux = train_loss_jepa_aux_raw # This is raw aux, will be weighted for total summary

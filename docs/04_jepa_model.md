@@ -42,6 +42,40 @@ The JEPA model comprises three principal components: an online encoder, a target
 -   **Function:** It takes the target-encoded representation of the current state (`target_encoded_s_t`, i.e., `z'_t`) and an embedding of the action `a_t` (produced by `self.action_embedding`) as input. Its objective is to predict the embedding of the *next state*, specifically aiming to match the *target encoder's* representation of `s_t+1`. That is, it outputs `predicted_s_t_plus_1_embedding` (denoted `\hat{z}_{t+1}`), which should be close to `target_encoded_s_t_plus_1` (`z'_{t+1}`).
 -   **Configuration:** Key parameters for the predictor MLP, such as `jepa_predictor_hidden_dim` and `predictor_output_dim` (which must equal `latent_dim`), are set in `config.yaml`.
 
+### 4. Target Encoder Mode (`target_encoder_mode`)
+
+The `target_encoder_mode` parameter in the `jepa_model` section of `config.yaml` (and passed to the `JEPA` class constructor) dictates the operational strategy for the online and target encoders, influencing how predictions are made, how targets are generated, and how EMA updates and auxiliary losses are handled. It offers three distinct modes:
+
+-   **`"default"`**:
+    -   **Description:** This is the standard JEPA behavior as described in earlier sections.
+    -   **Data Flow:**
+        -   Current state `s_t` is encoded by the **target encoder**: `target_encoded_s_t = target_encoder(s_t)`.
+        -   Next state `s_t_plus_1` is encoded by the **target encoder**: `target_encoded_s_t_plus_1 = target_encoder(s_t_plus_1)`. This serves as the prediction target.
+        -   The predictor takes `target_encoded_s_t` and the embedded action to predict `target_encoded_s_t_plus_1`.
+    -   **EMA Updates:** The target encoder is updated via EMA of the online encoder's weights once per training step (typically after the optimizer step, managed by `perform_ema_update()` called from the training loop).
+    -   **Auxiliary Loss:** Calculated using online encoder representations of both `s_t` (`online_encoded_s_t`) and `s_t_plus_1` (`online_encoded_s_t_plus_1`). Both representations are returned by the `forward` method.
+
+-   **`"vjepa2"`**:
+    -   **Description:** This mode is inspired by aspects of the V-JEPA 2 (Video Joint Embedding Predictive Architecture) approach, focusing on predicting the target from an online-encoded current state.
+    -   **Data Flow:**
+        -   Current state `s_t` is encoded by the **online encoder**: `online_encoded_s_t = online_encoder(s_t)`.
+        -   *Crucially, the EMA update for the target encoder is performed at this point, within the `forward` pass, before the target encoder is used for `s_t_plus_1`.*
+        -   Next state `s_t_plus_1` is encoded by the **target encoder** (now updated): `target_encoded_s_t_plus_1 = target_encoder(s_t_plus_1)`. This (detached) representation serves as the prediction target.
+        -   The predictor takes `online_encoded_s_t` (from the online encoder) and the embedded action to predict `target_encoded_s_t_plus_1`.
+    -   **EMA Updates:** The target encoder is updated via EMA within the `forward` method of the JEPA model, specifically after `s_t` is processed by the online encoder and before `s_t_plus_1` is processed by the target encoder. The general `perform_ema_update()` called by the training loop will do nothing in this mode.
+    -   **Auxiliary Loss:** Calculated **only** on the online encoder's representation of the current state `s_t` (`online_encoded_s_t`). The `forward` method returns `None` for the `online_encoded_s_t_plus_1` representation to signal this.
+
+-   **`"none"`**:
+    -   **Description:** In this mode, the target encoder is entirely disabled. All predictions are based on the online encoder.
+    -   **Data Flow:**
+        -   Current state `s_t` is encoded by the **online encoder**: `online_encoded_s_t = online_encoder(s_t)`.
+        -   Next state `s_t_plus_1` is also encoded by the **online encoder**: `online_encoded_s_t_plus_1 = online_encoder(s_t_plus_1)`. The (detached) version of this serves as the prediction target.
+        -   The predictor takes `online_encoded_s_t` and the embedded action to predict `online_encoded_s_t_plus_1.detach()`.
+    -   **EMA Updates:** No EMA updates are performed as there is effectively no target encoder to update. The `perform_ema_update()` method does nothing.
+    -   **Auxiliary Loss:** Calculated using online encoder representations of both `s_t` (`online_encoded_s_t`) and `s_t_plus_1` (`online_encoded_s_t_plus_1`). Both representations are returned by the `forward` method.
+
+Choosing the appropriate `target_encoder_mode` allows for flexibility in experimenting with different JEPA-style architectures and update rules, potentially impacting representation quality and model performance.
+
 ## Prediction Loss
 
 The primary training signal for the predictor comes from minimizing the discrepancy between its predicted embedding of the next state and the actual target-encoded embedding of the next state.
