@@ -20,11 +20,13 @@ class JEPA(nn.Module):
                  predictor_output_dim,
                  ema_decay=0.996,
                  encoder_type='vit',  # New: 'vit', 'cnn', 'mlp'
-                 encoder_params: dict = None  # New: dict to hold encoder-specific params
+                 encoder_params: dict = None,  # New: dict to hold encoder-specific params
+                 target_encoder_mode: str = "default" # Added: "default", "vjepa2", "none"
                  ):
         super().__init__()
 
         self.ema_decay = ema_decay
+        self.target_encoder_mode = target_encoder_mode
         self._image_size_tuple = image_size if isinstance(
             image_size, tuple) else (image_size, image_size)
 
@@ -80,11 +82,14 @@ class JEPA(nn.Module):
         else:
             raise ValueError(f"Unsupported encoder_type: {encoder_type}")
 
-        # Target Encoder - initialized as a deep copy of online, non-trainable
-        self.target_encoder = self._create_target_encoder()
-        self._copy_weights_to_target_encoder()  # Initial copy
-        for param in self.target_encoder.parameters():
-            param.requires_grad = False
+        # Target Encoder - initialized based on target_encoder_mode
+        if self.target_encoder_mode == "none":
+            self.target_encoder = None
+        else:
+            self.target_encoder = self._create_target_encoder()
+            self._copy_weights_to_target_encoder()  # Initial copy
+            for param in self.target_encoder.parameters():
+                param.requires_grad = False
 
         # Action embedding
         self.action_embedding = nn.Linear(action_dim, action_emb_dim)
@@ -112,43 +117,71 @@ class JEPA(nn.Module):
 
     @torch.no_grad()
     def _update_target_encoder_ema(self):
-        for param_online, param_target in zip(self.online_encoder.parameters(), self.target_encoder.parameters()):
-            param_target.data = param_target.data * self.ema_decay + \
-                param_online.data * (1. - self.ema_decay)
+        if self.target_encoder is not None and self.target_encoder_mode != "none":
+            for param_online, param_target in zip(self.online_encoder.parameters(), self.target_encoder.parameters()):
+                param_target.data = param_target.data * self.ema_decay + \
+                    param_online.data * (1. - self.ema_decay)
 
     def forward(self, s_t, action, s_t_plus_1):
         # s_t: current state image (batch, c, h, w)
         # action: action taken (batch, action_dim)
         # s_t_plus_1: next state image (batch, c, h, w)
 
-        # Generate representations using TARGET encoder (EMA updated, no gradients for these ops)
-        with torch.no_grad():
-            target_encoded_s_t = self.target_encoder(
-                s_t).detach()         # z_t'
-            target_encoded_s_t_plus_1 = self.target_encoder(
-                s_t_plus_1).detach()  # z_{t+1}' (this is the prediction target)
-
-        # Embed action
         embedded_action = self.action_embedding(action)  # a_t_emb
 
-        # Predict the target representation of s_t+1 using target_encoded_s_t and action
-        # Input to predictor: representation of s_t from target network, and action
-        predictor_input = torch.cat(
-            (target_encoded_s_t, embedded_action), dim=-1)
-        predicted_s_t_plus_1_embedding = self.predictor(
-            predictor_input)  # \hat{z}_{t+1} (output of predictor)
+        if self.target_encoder_mode == "default":
+            # Generate representations using TARGET encoder (EMA updated, no gradients for these ops)
+            with torch.no_grad():
+                target_encoded_s_t = self.target_encoder(s_t).detach() # z_t'
+                target_for_predictor = self.target_encoder(s_t_plus_1).detach()  # z_{t+1}' (prediction target)
 
-        # Generate representations using ONLINE encoder (these are learnable, for VICReg etc.)
-        # These are typically NOT used for the main JEPA prediction loss but for auxiliary losses.
-        online_encoded_s_t = self.online_encoder(s_t)                 # z_t
-        online_encoded_s_t_plus_1 = self.online_encoder(s_t_plus_1)   # z_{t+1}
+            # Predict the target representation of s_t+1 using target_encoded_s_t and action
+            predictor_input = torch.cat((target_encoded_s_t, embedded_action), dim=-1)
+            predicted_s_t_plus_1_embedding = self.predictor(predictor_input)  # \hat{z}_{t+1}
 
-        # Return values for loss calculation:
-        # 1. predicted_s_t_plus_1_embedding: Output of the predictor. This is compared against target_encoded_s_t_plus_1.
-        # 2. target_encoded_s_t_plus_1:    The target for the predictor (from target net, detached).
-        # 3. online_encoded_s_t:           Output of online net for s_t (e.g., for VICReg).
-        # 4. online_encoded_s_t_plus_1:    Output of online net for s_t+1 (e.g., for VICReg).
-        return predicted_s_t_plus_1_embedding, target_encoded_s_t_plus_1, online_encoded_s_t, online_encoded_s_t_plus_1
+            # Generate representations using ONLINE encoder for auxiliary losses
+            online_s_t_representation = self.online_encoder(s_t)                 # z_t
+            online_s_t_plus_1_representation = self.online_encoder(s_t_plus_1)   # z_{t+1}
 
-    def update_target_network(self):
-        self._update_target_encoder_ema()
+        elif self.target_encoder_mode == "vjepa2":
+            online_s_t_representation = self.online_encoder(s_t) # z_t
+
+            # EMA update for VJEPA2 happens here, before target encoder is used for s_t_plus_1
+            self._update_target_encoder_ema()
+
+            # Target for predictor is from target_encoder(s_t_plus_1)
+            with torch.no_grad():
+                if self.target_encoder is None: # Should not happen in vjepa2 mode due to __init__ logic
+                    raise ValueError("Target encoder is None in vjepa2 mode, which is unexpected.")
+                target_for_predictor = self.target_encoder(s_t_plus_1).detach() # z'_{t+1}
+
+            # Predictor uses online_s_t_representation and action
+            predictor_input = torch.cat((online_s_t_representation, embedded_action), dim=-1)
+            predicted_s_t_plus_1_embedding = self.predictor(predictor_input) # \hat{z}_{t+1}
+
+            # For vjepa2, only online_s_t_representation is needed for auxiliary loss.
+            # online_s_t_plus_1_representation is not used/returned for this mode's specific auxiliary loss logic.
+            online_s_t_plus_1_representation = None
+
+        elif self.target_encoder_mode == "none":
+            online_s_t_representation = self.online_encoder(s_t) # z_t
+            online_s_t_plus_1_representation = self.online_encoder(s_t_plus_1) # z_{t+1}
+
+            # Predictor uses online_s_t_representation and action
+            predictor_input = torch.cat((online_s_t_representation, embedded_action), dim=-1)
+            predicted_s_t_plus_1_embedding = self.predictor(predictor_input) # \hat{z}_{t+1}
+
+            # Target for predictor is online_s_t_plus_1_representation (detached)
+            target_for_predictor = online_s_t_plus_1_representation.detach()
+
+        else:
+            raise ValueError(f"Unsupported target_encoder_mode: {self.target_encoder_mode}")
+
+        return predicted_s_t_plus_1_embedding, target_for_predictor, online_s_t_representation, online_s_t_plus_1_representation
+
+    def perform_ema_update(self): # Renamed from update_target_network
+        # This method is called by the training loop.
+        # For "vjepa2", EMA is handled within the forward pass.
+        # For "none", EMA is not used.
+        if self.target_encoder_mode == "default":
+            self._update_target_encoder_ema()
