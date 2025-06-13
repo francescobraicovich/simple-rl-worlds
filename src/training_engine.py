@@ -29,6 +29,9 @@ def _train_validate_model_epoch(
     if aux_loss_fn and hasattr(aux_loss_fn, 'train'):
         aux_loss_fn.train()
 
+    # move model to device
+    model.to(device)
+
     epoch_train_loss_primary = 0
     epoch_train_loss_aux = 0
     num_train_batches = len(train_dataloader) if train_dataloader else 0
@@ -202,6 +205,9 @@ def _train_reward_mlp_epoch(
 
     print(f"\nStarting training for {model_name_log_prefix} for {num_epochs_reward_mlp} epochs...")
 
+    # move model to device
+    reward_mlp_model.to(device)
+
     for epoch in range(num_epochs_reward_mlp):
         reward_mlp_model.train()
         if base_model: base_model.eval() # Base model is used for feature extraction
@@ -270,6 +276,9 @@ def _train_jepa_state_decoder(
     Returns the path to the best saved checkpoint, or None.
     """
     print("\nStarting JEPA State Decoder training...")
+
+    # move model to device
+    jepa_decoder_model.to(device)
 
     # Extract params from decoder_training_config
     num_epochs_decoder = decoder_training_config.get('num_epochs', 50)
