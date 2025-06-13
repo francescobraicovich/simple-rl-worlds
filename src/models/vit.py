@@ -1,6 +1,7 @@
 from einops import repeat
 import torch
 import torch.nn as nn
+from src.utils.weight_init import initialize_weights
 from einops import rearrange
 from einops.layers.torch import Rearrange
 
@@ -107,8 +108,8 @@ class ViT(nn.Module):
             nn.Linear(patch_dim, dim),
         )
 
-        self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, dim))
-        self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
+        self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, dim) * 0.02)
+        self.cls_token = nn.Parameter(torch.randn(1, 1, dim) * 0.02)
         self.dropout = nn.Dropout(emb_dropout)
 
         self.transformer = Transformer(
@@ -127,6 +128,8 @@ class ViT(nn.Module):
             nn.LayerNorm(dim),
             nn.Linear(dim, num_classes)
         ) if num_classes > 0 else nn.Identity()  # Only add mlp_head if num_classes is positive
+
+        self.apply(initialize_weights)
 
     def forward(self, img):
         x = self.to_patch_embedding(img)

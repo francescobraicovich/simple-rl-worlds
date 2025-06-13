@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from src.utils.weight_init import initialize_weights
 
 
 class CNNEncoder(nn.Module):
@@ -81,6 +82,8 @@ class CNNEncoder(nn.Module):
             )
         else:
             self.fc_net = nn.Linear(self.flattened_size, latent_dim)
+
+        self.apply(initialize_weights)
 
     def forward(self, img):
         # img: (batch, channels, height, width)

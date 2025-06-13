@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from src.utils.weight_init import initialize_weights
 
 
 class MLPEncoder(nn.Module):
@@ -59,6 +60,7 @@ class MLPEncoder(nn.Module):
             layers.append(nn.Linear(input_dim, latent_dim))
 
         self.mlp_net = nn.Sequential(*layers)
+        self.apply(initialize_weights)
 
     def forward(self, img):
         # img: (batch, channels, height, width)
@@ -153,6 +155,7 @@ class RewardPredictorMLP(nn.Module):
 
         # Output a single scalar reward
         self.layers.append(nn.Linear(current_dim, 1))
+        self.apply(initialize_weights)
 
     def forward(self, x):
         # x: (batch_size, input_dim)
