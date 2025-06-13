@@ -7,6 +7,7 @@ from einops.layers.torch import Rearrange  # For use in __init__ as a layer
 from .vit import ViT
 from .cnn import CNNEncoder
 from .mlp import MLPEncoder
+from src.utils.weight_init import initialize_weights
 
 
 class StandardEncoderDecoder(nn.Module):
@@ -132,6 +133,7 @@ class StandardEncoderDecoder(nn.Module):
             ph=self.output_num_patches_h, pw=self.output_num_patches_w,
             c=self.output_channels
         )
+        self.apply(initialize_weights)
 
     def forward(self, current_state_img, action):
         # current_state_img: (b, c, h, w)

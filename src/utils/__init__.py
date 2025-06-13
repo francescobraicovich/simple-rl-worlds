@@ -1,1 +1,1 @@
-# This file intentionally left blank to make the 'utils' directory a Python package.
+from .weight_init import initialize_weights
