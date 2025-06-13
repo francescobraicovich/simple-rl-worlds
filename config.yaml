@@ -10,7 +10,7 @@ max_steps_per_episode_data_collection: 100 # Max steps per episode during data c
 
 # Dataset Management
 dataset_dir: "datasets/"
-load_dataset_path: "" # empty string means don't load, otherwise it's a path relative to dataset_dir
+load_dataset_path: "car_racing_v3.pkl" # empty string means don't load, otherwise it's a path relative to dataset_dir
 dataset_filename: "car_racing_v3.pkl"
 
 # Model Loading Configuration
