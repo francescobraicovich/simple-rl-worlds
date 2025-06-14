@@ -108,8 +108,9 @@ def train_validate_model_epoch(
         total_loss.backward()
         optimizer.step()
 
-        if model.target_encoder_mode == "vjepa2":
-            model._update_target_encoder_ema()
+        if model_name_log_prefix == "JEPA":
+            if model.target_encoder_mode == "vjepa2":
+                model._update_target_encoder_ema()
 
         if update_target_fn:
             update_target_fn()
