@@ -170,7 +170,7 @@ def train_jepa_state_decoder(
                     epoch_loss_val += val_loss.item()
 
                     # Plotting logic
-                    if val_batch_idx == 0 and decoder_training_config.get('enable_validation_plot', True):
+                    if val_batch_idx == 10 and decoder_training_config.get('enable_validation_plot', True):
                         os.makedirs(validation_plot_dir_full, exist_ok=True)
                         num_plot_samples = min(4, s_t_val.shape[0])
                         random_indices = np.random.choice(s_t_val.shape[0], num_plot_samples, replace=False) if s_t_val.shape[0] > num_plot_samples else range(s_t_val.shape[0])
