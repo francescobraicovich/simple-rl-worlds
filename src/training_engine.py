@@ -203,8 +203,6 @@ def _train_reward_mlp_epoch(
         print(f"{model_name_log_prefix}: Components missing, skipping training.")
         return
 
-    print(f"\nStarting training for {model_name_log_prefix} for {num_epochs_reward_mlp} epochs...")
-
     # Determine wandb prefix based on the base model type
     wandb_model_prefix = "JEPA" if is_jepa_base_model else "StdEncDec"
 
@@ -256,24 +254,22 @@ def _train_reward_mlp_epoch(
             loss_reward_item = loss_reward.item()
             epoch_loss_reward_mlp += loss_reward_item
 
-            current_reward_mlp_global_step = epoch * num_train_batches + batch_idx
             if (batch_idx + 1) % log_interval_reward_mlp == 0:
-                print(f"  {model_name_log_prefix} Epoch {epoch+1}, Batch {batch_idx+1}/{num_train_batches}: Loss {loss_reward_item:.4f}")
                 if wandb_run:
                     log_data_reward_batch = {
-                        f"{wandb_model_prefix}/reward_mlp/train/Loss": loss_reward_item,
-                        f"{wandb_model_prefix}/reward_mlp/train/Learning_Rate": optimizer_reward_mlp.param_groups[0]['lr']
+                        f"reward_mlp/{wandb_model_prefix}/train/Loss": loss_reward_item,
+                        f"reward_mlp/{wandb_model_prefix}/train/Learning_Rate": optimizer_reward_mlp.param_groups[0]['lr']
                     }
                     # The step current_reward_mlp_global_step should align with f"{wandb_model_prefix}/reward_mlp/train/step"
-                    wandb_run.log(log_data_reward_batch, step=current_reward_mlp_global_step)
+                    wandb_run.log(log_data_reward_batch)
 
         avg_epoch_loss_reward_mlp = epoch_loss_reward_mlp / num_train_batches if num_train_batches > 0 else 0
-        print(f"--- {model_name_log_prefix} Epoch {epoch+1}/{num_epochs_reward_mlp} Summary: Avg Train Loss {avg_epoch_loss_reward_mlp:.4f} ---")
+        print(f"  Epoch {epoch+1}/{num_epochs_reward_mlp} Avg Train Loss: {avg_epoch_loss_reward_mlp:.4f} ")
         if wandb_run:
             # Log using epoch + 1 to align with f"{wandb_model_prefix}/reward_mlp/epoch"
             wandb_run.log({
-                f"{wandb_model_prefix}/reward_mlp/train_epoch_avg/Loss": avg_epoch_loss_reward_mlp
-            }, step=epoch + 1)
+                f"reward_mlp/{wandb_model_prefix}/train_epoch_avg/Loss": avg_epoch_loss_reward_mlp
+            })
 
     print(f"{model_name_log_prefix} training finished.")
     # Optionally return last epoch's average loss or a status
@@ -364,24 +360,23 @@ def _train_jepa_state_decoder(
                 optimizer_jepa_decoder.step()
                 epoch_loss_train += loss.item()
 
-                current_decoder_global_step = epoch * num_batches_train + batch_idx
                 if (batch_idx + 1) % decoder_log_interval == 0:
-                    print(f"  JEPA Decoder Epoch {epoch+1}, Batch {batch_idx+1}/{num_batches_train}: Train Loss {loss.item():.4f}")
                     if wandb_run:
                         log_data_decoder_batch = {
                             "JEPA_Decoder/train/Loss": loss.item(),
                             "JEPA_Decoder/train/Learning_Rate": optimizer_jepa_decoder.param_groups[0]['lr']
                         }
                         # step current_decoder_global_step aligns with "JEPA_Decoder/train/step"
-                        wandb_run.log(log_data_decoder_batch, step=current_decoder_global_step)
+                        wandb_run.log(log_data_decoder_batch)
             if early_stopping_state_decoder['early_stop_flag']: break # From error in batch loop
 
         avg_train_loss = epoch_loss_train / num_batches_train if num_batches_train > 0 else 0
-        print(f"  Avg Train JEPA Decoder L (Epoch {epoch+1}): {avg_train_loss:.4f}")
+        print(f"  Epoch {epoch+1}/{num_epochs_decoder} Avg Train Loss {avg_train_loss:.4f}")
+
         if wandb_run:
             wandb_run.log({
                 "JEPA_Decoder/train_epoch_avg/Loss": avg_train_loss
-            }, step=epoch + 1) # step epoch + 1 aligns with "JEPA_Decoder/epoch"
+            }) # step epoch + 1 aligns with "JEPA_Decoder/epoch"
 
         # Validation Phase
         if val_dataloader:
@@ -410,7 +405,7 @@ def _train_jepa_state_decoder(
                     epoch_loss_val += val_loss.item()
 
                     # Plotting logic
-                    if val_batch_idx == 0 and decoder_training_config.get('enable_validation_plot', False):
+                    if val_batch_idx == 0 and decoder_training_config.get('enable_validation_plot', True):
                         os.makedirs(validation_plot_dir_full, exist_ok=True)
                         num_plot_samples = min(4, s_t_val.shape[0])
                         random_indices = np.random.choice(s_t_val.shape[0], num_plot_samples, replace=False) if s_t_val.shape[0] > num_plot_samples else range(s_t_val.shape[0])
@@ -439,22 +434,18 @@ def _train_jepa_state_decoder(
                             
                             plot_filename = os.path.join(validation_plot_dir_full, f"epoch_{epoch+1}_sample_{i}_comparison.png")
                             plt.savefig(plot_filename)
-                            if wandb_run:
-                                try:
-                                    wandb_run.log({f"JEPA_Decoder/val/Validation_Comparison_Sample_{i}": wandb.Image(fig)}, step=epoch + 1)
-                                except Exception as e:
-                                    print(f"Warning: Failed to log image to wandb: {e}")
                             plt.close(fig)
+
                         print(f"  JEPA Decoder: Saved {num_plot_samples} validation image samples to {validation_plot_dir_full}")
                 if early_stopping_state_decoder['early_stop_flag']: break
 
                 avg_val_loss = epoch_loss_val / num_batches_val if num_batches_val > 0 else float('inf')
-                print(f"--- JEPA Decoder Epoch {epoch+1} Validation Summary ---")
-                print(f"  Avg Val JEPA Decoder L: {avg_val_loss:.4f}")
+                print(f"  Epoch {epoch+1}/{num_epochs_decoder:<5} | {'Avg Train Loss':<22}: {avg_train_loss:>8.4f} | {'Avg Val Loss':<22}: {avg_val_loss:>8.4f}")
+
                 if wandb_run:
                     wandb_run.log({
                         "JEPA_Decoder/val/Loss": avg_val_loss
-                    }, step=epoch + 1) # step epoch + 1 aligns with "JEPA_Decoder/epoch"
+                    }) # step epoch + 1 aligns with "JEPA_Decoder/epoch"
 
                 if avg_val_loss < early_stopping_state_decoder['best_val_loss'] - early_stopping_state_decoder['delta']:
                     early_stopping_state_decoder['best_val_loss'] = avg_val_loss
@@ -470,7 +461,7 @@ def _train_jepa_state_decoder(
                         early_stopping_state_decoder['early_stop_flag'] = True
                         print("  JEPA Decoder: Early stopping triggered.")
         else: # No validation dataloader
-            print(f"--- JEPA Decoder Epoch {epoch+1} Training Summary (No Validation) ---")
+            print(f" JEPA Decoder Epoch {epoch+1} Training Summary (No Validation)")
             if early_stopping_state_decoder['checkpoint_path']: # Save last epoch if no validation
                 os.makedirs(os.path.dirname(early_stopping_state_decoder['checkpoint_path']), exist_ok=True)
                 torch.save(jepa_decoder_model.state_dict(), early_stopping_state_decoder['checkpoint_path'])
@@ -652,6 +643,7 @@ def run_training_epochs(
     # The rest of the code for Reward MLP and JEPA State Decoder training will remain here.
     # --- Reward MLP Training using _train_reward_mlp_epoch ---
     if reward_mlp_enc_dec and enc_dec_mlp_config.get('enabled', False) and optimizer_reward_mlp_enc_dec and std_enc_dec and train_dataloader:
+        print("\nStarting Reward MLP (Standard Encoder/Decoder) training...")
         _train_reward_mlp_epoch(
             reward_mlp_model=reward_mlp_enc_dec,
             base_model=std_enc_dec, # This is the best loaded std_enc_dec
@@ -671,6 +663,7 @@ def run_training_epochs(
         print("Reward MLP (Enc-Dec) training skipped due to missing components (model, optimizer, base_model, or dataloader).")
 
     if reward_mlp_jepa and jepa_mlp_config.get('enabled', False) and optimizer_reward_mlp_jepa and jepa_model and train_dataloader:
+        print("\nStarting Reward MLP (JEPA) training...")
         _train_reward_mlp_epoch(
             reward_mlp_model=reward_mlp_jepa,
             base_model=jepa_model, # This is the best loaded jepa_model
