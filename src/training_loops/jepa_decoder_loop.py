@@ -78,7 +78,7 @@ def train_jepa_state_decoder(
 
     # Plotting directory from config
     validation_plot_dir_config = decoder_training_config.get('validation_plot_dir', "validation_plots/decoder")
-    validation_plot_dir_full = os.path.join(main_model_dir, validation_plot_dir_config) # Construct full path
+    validation_plot_dir_full = validation_plot_dir_config
 
     early_stopping_state_decoder = {
         'best_val_loss': float('inf'),
@@ -94,7 +94,6 @@ def train_jepa_state_decoder(
             print(f"JEPA State Decoder early stopping triggered before epoch {epoch+1}. Exiting decoder training loop.")
             break
 
-        print(f"\n--- JEPA State Decoder Epoch {epoch+1}/{num_epochs_decoder} ---")
         if jepa_model: jepa_model.eval() # Main JEPA model provides embeddings
         jepa_decoder_model.train()
 
@@ -138,7 +137,6 @@ def train_jepa_state_decoder(
             if early_stopping_state_decoder['early_stop_flag']: break # From error in batch loop
 
         avg_train_loss = epoch_loss_train / num_batches_train if num_batches_train > 0 else 0
-        print(f"  Epoch {epoch+1}/{num_epochs_decoder} Avg Train Loss {avg_train_loss:.4f}")
 
         if wandb_run:
             wandb_run.log({
@@ -203,7 +201,7 @@ def train_jepa_state_decoder(
                             plt.savefig(plot_filename)
                             plt.close(fig)
 
-                        print(f"  JEPA Decoder: Saved {num_plot_samples} validation image samples to {validation_plot_dir_full}")
+                        print(f"  Saved {num_plot_samples} validation image samples to {validation_plot_dir_full}")
                 if early_stopping_state_decoder['early_stop_flag']: break
 
                 avg_val_loss = epoch_loss_val / num_batches_val if num_batches_val > 0 else float('inf')
