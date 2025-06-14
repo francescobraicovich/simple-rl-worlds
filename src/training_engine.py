@@ -548,10 +548,11 @@ def run_training_epochs(
             wandb_run.define_metric(f"{model_prefix}/train_epoch_avg/*", step_metric=f"{model_prefix}/epoch")
 
             # Metrics for the reward MLP associated with the main model
-            wandb_run.define_metric(f"{model_prefix}/reward_mlp/train/step")
-            wandb_run.define_metric(f"{model_prefix}/reward_mlp/epoch")
-            wandb_run.define_metric(f"{model_prefix}/reward_mlp/train/*", step_metric=f"{model_prefix}/reward_mlp/train/step")
-            wandb_run.define_metric(f"{model_prefix}/reward_mlp/train_epoch_avg/*", step_metric=f"{model_prefix}/reward_mlp/epoch")
+            wandb_run.define_metric(f"reward_mlp/{model_prefix}/train/step")
+            wandb_run.define_metric(f"reward_mlp/{model_prefix}/epoch")
+            wandb_run.define_metric(f"reward_mlp/{model_prefix}/train/*", step_metric=f"reward_mlp/{model_prefix}/train/step")
+            wandb_run.define_metric(f"reward_mlp/{model_prefix}/val/*", step_metric=f"reward_mlp/{model_prefix}/epoch")
+            wandb_run.define_metric(f"reward_mlp/{model_prefix}/train_epoch_avg/*", step_metric=f"reward_mlp/{model_prefix}/epoch")
 
         # Define metrics for JEPA_Decoder
         wandb_run.define_metric("JEPA_Decoder/train/step")      # Step for batch-wise train logs
