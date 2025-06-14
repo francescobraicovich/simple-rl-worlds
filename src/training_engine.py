@@ -194,7 +194,7 @@ def _train_reward_mlp_epoch(
     loss_fn, device, action_dim, action_type,
     model_name_log_prefix, num_epochs_reward_mlp, log_interval_reward_mlp,
     is_jepa_base_model, # Boolean to differentiate input processing
-    wandb_run # New argument for wandb
+    wandb_run
 ):
     """
     Handles training for a reward MLP model for a specified number of epochs.
@@ -204,6 +204,9 @@ def _train_reward_mlp_epoch(
         return
 
     print(f"\nStarting training for {model_name_log_prefix} for {num_epochs_reward_mlp} epochs...")
+
+    # Determine wandb prefix based on the base model type
+    wandb_model_prefix = "JEPA" if is_jepa_base_model else "StdEncDec"
 
     # move model to device
     reward_mlp_model.to(device)
@@ -258,16 +261,19 @@ def _train_reward_mlp_epoch(
                 print(f"  {model_name_log_prefix} Epoch {epoch+1}, Batch {batch_idx+1}/{num_train_batches}: Loss {loss_reward_item:.4f}")
                 if wandb_run:
                     log_data_reward_batch = {
-                        f"Reward/{model_name_log_prefix}": loss_reward_item,
+                        f"{wandb_model_prefix}/reward_mlp/train/Loss": loss_reward_item,
+                        f"{wandb_model_prefix}/reward_mlp/train/Learning_Rate": optimizer_reward_mlp.param_groups[0]['lr']
                     }
+                    # The step current_reward_mlp_global_step should align with f"{wandb_model_prefix}/reward_mlp/train/step"
                     wandb_run.log(log_data_reward_batch, step=current_reward_mlp_global_step)
 
         avg_epoch_loss_reward_mlp = epoch_loss_reward_mlp / num_train_batches if num_train_batches > 0 else 0
         print(f"--- {model_name_log_prefix} Epoch {epoch+1}/{num_epochs_reward_mlp} Summary: Avg Train Loss {avg_epoch_loss_reward_mlp:.4f} ---")
         if wandb_run:
+            # Log using epoch + 1 to align with f"{wandb_model_prefix}/reward_mlp/epoch"
             wandb_run.log({
-                f"Reward/{model_name_log_prefix}/Average_Epoch_Loss": avg_epoch_loss_reward_mlp
-            }, step=epoch + 1) # Log per epoch for reward MLP (1-indexed)
+                f"{wandb_model_prefix}/reward_mlp/train_epoch_avg/Loss": avg_epoch_loss_reward_mlp
+            }, step=epoch + 1)
 
     print(f"{model_name_log_prefix} training finished.")
     # Optionally return last epoch's average loss or a status
@@ -363,9 +369,10 @@ def _train_jepa_state_decoder(
                     print(f"  JEPA Decoder Epoch {epoch+1}, Batch {batch_idx+1}/{num_batches_train}: Train Loss {loss.item():.4f}")
                     if wandb_run:
                         log_data_decoder_batch = {
-                            "JEPA_Decoder/Train_Loss": loss.item(),
-                            "JEPA_Decoder/Learning_Rate": optimizer_jepa_decoder.param_groups[0]['lr']
+                            "JEPA_Decoder/train/Loss": loss.item(),
+                            "JEPA_Decoder/train/Learning_Rate": optimizer_jepa_decoder.param_groups[0]['lr']
                         }
+                        # step current_decoder_global_step aligns with "JEPA_Decoder/train/step"
                         wandb_run.log(log_data_decoder_batch, step=current_decoder_global_step)
             if early_stopping_state_decoder['early_stop_flag']: break # From error in batch loop
 
@@ -373,8 +380,8 @@ def _train_jepa_state_decoder(
         print(f"  Avg Train JEPA Decoder L (Epoch {epoch+1}): {avg_train_loss:.4f}")
         if wandb_run:
             wandb_run.log({
-                "JEPA_Decoder/Epoch_Train_Loss": avg_train_loss
-            }, step=epoch + 1) # Log per epoch for decoder training (1-indexed)
+                "JEPA_Decoder/train_epoch_avg/Loss": avg_train_loss
+            }, step=epoch + 1) # step epoch + 1 aligns with "JEPA_Decoder/epoch"
 
         # Validation Phase
         if val_dataloader:
@@ -434,7 +441,7 @@ def _train_jepa_state_decoder(
                             plt.savefig(plot_filename)
                             if wandb_run:
                                 try:
-                                    wandb_run.log({f"JEPA_State_Decoder/Validation_Comparison_Epoch_{epoch+1}_Sample_{i}": wandb.Image(fig)}, step=epoch + 1)
+                                    wandb_run.log({f"JEPA_Decoder/val/Validation_Comparison_Sample_{i}": wandb.Image(fig)}, step=epoch + 1)
                                 except Exception as e:
                                     print(f"Warning: Failed to log image to wandb: {e}")
                             plt.close(fig)
@@ -446,8 +453,8 @@ def _train_jepa_state_decoder(
                 print(f"  Avg Val JEPA Decoder L: {avg_val_loss:.4f}")
                 if wandb_run:
                     wandb_run.log({
-                        "JEPA_Decoder/Epoch_Validation_Loss": avg_val_loss
-                    }, step=epoch + 1) # Log per epoch for decoder validation (1-indexed)
+                        "JEPA_Decoder/val/Loss": avg_val_loss
+                    }, step=epoch + 1) # step epoch + 1 aligns with "JEPA_Decoder/epoch"
 
                 if avg_val_loss < early_stopping_state_decoder['best_val_loss'] - early_stopping_state_decoder['delta']:
                     early_stopping_state_decoder['best_val_loss'] = avg_val_loss
@@ -533,20 +540,25 @@ def run_training_epochs(
     # Define custom x-axes for wandb logging
     if wandb_run:
         for model_prefix in ["StdEncDec", "JEPA"]:
+            # Metrics for the main model (StdEncDec or JEPA)
             wandb_run.define_metric(f"{model_prefix}/train/step")
             wandb_run.define_metric(f"{model_prefix}/epoch")
-            wandb_run.define_metric(f"{model_prefix}/reward_mlp/train/step")
-            wandb_run.define_metric(f"{model_prefix}/reward_mlp/epoch")
             wandb_run.define_metric(f"{model_prefix}/train/*", step_metric=f"{model_prefix}/train/step")
             wandb_run.define_metric(f"{model_prefix}/val/*", step_metric=f"{model_prefix}/epoch")
             wandb_run.define_metric(f"{model_prefix}/train_epoch_avg/*", step_metric=f"{model_prefix}/epoch")
-            wandb_run.define_metric(f"{model_prefix}/train/*", step_metric=f"{model_prefix}/reward_mlp/train/step")
-            wandb_run.define_metric(f"{model_prefix}/val/*", step_metric=f"{model_prefix}/reward_mlp/epoch")
+
+            # Metrics for the reward MLP associated with the main model
+            wandb_run.define_metric(f"{model_prefix}/reward_mlp/train/step")
+            wandb_run.define_metric(f"{model_prefix}/reward_mlp/epoch")
+            wandb_run.define_metric(f"{model_prefix}/reward_mlp/train/*", step_metric=f"{model_prefix}/reward_mlp/train/step")
             wandb_run.define_metric(f"{model_prefix}/reward_mlp/train_epoch_avg/*", step_metric=f"{model_prefix}/reward_mlp/epoch")
-        wandb_run.define_metric("JEPA_decoderer/train/step")
-        wandb_run.define_metric("JEPA_decoderer/epoch")
-        wandb_run.define_metric("JEPA_decoderer/train/*", step_metric="JEPA_decoderer/train/step")
-        wandb_run.define_metric("JEPA_decoderer/val/*", step_metric="JEPA_decoderer/epoch")
+
+        # Define metrics for JEPA_Decoder
+        wandb_run.define_metric("JEPA_Decoder/train/step")      # Step for batch-wise train logs
+        wandb_run.define_metric("JEPA_Decoder/epoch")           # Step for epoch-wise logs
+        wandb_run.define_metric("JEPA_Decoder/train/*", step_metric="JEPA_Decoder/train/step")
+        wandb_run.define_metric("JEPA_Decoder/val/*", step_metric="JEPA_Decoder/epoch")
+        wandb_run.define_metric("JEPA_Decoder/train_epoch_avg/*", step_metric="JEPA_Decoder/epoch")
 
     print(f"Starting training, main models for up to {num_epochs} epochs...")
 
