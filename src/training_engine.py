@@ -100,9 +100,22 @@ def run_training_epochs(
         # Define metrics for JEPA_Decoder
         wandb_run.define_metric("JEPA_Decoder/train/step")      # Step for batch-wise train logs
         wandb_run.define_metric("JEPA_Decoder/epoch")           # Step for epoch-wise logs
-        wandb_run.define_metric("JEPA_Decoder/train/*", step_metric="JEPA_Decoder/train/step")
-        wandb_run.define_metric("JEPA_Decoder/val/*", step_metric="JEPA_Decoder/epoch")
-        wandb_run.define_metric("JEPA_Decoder/train_epoch_avg/*", step_metric="JEPA_Decoder/epoch")
+
+        # Train metrics (batch-wise)
+        wandb_run.define_metric("JEPA_Decoder/train/total_loss", step_metric="JEPA_Decoder/train/step")
+        wandb_run.define_metric("JEPA_Decoder/train/loss_mse_reconstruction", step_metric="JEPA_Decoder/train/step")
+        wandb_run.define_metric("JEPA_Decoder/train/loss_mse_diff", step_metric="JEPA_Decoder/train/step")
+        wandb_run.define_metric("JEPA_Decoder/train/Learning_Rate", step_metric="JEPA_Decoder/train/step") # Explicitly defined
+
+        # Validation metrics (epoch-wise)
+        wandb_run.define_metric("JEPA_Decoder/val/total_loss", step_metric="JEPA_Decoder/epoch")
+        wandb_run.define_metric("JEPA_Decoder/val/loss_mse_reconstruction", step_metric="JEPA_Decoder/epoch")
+        wandb_run.define_metric("JEPA_Decoder/val/loss_mse_diff", step_metric="JEPA_Decoder/epoch")
+
+        # Train epoch average metrics (epoch-wise)
+        wandb_run.define_metric("JEPA_Decoder/train_epoch_avg/total_loss", step_metric="JEPA_Decoder/epoch")
+        wandb_run.define_metric("JEPA_Decoder/train_epoch_avg/loss_mse_reconstruction", step_metric="JEPA_Decoder/epoch")
+        wandb_run.define_metric("JEPA_Decoder/train_epoch_avg/loss_mse_diff", step_metric="JEPA_Decoder/epoch")
 
     print(f"Starting training, main models for up to {num_epochs} epochs...")
 
