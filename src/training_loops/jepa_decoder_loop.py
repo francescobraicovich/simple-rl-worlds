@@ -98,6 +98,8 @@ def train_jepa_state_decoder(
         jepa_decoder_model.train()
 
         epoch_loss_train = 0
+        epoch_loss_mse_reconstruction_train = 0
+        epoch_loss_mse_diff_train = 0
         num_batches_train = len(train_dataloader) if train_dataloader else 0
 
         if num_batches_train == 0:
@@ -121,15 +123,29 @@ def train_jepa_state_decoder(
 
                 jepa_predictor_output = pred_emb.detach()
                 reconstructed_s_t_plus_1 = jepa_decoder_model(jepa_predictor_output)
-                loss = loss_fn(reconstructed_s_t_plus_1, s_t_plus_1)
+
+                loss_mse_reconstruction = loss_fn(reconstructed_s_t_plus_1, s_t_plus_1)
+
+                # Calculate the difference mask
+                diff_mask = (s_t != s_t_plus_1).float()
+
+                # Calculate MSE on differing cells
+                loss_mse_diff = loss_fn(reconstructed_s_t_plus_1 * diff_mask, s_t_plus_1 * diff_mask)
+
+                # Total loss
+                loss = loss_mse_reconstruction + loss_mse_diff
                 loss.backward()
                 optimizer_jepa_decoder.step()
                 epoch_loss_train += loss.item()
+                epoch_loss_mse_reconstruction_train += loss_mse_reconstruction.item()
+                epoch_loss_mse_diff_train += loss_mse_diff.item()
 
                 if (batch_idx + 1) % decoder_log_interval == 0:
                     if wandb_run:
                         log_data_decoder_batch = {
-                            "JEPA_Decoder/train/Loss": loss.item(),
+                            "JEPA_Decoder/train/total_loss": loss.item(),
+                            "JEPA_Decoder/train/loss_mse_reconstruction": loss_mse_reconstruction.item(),
+                            "JEPA_Decoder/train/loss_mse_diff": loss_mse_diff.item(),
                             "JEPA_Decoder/train/Learning_Rate": optimizer_jepa_decoder.param_groups[0]['lr']
                         }
                         # step current_decoder_global_step aligns with "JEPA_Decoder/train/step"
@@ -137,10 +153,14 @@ def train_jepa_state_decoder(
             if early_stopping_state_decoder['early_stop_flag']: break # From error in batch loop
 
         avg_train_loss = epoch_loss_train / num_batches_train if num_batches_train > 0 else 0
+        avg_train_loss_mse_reconstruction = epoch_loss_mse_reconstruction_train / num_batches_train if num_batches_train > 0 else 0
+        avg_train_loss_mse_diff = epoch_loss_mse_diff_train / num_batches_train if num_batches_train > 0 else 0
 
         if wandb_run:
             wandb_run.log({
-                "JEPA_Decoder/train_epoch_avg/Loss": avg_train_loss
+                "JEPA_Decoder/train_epoch_avg/total_loss": avg_train_loss, # avg_train_loss is the total loss
+                "JEPA_Decoder/train_epoch_avg/loss_mse_reconstruction": avg_train_loss_mse_reconstruction,
+                "JEPA_Decoder/train_epoch_avg/loss_mse_diff": avg_train_loss_mse_diff
             }) # step epoch + 1 aligns with "JEPA_Decoder/epoch"
 
         # Validation Phase
@@ -149,6 +169,8 @@ def train_jepa_state_decoder(
             if jepa_model: jepa_model.eval()
 
             epoch_loss_val = 0
+            epoch_loss_mse_reconstruction_val = 0
+            epoch_loss_mse_diff_val = 0
             num_batches_val = len(val_dataloader)
             with torch.no_grad():
                 for val_batch_idx, (s_t_val, a_t_val, _, s_t_plus_1_val) in enumerate(val_dataloader):
@@ -166,8 +188,15 @@ def train_jepa_state_decoder(
                     pred_emb_val, _, _, _ = jepa_model(s_t_val, a_t_val_processed, s_t_plus_1_val)
                     jepa_predictor_output_val = pred_emb_val.detach()
                     reconstructed_s_t_plus_1_val = jepa_decoder_model(jepa_predictor_output_val)
-                    val_loss = loss_fn(reconstructed_s_t_plus_1_val, s_t_plus_1_val)
+
+                    loss_mse_reconstruction_val = loss_fn(reconstructed_s_t_plus_1_val, s_t_plus_1_val)
+                    diff_mask_val = (s_t_val != s_t_plus_1_val).float()
+                    loss_mse_diff_val = loss_fn(reconstructed_s_t_plus_1_val * diff_mask_val, s_t_plus_1_val * diff_mask_val)
+                    val_loss = loss_mse_reconstruction_val + loss_mse_diff_val # This is the total validation loss
+
                     epoch_loss_val += val_loss.item()
+                    epoch_loss_mse_reconstruction_val += loss_mse_reconstruction_val.item()
+                    epoch_loss_mse_diff_val += loss_mse_diff_val.item()
 
                     # Plotting logic
                     if val_batch_idx == 10 and decoder_training_config.get('enable_validation_plot', True):
@@ -205,11 +234,19 @@ def train_jepa_state_decoder(
                 if early_stopping_state_decoder['early_stop_flag']: break
 
                 avg_val_loss = epoch_loss_val / num_batches_val if num_batches_val > 0 else float('inf')
-                print(f"  Epoch {epoch+1}/{num_epochs_decoder:<5} | {'Avg Train Loss':<22}: {avg_train_loss:>8.4f} | {'Avg Val Loss':<22}: {avg_val_loss:>8.4f}")
+                avg_val_loss_mse_reconstruction = epoch_loss_mse_reconstruction_val / num_batches_val if num_batches_val > 0 else float('inf')
+                avg_val_loss_mse_diff = epoch_loss_mse_diff_val / num_batches_val if num_batches_val > 0 else float('inf')
+                print(f"  Epoch {epoch+1}/{num_epochs_decoder:<5} | "
+                      f"{'Avg Train Total Loss':<22}: {avg_train_loss:>8.4f} "
+                      f"(Recon: {avg_train_loss_mse_reconstruction:>8.4f}, Diff: {avg_train_loss_mse_diff:>8.4f}) | "
+                      f"{'Avg Val Total Loss':<20}: {avg_val_loss:>8.4f} "
+                      f"(Recon: {avg_val_loss_mse_reconstruction:>8.4f}, Diff: {avg_val_loss_mse_diff:>8.4f})")
 
                 if wandb_run:
                     wandb_run.log({
-                        "JEPA_Decoder/val/Loss": avg_val_loss
+                        "JEPA_Decoder/val/total_loss": avg_val_loss,
+                        "JEPA_Decoder/val/loss_mse_reconstruction": avg_val_loss_mse_reconstruction,
+                        "JEPA_Decoder/val/loss_mse_diff": avg_val_loss_mse_diff
                     }) # step epoch + 1 aligns with "JEPA_Decoder/epoch"
 
                 if avg_val_loss < early_stopping_state_decoder['best_val_loss'] - early_stopping_state_decoder['delta']:
@@ -227,6 +264,7 @@ def train_jepa_state_decoder(
                         print("  JEPA Decoder: Early stopping triggered.")
         else: # No validation dataloader
             print(f" JEPA Decoder Epoch {epoch+1} Training Summary (No Validation)")
+            print(f"  Avg Train Total Loss: {avg_train_loss:>8.4f} (Recon: {avg_train_loss_mse_reconstruction:>8.4f}, Diff: {avg_train_loss_mse_diff:>8.4f})")
             if early_stopping_state_decoder['checkpoint_path']: # Save last epoch if no validation
                 os.makedirs(os.path.dirname(early_stopping_state_decoder['checkpoint_path']), exist_ok=True)
                 torch.save(jepa_decoder_model.state_dict(), early_stopping_state_decoder['checkpoint_path'])
