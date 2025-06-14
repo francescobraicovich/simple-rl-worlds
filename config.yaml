@@ -10,7 +10,7 @@ max_steps_per_episode_data_collection: 400 # Max steps per episode during data c
 
 # Dataset Management
 dataset_dir: "datasets/"
-load_dataset_path: "" # empty string means don't load, otherwise it's a path relative to dataset_dir
+load_dataset_path: "car_racing_v3.pkl" # empty string means don't load, otherwise it's a path relative to dataset_dir
 dataset_filename: "car_racing_v3.pkl"
 
 # Model Loading Configuration
@@ -23,11 +23,11 @@ num_epochs: 12
 batch_size: 64
 learning_rate: 0.0003
 learning_rate_jepa: 0.0003 # Can be different from the main learning_rate
-num_workers: 6 # For DataLoader
+num_workers: 1 # For DataLoader
 log_interval: 100000 # Log training progress every N batches
 
 # Encoder Configuration
-encoder_type: "vit"  # Options: "vit", "cnn", "mlp"
+encoder_type: "cnn"  # Options: "vit", "cnn", "mlp"
 # Global patch_size:
 # - Used by ViT encoder (it expects 'patch_size' in its specific params; train.py ensures this).
 # - Used as the default for 'decoder_patch_size' in StandardEncoderDecoder if not explicitly set there.
@@ -168,9 +168,9 @@ ppo_agent:
   enabled: true # Master switch for using PPO for data collection
   learning_rate: 0.0003
   total_train_timesteps: 20000 # Timesteps to train PPO before data collection
-  n_steps: 2048       # PPO n_steps parameter (number of steps to run for each environment per update)
+  n_steps: 512       # PPO n_steps parameter (number of steps to run for each environment per update)
   batch_size: 64      # PPO batch_size parameter (minibatch size)
-  n_epochs: 10        # PPO n_epochs parameter (number of epoch when optimizing the surrogate loss)
+  n_epochs: 5        # PPO n_epochs parameter (number of epoch when optimizing the surrogate loss)
   gamma: 0.99         # PPO gamma parameter (discount factor)
   gae_lambda: 0.95    # PPO gae_lambda parameter (factor for trade-off General Advantage Estimation)
   clip_range: 0.2     # PPO clip_range parameter (clipping parameter)
