@@ -101,7 +101,7 @@ reward_predictors:
     activation: "relu"
     use_batch_norm: false
     learning_rate: 0.0003
-    log_interval: 10000
+    log_interval: 100
   jepa_reward_mlp:
     enabled: true
     # Input for JEPA's reward MLP will typically be the output of JEPA's encoder (target or online)
@@ -110,7 +110,7 @@ reward_predictors:
     activation: "relu"
     use_batch_norm: false
     learning_rate: 0.0003
-    log_interval: 100000
+    log_interval: 100
 
 # Legacy/Shared Transformer parameters (These are less critical if using encoder_params and specific decoder params above)
 # num_encoder_layers: 4 # Primarily for old ViT direct init, now effectively superseded by encoder_params.vit.depth
@@ -150,7 +150,7 @@ early_stopping:
 
 jepa_decoder_training:
   enabled: true # Set to true to enable training this decoder
-  num_epochs: 50
+  num_epochs: 1
   learning_rate: 0.0003
   checkpoint_path: "best_jepa_decoder.pth"
   validation_plot_dir: "validation_plots/" # New line
