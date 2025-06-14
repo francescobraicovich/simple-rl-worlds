@@ -19,12 +19,12 @@ load_model_path: "" # empty string means don't load, otherwise it's a path relat
 model_type_to_load: "" # options: "std_enc_dec", "jepa", or potentially others if the system supports more
 
 # Training Configuration
-num_epochs: 12
+num_epochs: 1
 batch_size: 64
 learning_rate: 0.0003
 learning_rate_jepa: 0.0003 # Can be different from the main learning_rate
 num_workers: 1 # For DataLoader
-log_interval: 100000 # Log training progress every N batches
+log_interval: 100 # Log training progress every N batches
 
 # Encoder Configuration
 encoder_type: "cnn"  # Options: "vit", "cnn", "mlp"
@@ -97,6 +97,7 @@ reward_predictors:
     enabled: true
     input_type: "flatten" # Assumes flattened decoded image from StandardEncoderDecoder
     hidden_dims: [128, 64]
+    num_epochs: 20
     activation: "relu"
     use_batch_norm: false
     learning_rate: 0.0003
@@ -176,3 +177,10 @@ ppo_agent:
   clip_range: 0.2     # PPO clip_range parameter (clipping parameter)
   additional_log_std_noise: 0.0 # New parameter
   policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
+
+
+wandb:
+  project: "rl_worlds"
+  entity: null
+  run_name_prefix: "exp"
+  enabled: true
