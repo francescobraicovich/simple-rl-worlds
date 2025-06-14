@@ -4,6 +4,7 @@ import torch.nn.functional as F # For F.one_hot
 import os # For os.path.exists in early stopping save/load
 import matplotlib.pyplot as plt
 import numpy as np
+import time
 
 # Note: Loss functions (mse_loss_fn, aux_loss_fn, aux_loss_name, aux_loss_weight)
 # will be passed in via the 'losses_map' dictionary.
@@ -41,6 +42,7 @@ def _train_validate_model_epoch(
         # Return current state if no training data
         return early_stopping_state, 0, 0 # primary_loss, aux_loss
 
+    t0 = time.time()
     for batch_idx, (s_t, a_t, r_t, s_t_plus_1) in enumerate(train_dataloader):
         s_t, s_t_plus_1 = s_t.to(device), s_t_plus_1.to(device)
         # r_t is not used by std_enc_dec or jepa directly, but is part of dataloader structure
@@ -101,11 +103,13 @@ def _train_validate_model_epoch(
             else: # StdEncDec
                 log_msg += f" Loss: {current_loss_primary_item:.4f}"
             print(log_msg)
+    t1 = time.time()
+    print(f"Training time: {t1 - t0:.2f} seconds")
 
     avg_epoch_train_loss_primary = epoch_train_loss_primary / num_train_batches
     avg_epoch_train_loss_aux = epoch_train_loss_aux / num_train_batches if aux_loss_fn and aux_loss_weight > 0 else 0
 
-
+    t0 = time.time()
     # === Validation Phase ===
     if val_dataloader:
         model.eval()
@@ -150,6 +154,7 @@ def _train_validate_model_epoch(
 
                 epoch_val_loss_primary += val_loss_primary_item
                 epoch_val_loss_aux += val_loss_aux_item
+        print(f"Validation time: {time.time() - t0:.2f} seconds")
 
         avg_val_loss_primary = epoch_val_loss_primary / num_val_batches if num_val_batches > 0 else float('inf')
         avg_val_loss_aux_raw = epoch_val_loss_aux / num_val_batches if num_val_batches > 0 and aux_loss_fn and aux_loss_weight > 0 else 0
