@@ -59,10 +59,9 @@ The `target_encoder_mode` parameter in the `jepa_model` section of `config.yaml`
     -   **Description:** This mode is inspired by aspects of the V-JEPA 2 (Video Joint Embedding Predictive Architecture) approach, focusing on predicting the target from an online-encoded current state.
     -   **Data Flow:**
         -   Current state `s_t` is encoded by the **online encoder**: `online_encoded_s_t = online_encoder(s_t)`.
-        -   *Crucially, the EMA update for the target encoder is performed at this point, within the `forward` pass, before the target encoder is used for `s_t_plus_1`.*
-        -   Next state `s_t_plus_1` is encoded by the **target encoder** (now updated): `target_encoded_s_t_plus_1 = target_encoder(s_t_plus_1)`. This (detached) representation serves as the prediction target.
+        -   Next state `s_t_plus_1` is encoded by the **target encoder**: `target_encoded_s_t_plus_1 = target_encoder(s_t_plus_1)`. This (detached) representation serves as the prediction target.
         -   The predictor takes `online_encoded_s_t` (from the online encoder) and the embedded action to predict `target_encoded_s_t_plus_1`.
-    -   **EMA Updates:** The target encoder is updated via EMA within the `forward` method of the JEPA model, specifically after `s_t` is processed by the online encoder and before `s_t_plus_1` is processed by the target encoder. The general `perform_ema_update()` called by the training loop will do nothing in this mode.
+    -   **EMA Updates:** The target encoder is updated via EMA of the online encoder's weights once per training step, managed by `perform_ema_update()` called from the training loop (similar to 'default' mode).
     -   **Auxiliary Loss:** Calculated **only** on the online encoder's representation of the current state `s_t` (`online_encoded_s_t`). The `forward` method returns `None` for the `online_encoded_s_t_plus_1` representation to signal this.
 
 -   **`"none"`**:
