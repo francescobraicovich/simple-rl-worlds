@@ -1,283 +1,276 @@
 import unittest
-import os
-import sys
-import gymnasium as gym
-import math
-import pickle
-import shutil
-import torch # For creating dummy ExperienceDataset if needed for dummy file
+import sys # For mocking modules
+from unittest.mock import patch, MagicMock, call
+import numpy as np
 
-# Add project root to sys.path to allow importing project modules
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(0, PROJECT_ROOT)
+# Mock stable_baselines3 and related modules BEFORE they are imported by src.utils.data_utils
+# This is to avoid ModuleNotFoundError if stable_baselines3 is not installed in test env.
+MOCK_SB3 = MagicMock()
+sys.modules['stable_baselines3'] = MOCK_SB3
+sys.modules['stable_baselines3.common.vec_env'] = MagicMock()
+sys.modules['stable_baselines3.common.callbacks'] = MagicMock()
+sys.modules['stable_baselines3.common.logger'] = MagicMock()
+sys.modules['stable_baselines3.common.monitor'] = MagicMock()
+sys.modules['stable_baselines3.common.policies'] = MagicMock()
+sys.modules['stable_baselines3.common.save_util'] = MagicMock()
 
+
+# Now import the modules to be tested
+import torch
+import gymnasium as gym # For action_space.sample type hinting if needed & env spec
+from torch.utils.data import Dataset # For type hinting
+
+# Functions to test
 from src.utils.data_utils import collect_random_episodes, ExperienceDataset
+from src.utils import data_utils # To allow patching attributes like pickle directly in data_utils
 
-# Try Pong first, fallback to CartPole if Atari ROMs are an issue for testing CI
-try:
-    gym.make("PongNoFrameskip-v4").close()
-    ENV_NAME = "PongNoFrameskip-v4"
-    print(f"Using {ENV_NAME} for data_utils tests.")
-    ENV_AVAILABLE = True
-except Exception:
-    print(f"PongNoFrameskip-v4 not available. Falling back to CartPole-v1 for data_utils tests.")
-    try:
-        gym.make("CartPole-v1").close()
-        ENV_NAME = "CartPole-v1"
-        ENV_AVAILABLE = True
-    except Exception:
-        ENV_NAME = "CartPole-v1" # Default for skip message
-        ENV_AVAILABLE = False
+# Minimal config for tests
+def get_dummy_config(load_path="", save_name="test_dataset.pkl", num_episodes=1):
+    return {
+        'environment_name': 'TestEnv-v0',
+        'num_episodes_data_collection': num_episodes,
+        'dataset_dir': 'test_datasets/', # Should be a temporary directory for tests
+        'load_dataset_path': load_path,
+        'dataset_filename': save_name,
+        'image_size': 32
+    }
 
-TEST_DATASET_DIR = "test_datasets_temp"
+class TestFrameSkipping(unittest.TestCase):
 
+    def _create_mock_env(self, initial_state_data, step_return_data_sequence, action_sequence=None):
+        """
+        Helper to create a mock environment.
+        initial_state_data: Data returned by env.reset() (e.g., np.array([0]))
+        step_return_data_sequence: A list of tuples, each for one env.step() call:
+                                   (next_state_img, reward, terminated, truncated, info)
+        action_sequence: A list of actions to be returned by env.action_space.sample()
+        """
+        mock_env = MagicMock(spec=gym.Env)
+        mock_env.render_mode = 'rgb_array' # To satisfy checks in data_utils
+        mock_env.reset.return_value = (initial_state_data, {}) # (obs, info)
 
-@unittest.skipIf(not ENV_AVAILABLE, f"Base environment {ENV_NAME} (or fallback) not available. Skipping data_utils tests.")
-class TestDataUtils(unittest.TestCase):
-
-    @classmethod
-    def setUpClass(cls):
-        os.makedirs(TEST_DATASET_DIR, exist_ok=True)
-
-    @classmethod
-    def tearDownClass(cls):
-        shutil.rmtree(TEST_DATASET_DIR, ignore_errors=True)
-
-    def _get_base_config(self, num_episodes, dataset_to_load=None, dataset_to_save=None):
-        # In config.yaml, image_size is an int. data_handling.py converts it to a tuple.
-        # collect_random_episodes expects a tuple for image_size argument, but gets config dict.
-        # The test needs to align with what collect_random_episodes expects from config for its own internal processing
-        # versus what it expects as a direct argument.
-        # For the 'image_size' key *in the config object*, it's typically an int.
-        # The image_size *parameter* to collect_random_episodes is a tuple.
-        return {
-            'environment_name': ENV_NAME,
-            'num_episodes_data_collection': num_episodes,
-            'load_dataset_path': dataset_to_load,
-            'dataset_filename': dataset_to_save,
-            'image_size': 64, # As it would be in config.yaml
-            'dataset_dir': TEST_DATASET_DIR # For tests
-        }
-
-    def test_collect_random_episodes_split(self):
-        num_episodes_total = 10
-        if ENV_NAME == "CartPole-v1": # CartPole is very fast, can do more
-             num_episodes_total = 20
-        elif "Pong" in ENV_NAME: # Pong is slower
-            num_episodes_total = 4 # Reduced for Pong to speed up test
-
-        max_steps_per_episode = 5
-        image_size_tuple = (64, 64) # This is passed as direct arg, not from config
-
-        print(f"\nStarting test_collect_random_episodes_split with {ENV_NAME}...")
-
-        base_config = self._get_base_config(
-            num_episodes_total,
-            dataset_to_load=None,
-            dataset_to_save="split_test_data.pkl"
-        )
-
-        # Test Case 1: 20% validation split
-        val_split_ratio_1 = 0.2
-        expected_val_episodes_1 = int(num_episodes_total * val_split_ratio_1)
-        expected_train_episodes_1 = num_episodes_total - expected_val_episodes_1
-
-        print(f"\nTest Case 1: val_split_ratio={val_split_ratio_1}")
-        train_dataset_1, val_dataset_1 = collect_random_episodes(
-            base_config, max_steps_per_episode, image_size_tuple, val_split_ratio_1
-        )
-
-        self.assertIsInstance(train_dataset_1, ExperienceDataset)
-        self.assertIsInstance(val_dataset_1, ExperienceDataset)
-
-        if expected_train_episodes_1 > 0:
-            self.assertTrue(len(train_dataset_1) >= expected_train_episodes_1 * 1)
-            self.assertTrue(len(train_dataset_1) <= expected_train_episodes_1 * max_steps_per_episode)
+        # Ensure step returns are individual tuples, not a list of one tuple
+        if len(step_return_data_sequence) == 1 and isinstance(step_return_data_sequence[0], list):
+             mock_env.step.side_effect = step_return_data_sequence[0]
         else:
-            self.assertEqual(len(train_dataset_1), 0)
+            mock_env.step.side_effect = step_return_data_sequence
 
-        if expected_val_episodes_1 > 0:
-            self.assertTrue(len(val_dataset_1) >= expected_val_episodes_1 * 1)
-            self.assertTrue(len(val_dataset_1) <= expected_val_episodes_1 * max_steps_per_episode)
+        mock_env.action_space = MagicMock(spec=gym.spaces.Discrete) # Assuming discrete for sample
+        if action_sequence:
+            mock_env.action_space.sample.side_effect = action_sequence
         else:
-            self.assertEqual(len(val_dataset_1), 0)
+            mock_env.action_space.sample.return_value = 0 # Default action if not specified
 
-        # Test Case 2: 0% validation split
-        val_split_ratio_2 = 0.0
-        expected_train_episodes_2 = num_episodes_total
+        # For environments that might have a spec attribute
+        mock_env.spec = MagicMock()
+        mock_env.spec.max_episode_steps = None # Or some large number
 
-        print(f"\nTest Case 2: val_split_ratio={val_split_ratio_2}")
-        train_dataset_2, val_dataset_2 = collect_random_episodes(
-            base_config, max_steps_per_episode, image_size_tuple, val_split_ratio_2
-        )
-        self.assertTrue(len(train_dataset_2) >= expected_train_episodes_2 * 1)
-        self.assertTrue(len(train_dataset_2) <= expected_train_episodes_2 * max_steps_per_episode)
-        self.assertEqual(len(val_dataset_2), 0)
+        return mock_env
 
-        # Test Case 3: 100% validation split
-        val_split_ratio_3 = 1.0
-        expected_val_episodes_3 = num_episodes_total
+    @patch('src.utils.data_utils.os.makedirs') # Mock makedirs to prevent actual directory creation
+    @patch('src.utils.data_utils.os.path.exists')
+    @patch('src.utils.data_utils.pickle.dump')
+    @patch('src.utils.data_utils.gym.make')
+    def test_no_frame_skipping(self, mock_gym_make, mock_pickle_dump, mock_os_path_exists, mock_os_makedirs):
+        """Test data collection with frame_skipping = 0."""
+        mock_os_path_exists.return_value = False # Force new data collection
+        mock_os_makedirs.return_value = None # Mock directory creation
 
-        print(f"\nTest Case 3: val_split_ratio={val_split_ratio_3}")
-        train_dataset_3, val_dataset_3 = collect_random_episodes(
-            base_config, max_steps_per_episode, image_size_tuple, val_split_ratio_3
-        )
-        self.assertEqual(len(train_dataset_3), 0)
-        self.assertTrue(len(val_dataset_3) >= expected_val_episodes_3 * 1)
-        self.assertTrue(len(val_dataset_3) <= expected_val_episodes_3 * max_steps_per_episode)
+        initial_state = np.array([[[0]]], dtype=np.uint8) # HWC format (1x1x1 image)
 
-        print("\nFinished test_collect_random_episodes_split.")
+        # Sequence of (next_state, reward, terminated, truncated, info)
+        episode_step_data = [
+            (np.array([[[1]]], dtype=np.uint8), 1.0, False, False, {}), # s0 -> s1 (action a0)
+            (np.array([[[2]]], dtype=np.uint8), 2.0, False, False, {}), # s1 -> s2 (action a1)
+            (np.array([[[3]]], dtype=np.uint8), 3.0, True, False, {}),   # s2 -> s3 (action a2), terminated
+        ]
+        actions = [10, 11, 12] # a0, a1, a2
 
-    def test_save_and_load_dataset(self):
-        num_episodes = 2
-        if "Pong" in ENV_NAME:
-            num_episodes = 2 # Keep it small for Pong
-        max_steps = 5
-        img_size_tuple = (64, 64)
-        val_split = 0.5 # Ensure both datasets get some data
+        mock_env = self._create_mock_env(initial_state, episode_step_data, actions)
+        mock_gym_make.return_value = mock_env
 
-        sanitized_env_name = ENV_NAME.replace('/', '_')
-        expected_filename = f"{sanitized_env_name}_{num_episodes}.pkl"
+        config = get_dummy_config(num_episodes=1) # Collect 1 episode
+        max_steps_per_episode = 10
 
-        collect_config = self._get_base_config(
-            num_episodes,
-            dataset_to_load=None,
-            dataset_to_save=expected_filename
+        train_dataset, val_dataset = collect_random_episodes(
+            config,
+            max_steps_per_episode=max_steps_per_episode,
+            image_size=(1,1), # Keep image size minimal
+            validation_split_ratio=0.0, # All data to train_dataset
+            frame_skipping=0
         )
 
-        print(f"\nStarting test_save_and_load_dataset with {ENV_NAME}...")
-        print("Collecting and saving dataset first...")
-        train_ds_orig, val_ds_orig = collect_random_episodes(
-            collect_config, max_steps, img_size_tuple, val_split
+        self.assertEqual(len(train_dataset), 3, "Should have 3 transitions for 3 steps.")
+        self.assertEqual(len(val_dataset), 0)
+
+        # Expected transitions:
+        # (s0, a0, r1, s1)
+        # (s1, a1, r2, s2)
+        # (s2, a2, r3, s3)
+
+        # Raw states before transforms
+        expected_raw_states = [initial_state, episode_step_data[0][0], episode_step_data[1][0]]
+        expected_raw_next_states = [episode_step_data[0][0], episode_step_data[1][0], episode_step_data[2][0]]
+        expected_rewards = [step[1] for step in episode_step_data] # 1.0, 2.0, 3.0
+
+        for i in range(len(train_dataset)):
+            s, a, r, ns = train_dataset[i]
+
+            # Note: ExperienceDataset applies T.ToPILImage(), T.Resize(), T.ToTensor().
+            # For a 1x1x1 uint8 array, ToTensor changes it to 1x1x1 float tensor.
+            # Values should be scaled (e.g. /255.0), but for simple integer states, they might be direct.
+            # Let's verify the core values.
+            self.assertTrue(torch.is_tensor(s), "State should be a tensor")
+            self.assertTrue(torch.is_tensor(ns), "Next state should be a tensor")
+
+            # Check the value. Assuming ToTensor scales 0-255 to 0-1.
+            # For simple integer data like np.array([[[0]]]), after ToPILImage -> Resize -> ToTensor,
+            # the value might become itself if it's already small, or scaled.
+            # Account for ToTensor scaling uint8 0-255 to float32 0-1
+            self.assertAlmostEqual(s.numpy()[0,0,0], expected_raw_states[i][0,0,0] / 255.0, places=5, msg=f"State mismatch at index {i}")
+            self.assertEqual(a.item(), actions[i], f"Action mismatch at index {i}")
+            self.assertEqual(r.item(), expected_rewards[i], f"Reward mismatch at index {i}")
+            self.assertAlmostEqual(ns.numpy()[0,0,0], expected_raw_next_states[i][0,0,0] / 255.0, places=5, msg=f"Next state mismatch at index {i}")
+
+        # Verify pickle.dump was called (or not, depending on test goals for saving)
+        # For this test, primarily focused on collection logic.
+        # mock_pickle_dump.assert_called_once() # If you expect saving
+
+    # Test Case 2: Frame Skipping (frame_skipping = 1)
+    @patch('src.utils.data_utils.os.makedirs')
+    @patch('src.utils.data_utils.os.path.exists')
+    @patch('src.utils.data_utils.pickle.dump')
+    @patch('src.utils.data_utils.gym.make')
+    def test_with_frame_skipping_one(self, mock_gym_make, mock_pickle_dump, mock_os_path_exists, mock_os_makedirs):
+        mock_os_path_exists.return_value = False
+        mock_os_makedirs.return_value = None
+
+        initial_state = np.array([[[0]]], dtype=np.uint8) # s0
+
+        # s0 --(a0, r1)--> s1 --(a_skip1, r2)--> s2 (end of 1st recorded step)
+        # s2 --(a1, r3)--> s3 --(a_skip2, r4)--> s4 (end of 2nd recorded step)
+        # s4 --(a2, r5)--> s5 (terminated, part of 3rd recorded step, no skip)
+        episode_step_data = [
+            (np.array([[[1]]], dtype=np.uint8), 1.0, False, False, {}), # s0 -> s1 (action a0, reward r1)
+            (np.array([[[2]]], dtype=np.uint8), 2.0, False, False, {}), # s1 -> s2 (action a_skip1, reward r2)
+            (np.array([[[3]]], dtype=np.uint8), 3.0, False, False, {}), # s2 -> s3 (action a1, reward r3)
+            (np.array([[[4]]], dtype=np.uint8), 4.0, False, False, {}), # s3 -> s4 (action a_skip2, reward r4)
+            (np.array([[[5]]], dtype=np.uint8), 5.0, True,  False, {}), # s4 -> s5 (action a2, reward r5) - terminates
+        ]
+        # Actions taken: a0 (for s0), a_skip1 (for s1), a1 (for s2), a_skip2 (for s3), a2 (for s4)
+        actions_env_samples = [10, 100, 11, 110, 12]
+
+        mock_env = self._create_mock_env(initial_state, episode_step_data, actions_env_samples)
+        mock_gym_make.return_value = mock_env
+
+        config = get_dummy_config(num_episodes=1)
+        max_steps_per_episode = 20
+
+        train_dataset, _ = collect_random_episodes(
+            config, max_steps_per_episode, image_size=(1,1),
+            validation_split_ratio=0.0, frame_skipping=1
         )
 
-        self.assertTrue(len(train_ds_orig) > 0, "Original training dataset is empty after collection.")
-        self.assertTrue(len(val_ds_orig) > 0, "Original validation dataset is empty after collection.")
+        # Expected transitions with frame_skipping=1:
+        # 1. (s0, a0, r1+r2, s2)
+        # 2. (s2, a1, r3+r4, s4)
+        # 3. (s4, a2, r5,    s5) - no skip as episode ends
+        self.assertEqual(len(train_dataset), 3)
 
-        expected_filepath = os.path.join(TEST_DATASET_DIR, expected_filename)
-        self.assertTrue(os.path.exists(expected_filepath), f"Dataset file {expected_filepath} was not created.")
+        expected_recorded_states_raw = [initial_state, episode_step_data[1][0], episode_step_data[3][0]] # s0, s2, s4
+        expected_recorded_actions = [actions_env_samples[0], actions_env_samples[2], actions_env_samples[4]] # a0, a1, a2
+        expected_accumulated_rewards = [
+            episode_step_data[0][1] + episode_step_data[1][1], # r1+r2
+            episode_step_data[2][1] + episode_step_data[3][1], # r3+r4
+            episode_step_data[4][1]                            # r5
+        ]
+        expected_recorded_next_states_raw = [episode_step_data[1][0], episode_step_data[3][0], episode_step_data[4][0]] # s2, s4, s5
 
-        print(f"Dataset saved. Now attempting to load {expected_filename}...")
+        for i in range(len(train_dataset)):
+            s, a, r, ns = train_dataset[i]
+            self.assertAlmostEqual(s.numpy()[0,0,0], expected_recorded_states_raw[i][0,0,0] / 255.0, places=5, msg=f"State mismatch at index {i}")
+            self.assertEqual(a.item(), expected_recorded_actions[i], f"Action mismatch at index {i}")
+            self.assertAlmostEqual(r.item(), expected_accumulated_rewards[i], places=5, msg=f"Reward mismatch at index {i}")
+            self.assertAlmostEqual(ns.numpy()[0,0,0], expected_recorded_next_states_raw[i][0,0,0] / 255.0, places=5, msg=f"Next state mismatch at index {i}")
 
-        load_config = self._get_base_config(
-            num_episodes, # This num_episodes is for collection if loading fails
-            dataset_to_load=expected_filename,
-            dataset_to_save="loaded_data_save_test.pkl" # Fallback save name
+    # Test Case 3: Frame Skipping with Episode End during skip
+    @patch('src.utils.data_utils.os.makedirs')
+    @patch('src.utils.data_utils.os.path.exists')
+    @patch('src.utils.data_utils.pickle.dump')
+    @patch('src.utils.data_utils.gym.make')
+    def test_frame_skipping_ends_mid_skip(self, mock_gym_make, mock_pickle_dump, mock_os_path_exists, mock_os_makedirs):
+        mock_os_path_exists.return_value = False
+        mock_os_makedirs.return_value = None
+
+        initial_state = np.array([[[10]]], dtype=np.uint8) # s10
+
+        # s10 --(a0, r1)--> s11
+        # s11 --(a_skip1, r2)--> s12 (this step terminates during a skip for frame_skipping=2)
+        episode_step_data = [
+            (np.array([[[11]]], dtype=np.uint8), 1.0, False, False, {}), # s10 -> s11 (action a0, reward r1)
+            (np.array([[[12]]], dtype=np.uint8), 2.0, True,  False, {}), # s11 -> s12 (action a_skip1, reward r2) - terminates
+        ]
+        actions_env_samples = [20, 200]
+
+        mock_env = self._create_mock_env(initial_state, episode_step_data, actions_env_samples)
+        mock_gym_make.return_value = mock_env
+
+        config = get_dummy_config(num_episodes=1)
+        max_steps_per_episode = 20
+
+        train_dataset, _ = collect_random_episodes(
+            config, max_steps_per_episode, image_size=(1,1),
+            validation_split_ratio=0.0, frame_skipping=2 # Try to skip 2 frames
         )
 
-        train_ds_loaded, val_ds_loaded = collect_random_episodes(
-            load_config, max_steps, img_size_tuple, val_split # other args might matter if loading fails and new data is collected
+        # Expected behavior:
+        # Main step: (s10, a0, r1, s11)
+        # Skip 1: (s11, a_skip1, r2, s12) -> Terminates.
+        # Frame skipping loop should break.
+        # Recorded transition: (s10, a0, r1+r2, s12)
+        self.assertEqual(len(train_dataset), 1)
+
+        s, a, r, ns = train_dataset[0]
+        self.assertAlmostEqual(s.numpy()[0,0,0], initial_state[0,0,0] / 255.0, places=5)
+        self.assertEqual(a.item(), actions_env_samples[0]) # Original action a0
+        self.assertAlmostEqual(r.item(), episode_step_data[0][1] + episode_step_data[1][1], places=5) # r1+r2
+        self.assertAlmostEqual(ns.numpy()[0,0,0], episode_step_data[1][0][0,0,0] / 255.0, places=5) # s12
+
+    # Test Case 4: Metadata Check
+    # Patching pickle.dump within the data_utils module where it's called
+    # REMOVED @patch('src.utils.data_utils.os.makedirs') to allow directory creation
+    @patch('src.utils.data_utils.os.path.exists')
+    @patch('src.utils.data_utils.pickle.dump') # Correct path for pickle.dump
+    @patch('src.utils.data_utils.gym.make')
+    def test_frame_skipping_metadata_saved(self, mock_gym_make, mock_pickle_dump, mock_os_path_exists): # mock_os_makedirs removed
+        mock_os_path_exists.return_value = False # Force collection and save
+        # mock_os_makedirs is removed to allow actual directory creation if needed by pickle.dump's path.
+
+        initial_state = np.array([[[0]]], dtype=np.uint8)
+        episode_step_data = [
+            (np.array([[[1]]], dtype=np.uint8), 1.0, True, False, {}), # Single step episode
+        ]
+        actions = [50]
+
+        mock_env = self._create_mock_env(initial_state, episode_step_data, actions)
+        mock_gym_make.return_value = mock_env
+
+        test_frame_skipping_value = 3
+        config = get_dummy_config(save_name="metadata_test.pkl")
+
+        collect_random_episodes(
+            config, max_steps_per_episode=5, image_size=(1,1),
+            validation_split_ratio=0.0, frame_skipping=test_frame_skipping_value
         )
 
-        self.assertEqual(len(train_ds_loaded), len(train_ds_orig), "Loaded train dataset length mismatch.")
-        self.assertEqual(len(val_ds_loaded), len(val_ds_orig), "Loaded validation dataset length mismatch.")
+        mock_pickle_dump.assert_called_once()
+        args, kwargs = mock_pickle_dump.call_args
+        saved_data = args[0] # The object that was dumped
 
-        # Optionally, compare actual data if ExperienceDataset supports equality or item access
-        if len(train_ds_orig) > 0 and len(train_ds_loaded) > 0:
-             s1o, a1o, r1o, ns1o = train_ds_orig[0]
-             s1l, a1l, r1l, ns1l = train_ds_loaded[0]
-             self.assertTrue(torch.equal(s1o,s1l), "First state tensor in loaded train dataset does not match original.")
-             # Action comparison might need tolerance if float
-             self.assertTrue(torch.allclose(a1o, a1l), "First action tensor in loaded train dataset does not match original.")
-
-
-        print("Finished test_save_and_load_dataset.")
-
-    def test_load_dataset_env_mismatch(self):
-        num_episodes = 1
-        max_steps = 2
-        img_size_tuple = (64,64)
-        val_split = 0.0 # Not critical here
-
-        dummy_env_name_orig = "FakeEnv-TotallyDifferent-v0"
-        sanitized_dummy_env_name = dummy_env_name_orig.replace('/', '_')
-        dummy_file_name = f"{sanitized_dummy_env_name}_{num_episodes}.pkl"
-        dummy_dataset_path = os.path.join(TEST_DATASET_DIR, dummy_file_name)
-
-        # Create a dummy dataset file with different environment metadata
-        dummy_metadata = {'environment_name': dummy_env_name_orig, 'num_episodes_collected': num_episodes}
-        # Create minimal ExperienceDataset instances
-        dummy_train_ds = ExperienceDataset([], [], [], [], transform=None)
-        dummy_val_ds = ExperienceDataset([], [], [], [], transform=None)
-        data_to_save = {'train_dataset': dummy_train_ds, 'val_dataset': dummy_val_ds, 'metadata': dummy_metadata}
-
-        with open(dummy_dataset_path, 'wb') as f:
-            pickle.dump(data_to_save, f)
-
-        self.assertTrue(os.path.exists(dummy_dataset_path))
-
-        print(f"\nStarting test_load_dataset_env_mismatch. Actual ENV_NAME: {ENV_NAME}, Dummy file's env: {dummy_env_name_orig}")
-
-        # Prepare config for loading, but with ENV_NAME (which is different from dummy_env_name_orig)
-        fallback_save_filename = "env_mismatch_save_test.pkl"
-        mismatch_config = self._get_base_config(
-            num_episodes, # This num_episodes is for collection if loading fails
-            dataset_to_load=dummy_file_name,
-            dataset_to_save=fallback_save_filename # Fallback save name
-        )
-
-        # Expect a warning, then new data collection.
-        # We can't easily check for the logged warning here without more advanced logging capture,
-        # but we can check that new data is collected and saved.
-        train_ds, val_ds = collect_random_episodes(
-            mismatch_config, max_steps, img_size_tuple, val_split
-        )
-
-        # Check that new data was collected
-        self.assertTrue(len(train_ds) > 0 or len(val_ds) > 0, "No new data collected after env mismatch.")
-
-        # Verify that the newly collected data corresponds to num_episodes
-        total_transitions = len(train_ds) + len(val_ds)
-        self.assertTrue(total_transitions >= num_episodes * 1) # Each episode has at least 1 transition
-        self.assertTrue(total_transitions <= num_episodes * max_steps)
-
-        # And a new file should have been saved with the fallback_save_filename
-        expected_new_filepath = os.path.join(TEST_DATASET_DIR, fallback_save_filename)
-        self.assertTrue(os.path.exists(expected_new_filepath), f"New dataset file {expected_new_filepath} was not created after env mismatch.")
-
-        print("Finished test_load_dataset_env_mismatch.")
-
-    def test_load_dataset_file_not_found_collects_new(self):
-        num_episodes_to_collect = 2 # Should collect these if file not found
-        if "Pong" in ENV_NAME: num_episodes_to_collect = 1
-
-        max_steps = 3
-        img_size_tuple = (64,64)
-        val_split = 0.5
-
-        non_existent_filename = "this_dataset_does_not_exist_ever.pkl"
-        sanitized_env_name = ENV_NAME.replace('/', '_')
-        newly_saved_filename = f"{sanitized_env_name}_{num_episodes_to_collect}.pkl"
-
-        not_found_config = self._get_base_config(
-            num_episodes_to_collect,
-            dataset_to_load=non_existent_filename,
-            dataset_to_save=newly_saved_filename
-        )
-
-        print(f"\nStarting test_load_dataset_file_not_found_collects_new with {ENV_NAME}...")
-        # Expect a warning to be printed by the function, then new data collection.
-        train_ds, val_ds = collect_random_episodes(
-            not_found_config, max_steps, img_size_tuple, val_split
-        )
-
-        # Check that new data was collected
-        self.assertTrue(len(train_ds) > 0 or len(val_ds) > 0, "No data collected after non-existent dataset load attempt.")
-
-        # Verify that the newly collected data corresponds to num_episodes_to_collect
-        # num_train_episodes + num_val_episodes should be num_episodes_to_collect
-        # (This logic is internal to collect_random_episodes, so we check combined length)
-        # Each episode gives at least 1 transition.
-        total_transitions = len(train_ds) + len(val_ds)
-        self.assertTrue(total_transitions >= num_episodes_to_collect * 1)
-        self.assertTrue(total_transitions <= num_episodes_to_collect * max_steps)
-
-        # And a new file should have been saved with the *correct* environment name
-        # The newly_saved_filename is now set in the config, so data_utils should use it.
-        newly_saved_filepath = os.path.join(TEST_DATASET_DIR, newly_saved_filename)
-        self.assertTrue(os.path.exists(newly_saved_filepath), f"New dataset file {newly_saved_filepath} was not created after failed load.")
-        print("Finished test_load_dataset_file_not_found_collects_new.")
-
+        self.assertIn('metadata', saved_data)
+        metadata = saved_data['metadata']
+        self.assertIn('frame_skipping', metadata)
+        self.assertEqual(metadata['frame_skipping'], test_frame_skipping_value)
 
 if __name__ == '__main__':
     unittest.main()

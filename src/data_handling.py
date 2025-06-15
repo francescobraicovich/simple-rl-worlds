@@ -8,6 +8,7 @@ def prepare_dataloaders(config, validation_split):
     key_max_steps = 'max_steps_per_episode_data_collection'
     image_h_w = config['image_size']
     img_size_tuple = (image_h_w, image_h_w)
+    frame_skipping = config.get('frame_skipping', 0) # Read frame_skipping, default to 0
 
     ppo_config = config.get('ppo_agent', {})
     use_ppo = ppo_config.get('enabled', False)
@@ -18,7 +19,8 @@ def prepare_dataloaders(config, validation_split):
             config=config, # Pass the full config object
             max_steps_per_episode=config.get(key_max_steps, 200),
             image_size=img_size_tuple,
-            validation_split_ratio=validation_split
+            validation_split_ratio=validation_split,
+            frame_skipping=frame_skipping # Add this line
         )
     else:
         print("Using random actions for data collection.")
@@ -26,7 +28,8 @@ def prepare_dataloaders(config, validation_split):
             config=config, # Pass the full config object
             max_steps_per_episode=config.get(key_max_steps, 200),
             image_size=img_size_tuple,
-            validation_split_ratio=validation_split
+            validation_split_ratio=validation_split,
+            frame_skipping=frame_skipping # Add this line
         )
 
     if len(train_dataset) == 0:
