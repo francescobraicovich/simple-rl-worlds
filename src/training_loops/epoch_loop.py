@@ -105,6 +105,7 @@ def train_validate_model_epoch(
             total_loss = loss_primary
 
         total_loss_item = total_loss.item()
+        total_loss.backward()
         optimizer.step()
         
         if update_target_fn:
