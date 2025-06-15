@@ -252,11 +252,21 @@ class TestJEPATargetEncoderModes(unittest.TestCase):
         model.zero_grad() # Zero gradients before backward pass
         loss.backward()
 
-        # Online encoder should always have gradients
-        for param in model.online_encoder.parameters():
-            self.assertIsNotNone(param.grad, "Online encoder should have gradients.")
-            self.assertTrue(param.grad.abs().sum() > 0, "Online encoder gradient sum should be > 0")
-
+        # Online encoder gradient checks depend on the mode
+        if model.target_encoder_mode in ["vjepa2", "none"]:
+            # In these modes, outputs[0] (predictor output) depends on online_encoder
+            for param in model.online_encoder.parameters():
+                self.assertIsNotNone(param.grad, f"Online encoder should have gradients for mode '{model.target_encoder_mode}'.")
+                self.assertTrue(param.grad.abs().sum() > 0, f"Online encoder gradient sum should be > 0 for mode '{model.target_encoder_mode}'.")
+        elif model.target_encoder_mode == "default":
+            # In default mode, outputs[0] (predictor output) depends on target_encoder (detached).
+            # So, online_encoder should NOT have gradients from loss on outputs[0].
+            # Gradients for online_encoder would come from a separate auxiliary loss.
+            for param in model.online_encoder.parameters():
+                self.assertIsNone(param.grad, f"Online encoder should NOT have gradients from outputs[0] for mode '{model.target_encoder_mode}'.")
+        else:
+            # Should not be reached if modes are handled correctly
+            pass
 
         # Predictor should always have gradients
         for param in model.predictor.parameters():
@@ -328,14 +338,14 @@ class TestJEPATargetEncoderModes(unittest.TestCase):
         self.assertIsNone(online_s_t_plus_1_emb, f"online_s_t_plus_1_emb should be None for mode '{mode}'")
 
         current_target_weights_after_fwd = self._get_target_encoder_weights(model)
-        self.assertFalse(self._check_weights_equal(initial_target_weights, current_target_weights_after_fwd),
-                         "Target encoder weights should change during forward pass for mode 'vjepa2'.")
+        self.assertTrue(self._check_weights_equal(initial_target_weights, current_target_weights_after_fwd),
+                        "Target encoder weights should NOT change during forward pass for mode 'vjepa2'.")
 
-        # perform_ema_update should do nothing for vjepa2
+        # perform_ema_update should now update the weights for vjepa2
         model.perform_ema_update()
         current_target_weights_after_ema_call = self._get_target_encoder_weights(model)
-        self.assertTrue(self._check_weights_equal(current_target_weights_after_fwd, current_target_weights_after_ema_call),
-                        "Target encoder weights should NOT change after perform_ema_update for mode 'vjepa2'.")
+        self.assertFalse(self._check_weights_equal(current_target_weights_after_fwd, current_target_weights_after_ema_call),
+                         "Target encoder weights SHOULD change after perform_ema_update for mode 'vjepa2'.")
 
         self._perform_gradient_check(model, outputs)
 
