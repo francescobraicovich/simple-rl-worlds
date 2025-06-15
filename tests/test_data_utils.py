@@ -43,7 +43,7 @@ class TestDataUtils(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(TEST_DATASET_DIR, ignore_errors=True)
 
-    def _get_base_config(self, num_episodes, load_dataset=False, dataset_name=""):
+    def _get_base_config(self, num_episodes, dataset_to_load=None, dataset_to_save=None):
         # In config.yaml, image_size is an int. data_handling.py converts it to a tuple.
         # collect_random_episodes expects a tuple for image_size argument, but gets config dict.
         # The test needs to align with what collect_random_episodes expects from config for its own internal processing
@@ -53,10 +53,10 @@ class TestDataUtils(unittest.TestCase):
         return {
             'environment_name': ENV_NAME,
             'num_episodes_data_collection': num_episodes,
-            'load_dataset': load_dataset,
-            'dataset_name': dataset_name,
+            'load_dataset_path': dataset_to_load,
+            'dataset_filename': dataset_to_save,
             'image_size': 64, # As it would be in config.yaml
-            'dataset_output_dir_override': TEST_DATASET_DIR # For tests
+            'dataset_dir': TEST_DATASET_DIR # For tests
         }
 
     def test_collect_random_episodes_split(self):
@@ -71,7 +71,11 @@ class TestDataUtils(unittest.TestCase):
 
         print(f"\nStarting test_collect_random_episodes_split with {ENV_NAME}...")
 
-        base_config = self._get_base_config(num_episodes_total)
+        base_config = self._get_base_config(
+            num_episodes_total,
+            dataset_to_load=None,
+            dataset_to_save="split_test_data.pkl"
+        )
 
         # Test Case 1: 20% validation split
         val_split_ratio_1 = 0.2
@@ -132,7 +136,14 @@ class TestDataUtils(unittest.TestCase):
         img_size_tuple = (64, 64)
         val_split = 0.5 # Ensure both datasets get some data
 
-        collect_config = self._get_base_config(num_episodes, load_dataset=False)
+        sanitized_env_name = ENV_NAME.replace('/', '_')
+        expected_filename = f"{sanitized_env_name}_{num_episodes}.pkl"
+
+        collect_config = self._get_base_config(
+            num_episodes,
+            dataset_to_load=None,
+            dataset_to_save=expected_filename
+        )
 
         print(f"\nStarting test_save_and_load_dataset with {ENV_NAME}...")
         print("Collecting and saving dataset first...")
@@ -143,17 +154,19 @@ class TestDataUtils(unittest.TestCase):
         self.assertTrue(len(train_ds_orig) > 0, "Original training dataset is empty after collection.")
         self.assertTrue(len(val_ds_orig) > 0, "Original validation dataset is empty after collection.")
 
-        sanitized_env_name = ENV_NAME.replace('/', '_')
-        expected_filename = f"{sanitized_env_name}_{num_episodes}.pkl"
         expected_filepath = os.path.join(TEST_DATASET_DIR, expected_filename)
         self.assertTrue(os.path.exists(expected_filepath), f"Dataset file {expected_filepath} was not created.")
 
         print(f"Dataset saved. Now attempting to load {expected_filename}...")
 
-        load_config = self._get_base_config(num_episodes, load_dataset=True, dataset_name=expected_filename)
+        load_config = self._get_base_config(
+            num_episodes, # This num_episodes is for collection if loading fails
+            dataset_to_load=expected_filename,
+            dataset_to_save="loaded_data_save_test.pkl" # Fallback save name
+        )
 
         train_ds_loaded, val_ds_loaded = collect_random_episodes(
-            load_config, max_steps, img_size_tuple, val_split # other args shouldn't matter for loading
+            load_config, max_steps, img_size_tuple, val_split # other args might matter if loading fails and new data is collected
         )
 
         self.assertEqual(len(train_ds_loaded), len(train_ds_orig), "Loaded train dataset length mismatch.")
@@ -196,10 +209,31 @@ class TestDataUtils(unittest.TestCase):
         print(f"\nStarting test_load_dataset_env_mismatch. Actual ENV_NAME: {ENV_NAME}, Dummy file's env: {dummy_env_name_orig}")
 
         # Prepare config for loading, but with ENV_NAME (which is different from dummy_env_name_orig)
-        mismatch_config = self._get_base_config(num_episodes, load_dataset=True, dataset_name=dummy_file_name)
+        fallback_save_filename = "env_mismatch_save_test.pkl"
+        mismatch_config = self._get_base_config(
+            num_episodes, # This num_episodes is for collection if loading fails
+            dataset_to_load=dummy_file_name,
+            dataset_to_save=fallback_save_filename # Fallback save name
+        )
 
-        with self.assertRaisesRegex(ValueError, "Environment mismatch in loaded dataset."):
-            collect_random_episodes(mismatch_config, max_steps, img_size_tuple, val_split)
+        # Expect a warning, then new data collection.
+        # We can't easily check for the logged warning here without more advanced logging capture,
+        # but we can check that new data is collected and saved.
+        train_ds, val_ds = collect_random_episodes(
+            mismatch_config, max_steps, img_size_tuple, val_split
+        )
+
+        # Check that new data was collected
+        self.assertTrue(len(train_ds) > 0 or len(val_ds) > 0, "No new data collected after env mismatch.")
+
+        # Verify that the newly collected data corresponds to num_episodes
+        total_transitions = len(train_ds) + len(val_ds)
+        self.assertTrue(total_transitions >= num_episodes * 1) # Each episode has at least 1 transition
+        self.assertTrue(total_transitions <= num_episodes * max_steps)
+
+        # And a new file should have been saved with the fallback_save_filename
+        expected_new_filepath = os.path.join(TEST_DATASET_DIR, fallback_save_filename)
+        self.assertTrue(os.path.exists(expected_new_filepath), f"New dataset file {expected_new_filepath} was not created after env mismatch.")
 
         print("Finished test_load_dataset_env_mismatch.")
 
@@ -212,11 +246,13 @@ class TestDataUtils(unittest.TestCase):
         val_split = 0.5
 
         non_existent_filename = "this_dataset_does_not_exist_ever.pkl"
+        sanitized_env_name = ENV_NAME.replace('/', '_')
+        newly_saved_filename = f"{sanitized_env_name}_{num_episodes_to_collect}.pkl"
 
         not_found_config = self._get_base_config(
             num_episodes_to_collect,
-            load_dataset=True,
-            dataset_name=non_existent_filename
+            dataset_to_load=non_existent_filename,
+            dataset_to_save=newly_saved_filename
         )
 
         print(f"\nStarting test_load_dataset_file_not_found_collects_new with {ENV_NAME}...")
@@ -237,8 +273,7 @@ class TestDataUtils(unittest.TestCase):
         self.assertTrue(total_transitions <= num_episodes_to_collect * max_steps)
 
         # And a new file should have been saved with the *correct* environment name
-        sanitized_env_name = ENV_NAME.replace('/', '_')
-        newly_saved_filename = f"{sanitized_env_name}_{num_episodes_to_collect}.pkl"
+        # The newly_saved_filename is now set in the config, so data_utils should use it.
         newly_saved_filepath = os.path.join(TEST_DATASET_DIR, newly_saved_filename)
         self.assertTrue(os.path.exists(newly_saved_filepath), f"New dataset file {newly_saved_filepath} was not created after failed load.")
         print("Finished test_load_dataset_file_not_found_collects_new.")
