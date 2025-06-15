@@ -77,11 +77,20 @@ class TestLosses(unittest.TestCase):
         # Input with std close to 0 for all features
         z_std_zero = torch.zeros(
             self.batch_size, self.embed_dim, device=self.device)
+        # Ensure loss_fn.eps is available and is a float or tensor for sqrt
+        # loss_fn.eps is already a float attribute of the class instance
+        
         reg_loss_zero_std, std_loss_val_zero, _ = loss_fn.calculate_reg_terms(
             z_std_zero)
-        # Hinge loss max(0, 1-0) = 1. Mean over features should be 1.
+            
+        # raw_std_loss = mean(relu(1 - sqrt(var + eps)))
+        # For var=0, raw_std_loss = mean(relu(1 - sqrt(eps))) = 1 - sqrt(eps)
+        # std_loss_val_zero is already weighted_std_loss = std_coeff * raw_std_loss
+        expected_raw_std_loss_for_zero_variance = 1.0 - torch.sqrt(torch.tensor(loss_fn.eps, device=self.device))
+        expected_weighted_std_loss = expected_raw_std_loss_for_zero_variance * loss_fn.std_coeff
+        
         self.assertAlmostEqual(std_loss_val_zero.item(),
-                               1.0 * loss_fn.std_coeff, delta=1e-3)
+                               expected_weighted_std_loss.item(), delta=1e-3)
 
     def test_vicreg_cov_loss_behavior(self):
         loss_fn = VICRegLoss(std_coeff=0.0, cov_coeff=1.0).to(
