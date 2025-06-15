@@ -54,11 +54,13 @@ encoder_params:
     padding: 1              # Padding for convolutional layers
     activation_fn_str: 'relu' # Activation function ('relu' or 'gelu')
     fc_hidden_dim: null     # Dimension of an optional fully connected layer before the latent output (null for direct)
+    dropout_rate: 0.1       # Dropout rate for CNN encoder
 
   mlp:
     num_hidden_layers: 2    # Number of hidden layers in the MLP encoder
     hidden_dim: 256         # Dimension of hidden layers in the MLP encoder
     activation_fn_str: 'relu' # Activation function ('relu' or 'gelu')
+    dropout_rate: 0.1       # Dropout rate for MLP encoder
 
 
 # Shared Latent Dimension
@@ -79,6 +81,7 @@ decoder_patch_size: 8   # Patch size for reconstructing the output image by the 
 
 # JEPA Model
 jepa_predictor_hidden_dim: 256 # Hidden dimension for the JEPA predictor MLP
+predictor_dropout_rate: 0.1  # Dropout rate for JEPA predictor MLP layers
 ema_decay: 0.99              # EMA decay rate for updating the target encoder in JEPA
 target_encoder_mode: "vjepa2" # Options: "default", "vjepa2", "none"
 #vicreg_loss_weight: 1.0       # Weight for the VICReg loss component in JEPA's total loss
@@ -102,6 +105,7 @@ reward_predictors:
     use_batch_norm: false
     learning_rate: 0.0003
     log_interval: 100
+    dropout_rate: 0.1       # Dropout rate for enc-dec reward MLP
   jepa_reward_mlp:
     enabled: true
     # Input for JEPA's reward MLP will typically be the output of JEPA's encoder (target or online)
@@ -112,6 +116,7 @@ reward_predictors:
     use_batch_norm: false
     learning_rate: 0.0003
     log_interval: 100
+    dropout_rate: 0.1       # Dropout rate for JEPA reward MLP
 
 # Legacy/Shared Transformer parameters (These are less critical if using encoder_params and specific decoder params above)
 # num_encoder_layers: 4 # Primarily for old ViT direct init, now effectively superseded by encoder_params.vit.depth

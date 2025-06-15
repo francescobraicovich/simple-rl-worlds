@@ -11,7 +11,8 @@ class MLPEncoder(nn.Module):
                  latent_dim,
                  num_hidden_layers=2,
                  hidden_dim=512,
-                 activation_fn_str='relu'):
+                 activation_fn_str='relu',
+                 dropout_rate=0.0):
         super().__init__()
 
         if isinstance(image_size, int):
@@ -25,6 +26,7 @@ class MLPEncoder(nn.Module):
         self.latent_dim = latent_dim
         self.num_hidden_layers = num_hidden_layers
         self.hidden_dim = hidden_dim
+        self.dropout_rate = dropout_rate
 
         if activation_fn_str == 'relu':
             self.activation_fn = nn.ReLU()
@@ -47,12 +49,16 @@ class MLPEncoder(nn.Module):
             # First hidden layer
             layers.append(nn.Linear(current_dim, hidden_dim))
             layers.append(self.activation_fn)
+            if self.dropout_rate > 0:
+                layers.append(nn.Dropout(self.dropout_rate))
             current_dim = hidden_dim
 
             # Subsequent hidden layers
             for _ in range(num_hidden_layers - 1):
                 layers.append(nn.Linear(current_dim, hidden_dim))
                 layers.append(self.activation_fn)
+                if self.dropout_rate > 0:
+                    layers.append(nn.Dropout(self.dropout_rate))
 
             # Output layer
             layers.append(nn.Linear(current_dim, latent_dim))
@@ -95,10 +101,11 @@ if __name__ == '__main__':
     channels = 3
     img_size = 64
     ld = 128  # latent_dim
+    dropout_val = 0.1
 
     try:
         mlp_encoder = MLPEncoder(input_channels=channels, image_size=img_size,
-                                 latent_dim=ld, num_hidden_layers=2, hidden_dim=256)
+                                 latent_dim=ld, num_hidden_layers=2, hidden_dim=256, dropout_rate=dropout_val)
         print(f"MLP Encoder initialized: {mlp_encoder}")
         dummy_img = torch.randn(bs, channels, img_size, img_size)
         output = mlp_encoder(dummy_img)
@@ -132,9 +139,11 @@ class RewardPredictorMLP(nn.Module):
                  input_dim: int,
                  hidden_dims: list[int],
                  activation_fn_str: str = 'relu',
-                 use_batch_norm: bool = False):
+                 use_batch_norm: bool = False,
+                 dropout_rate: float = 0.0):
         super().__init__()
         self.input_dim = input_dim
+        self.dropout_rate = dropout_rate
         self.layers = nn.ModuleList()
 
         if activation_fn_str == 'relu':
@@ -151,6 +160,8 @@ class RewardPredictorMLP(nn.Module):
             if use_batch_norm:
                 self.layers.append(nn.BatchNorm1d(hidden_dim))
             self.layers.append(activation_fn)
+            if self.dropout_rate > 0:
+                self.layers.append(nn.Dropout(self.dropout_rate))
             current_dim = hidden_dim
 
         # Output a single scalar reward
@@ -171,10 +182,11 @@ if __name__ == '__main__':
     channels = 3
     img_size = 64
     ld = 128  # latent_dim
+    dropout_val = 0.1 # Added for dropout example
 
     try:
         mlp_encoder = MLPEncoder(input_channels=channels, image_size=img_size,
-                                 latent_dim=ld, num_hidden_layers=2, hidden_dim=256)
+                                 latent_dim=ld, num_hidden_layers=2, hidden_dim=256, dropout_rate=dropout_val)
         print(f"MLP Encoder initialized: {mlp_encoder}")
         dummy_img = torch.randn(bs, channels, img_size, img_size)
         output = mlp_encoder(dummy_img)
@@ -208,9 +220,10 @@ if __name__ == '__main__':
     input_features = 256  # Example input feature dimension
 
     # Test case 1: With hidden layers
+    dropout_val_reward = 0.05 # Example dropout for reward predictor
     try:
         reward_predictor = RewardPredictorMLP(input_dim=input_features, hidden_dims=[
-                                              128, 64], activation_fn_str='relu')
+                                              128, 64], activation_fn_str='relu', dropout_rate=dropout_val_reward)
         print(f"\nReward Predictor initialized: {reward_predictor}")
         dummy_input = torch.randn(batch_size, input_features)
         predicted_rewards = reward_predictor(dummy_input)
@@ -242,7 +255,7 @@ if __name__ == '__main__':
     # Test case 3: With Batch Norm
     try:
         reward_predictor_bn = RewardPredictorMLP(input_dim=input_features, hidden_dims=[
-                                                 128, 64], use_batch_norm=True, activation_fn_str='gelu')
+                                                 128, 64], use_batch_norm=True, activation_fn_str='gelu', dropout_rate=dropout_val_reward)
         print(
             f"\nReward Predictor (with BatchNorm) initialized: {reward_predictor_bn}")
         dummy_input_bn = torch.randn(batch_size, input_features)

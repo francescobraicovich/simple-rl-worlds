@@ -22,12 +22,14 @@ class JEPA(nn.Module):
                  ema_decay=0.996,
                  encoder_type='vit',  # New: 'vit', 'cnn', 'mlp'
                  encoder_params: dict = None,  # New: dict to hold encoder-specific params
-                 target_encoder_mode: str = "default" # Added: "default", "vjepa2", "none"
+                  target_encoder_mode: str = "default", # Added: "default", "vjepa2", "none"
+                  predictor_dropout_rate: float = 0.0  # Added
                  ):
         super().__init__()
 
         self.ema_decay = ema_decay
         self.target_encoder_mode = target_encoder_mode
+        self.predictor_dropout_rate = predictor_dropout_rate  # Stored
         self._image_size_tuple = image_size if isinstance(
             image_size, tuple) else (image_size, image_size)
 
@@ -67,7 +69,8 @@ class JEPA(nn.Module):
                 'stride': encoder_params.get('stride', 2),
                 'padding': encoder_params.get('padding', 1),
                 'activation_fn_str': encoder_params.get('activation_fn_str', 'relu'),
-                'fc_hidden_dim': encoder_params.get('fc_hidden_dim', None)
+                'fc_hidden_dim': encoder_params.get('fc_hidden_dim', None),
+                'dropout_rate': encoder_params.get('dropout_rate', 0.0)  # Added
             }
             self.online_encoder = CNNEncoder(**cnn_constructor_params)
         elif encoder_type == 'mlp':
@@ -77,7 +80,8 @@ class JEPA(nn.Module):
                 'latent_dim': latent_dim,
                 'num_hidden_layers': encoder_params.get('num_hidden_layers', 2),
                 'hidden_dim': encoder_params.get('hidden_dim', 512),
-                'activation_fn_str': encoder_params.get('activation_fn_str', 'relu')
+                'activation_fn_str': encoder_params.get('activation_fn_str', 'relu'),
+                'dropout_rate': encoder_params.get('dropout_rate', 0.0)  # Added
             }
             self.online_encoder = MLPEncoder(**mlp_constructor_params)
         else:
@@ -97,13 +101,20 @@ class JEPA(nn.Module):
 
         # Predictor Network (MLP)
         # Input to predictor: latent_dim (from target_encoder(s_t)) + action_emb_dim
-        self.predictor = nn.Sequential(
+        predictor_layers = [
             nn.Linear(latent_dim + action_emb_dim, predictor_hidden_dim),
-            nn.GELU(),
+            nn.GELU()
+        ]
+        if self.predictor_dropout_rate > 0:
+            predictor_layers.append(nn.Dropout(self.predictor_dropout_rate))
+        predictor_layers.extend([
             nn.Linear(predictor_hidden_dim, predictor_hidden_dim),
-            nn.GELU(),
-            nn.Linear(predictor_hidden_dim, predictor_output_dim)
-        )
+            nn.GELU()
+        ])
+        if self.predictor_dropout_rate > 0:
+            predictor_layers.append(nn.Dropout(self.predictor_dropout_rate))
+        predictor_layers.append(nn.Linear(predictor_hidden_dim, predictor_output_dim))
+        self.predictor = nn.Sequential(*predictor_layers)
 
         assert predictor_output_dim == latent_dim, \
             "Predictor output dimension must match encoder latent dimension for JEPA loss."

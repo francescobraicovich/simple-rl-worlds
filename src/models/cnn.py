@@ -15,7 +15,8 @@ class CNNEncoder(nn.Module):
                  stride=2,
                  padding=1,
                  activation_fn_str='relu',
-                 fc_hidden_dim=None):
+                 fc_hidden_dim=None,
+                 dropout_rate=0.0):
         super().__init__()
 
         if isinstance(image_size, int):
@@ -30,6 +31,7 @@ class CNNEncoder(nn.Module):
         self.kernel_size = kernel_size
         self.stride = stride
         self.padding = padding
+        self.dropout_rate = dropout_rate
 
         if activation_fn_str == 'relu':
             self.activation_fn = nn.ReLU()
@@ -50,6 +52,8 @@ class CNNEncoder(nn.Module):
                           kernel_size, stride, padding)
             )
             conv_layers.append(self.activation_fn)
+            if self.dropout_rate > 0:
+                conv_layers.append(nn.Dropout2d(self.dropout_rate))
             # conv_layers.append(nn.BatchNorm2d(out_channels)) # Optional: BatchNorm
             # conv_layers.append(nn.MaxPool2d(2, 2)) # Optional: MaxPool, adjust stride if used
 
@@ -75,13 +79,22 @@ class CNNEncoder(nn.Module):
                 "Flattened size is 0 after conv layers. Check network parameters.")
 
         if fc_hidden_dim:
-            self.fc_net = nn.Sequential(
+            fc_layers = [
                 nn.Linear(self.flattened_size, fc_hidden_dim),
                 self.activation_fn,
-                nn.Linear(fc_hidden_dim, latent_dim)
-            )
+            ]
+            if self.dropout_rate > 0:
+                fc_layers.append(nn.Dropout(self.dropout_rate))
+            fc_layers.append(nn.Linear(fc_hidden_dim, latent_dim))
+            self.fc_net = nn.Sequential(*fc_layers)
         else:
-            self.fc_net = nn.Linear(self.flattened_size, latent_dim)
+            if self.dropout_rate > 0:
+                self.fc_net = nn.Sequential(
+                    nn.Dropout(self.dropout_rate), # Dropout before the final linear layer
+                    nn.Linear(self.flattened_size, latent_dim)
+                )
+            else:
+                self.fc_net = nn.Linear(self.flattened_size, latent_dim)
 
         self.apply(initialize_weights)
 
@@ -110,10 +123,11 @@ if __name__ == '__main__':
     channels = 3
     img_size = 64
     ld = 128  # latent_dim
+    dropout_val = 0.1
 
     try:
         cnn_encoder = CNNEncoder(input_channels=channels, image_size=img_size,
-                                 latent_dim=ld, num_conv_layers=3, base_filters=32)
+                                 latent_dim=ld, num_conv_layers=3, base_filters=32, dropout_rate=dropout_val)
         print(f"CNN Encoder initialized: {cnn_encoder}")
         dummy_img = torch.randn(bs, channels, img_size, img_size)
         output = cnn_encoder(dummy_img)
@@ -121,7 +135,7 @@ if __name__ == '__main__':
         assert output.shape == (bs, ld)
 
         cnn_encoder_fc_hidden = CNNEncoder(
-            input_channels=channels, image_size=img_size, latent_dim=ld, fc_hidden_dim=256)
+            input_channels=channels, image_size=img_size, latent_dim=ld, fc_hidden_dim=256, dropout_rate=dropout_val)
         print(
             f"CNN Encoder with fc_hidden_dim initialized: {cnn_encoder_fc_hidden}")
         output_fc_hidden = cnn_encoder_fc_hidden(dummy_img)
