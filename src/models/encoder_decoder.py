@@ -82,7 +82,8 @@ class StandardEncoderDecoder(nn.Module):
                 'stride': encoder_params.get('stride', 2),
                 'padding': encoder_params.get('padding', 1),
                 'activation_fn_str': encoder_params.get('activation_fn_str', 'relu'),
-                'fc_hidden_dim': encoder_params.get('fc_hidden_dim', None)
+                'fc_hidden_dim': encoder_params.get('fc_hidden_dim', None),
+                'dropout_rate': encoder_params.get('dropout_rate', 0.0)  # Added
             }
             self.encoder = CNNEncoder(**cnn_params)
         elif encoder_type == 'mlp':
@@ -92,7 +93,8 @@ class StandardEncoderDecoder(nn.Module):
                 'latent_dim': latent_dim,
                 'num_hidden_layers': encoder_params.get('num_hidden_layers', 2),
                 'hidden_dim': encoder_params.get('hidden_dim', 512),
-                'activation_fn_str': encoder_params.get('activation_fn_str', 'relu')
+                'activation_fn_str': encoder_params.get('activation_fn_str', 'relu'),
+                'dropout_rate': encoder_params.get('dropout_rate', 0.0)  # Added
             }
             self.encoder = MLPEncoder(**mlp_params)
         else:

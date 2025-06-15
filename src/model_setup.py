@@ -66,7 +66,8 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
         predictor_output_dim=config.get('latent_dim', 128), # JEPA predictor output dim is same as latent_dim
         ema_decay=config.get('ema_decay', 0.996),
         encoder_type=encoder_type,
-        encoder_params=specific_encoder_params
+        encoder_params=specific_encoder_params,
+        predictor_dropout_rate=config.get('jepa', {}).get('predictor_dropout_rate', 0.0) # Added
     ).to(device)
     models['jepa'] = jepa_model
 
@@ -86,7 +87,8 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
             input_dim=input_dim_enc_dec,
             hidden_dims=enc_dec_mlp_config.get('hidden_dims', [128, 64]),
             activation_fn_str=enc_dec_mlp_config.get('activation', 'relu'),
-            use_batch_norm=enc_dec_mlp_config.get('use_batch_norm', False)
+            use_batch_norm=enc_dec_mlp_config.get('use_batch_norm', False),
+            dropout_rate=enc_dec_mlp_config.get('dropout_rate', 0.0) # Added
         ).to(device)
         print(f"Encoder-Decoder Reward MLP: {reward_mlp_enc_dec}")
     models['reward_mlp_enc_dec'] = reward_mlp_enc_dec
@@ -99,7 +101,8 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
             input_dim=input_dim_jepa,
             hidden_dims=jepa_mlp_config.get('hidden_dims', [128, 64]),
             activation_fn_str=jepa_mlp_config.get('activation', 'relu'),
-            use_batch_norm=jepa_mlp_config.get('use_batch_norm', False)
+            use_batch_norm=jepa_mlp_config.get('use_batch_norm', False),
+            dropout_rate=jepa_mlp_config.get('dropout_rate', 0.0) # Added
         ).to(device)
         print(f"JEPA Reward MLP: {reward_mlp_jepa}")
     models['reward_mlp_jepa'] = reward_mlp_jepa
