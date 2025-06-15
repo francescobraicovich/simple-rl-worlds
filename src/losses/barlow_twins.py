@@ -57,11 +57,14 @@ class BarlowTwinsLoss(nn.Module):
 
         # 1. Normalize along the batch dimension (batchnorm-like)
         # Each feature dimension should have mean 0 and std 1 over the batch.
-        z1_norm = (z1 - z1.mean(dim=0, keepdim=True)) / \
-            (z1.std(dim=0, keepdim=True) + self.eps)
-        z2_norm = (z2 - z2.mean(dim=0, keepdim=True)) / \
-            (z2.std(dim=0, keepdim=True) + self.eps)
+        z1_mean = z1.mean(dim=0, keepdim=True)
+        z1_std = torch.sqrt(z1.var(dim=0, unbiased=False, keepdim=True) + self.eps)
+        z1_norm = (z1 - z1_mean) / z1_std
 
+        z2_mean = z2.mean(dim=0, keepdim=True)
+        z2_std = torch.sqrt(z2.var(dim=0, unbiased=False, keepdim=True) + self.eps)
+        z2_norm = (z2 - z2_mean) / z2_std
+        
         # 2. Calculate the cross-correlation matrix
         # c_ij = sum_k (z_norm_1_ki * z_norm_2_kj) / batch_size
         # (D, N) @ (N, D) -> (D, D)
@@ -97,8 +100,9 @@ class BarlowTwinsLoss(nn.Module):
         assert z.ndim == 2, "Input tensor must be 2D (batch_size, feature_dim)."
         batch_size, feature_dim = z.shape
 
-        z_norm = (z - z.mean(dim=0, keepdim=True)) / \
-            (z.std(dim=0, keepdim=True) + self.eps)
+        z_mean = z.mean(dim=0, keepdim=True)
+        z_std = torch.sqrt(z.var(dim=0, unbiased=False, keepdim=True) + self.eps)
+        z_norm = (z - z_mean) / z_std
 
         # Auto-correlation matrix
         auto_corr_matrix = (z_norm.T @ z_norm) / batch_size

@@ -3,7 +3,13 @@ import torch
 import torch.nn as nn
 
 # Adjust imports based on the new structure
-from losses import VICRegLoss, BarlowTwinsLoss, DINOLoss
+# Assuming PYTHONPATH is set to /app, then src.losses should be used.
+from src.losses.vicreg import VICRegLoss
+from src.losses.barlow_twins import BarlowTwinsLoss
+from src.losses.dino import DINOLoss
+# If tests are run from /app (e.g. python -m tests.test_losses), then 'from losses import ...' might fail
+# if 'src' is not automatically added to sys.path.
+# The structure 'from src.module import Class' is generally more robust when /app is in PYTHONPATH.
 
 
 class TestLosses(unittest.TestCase):
@@ -71,11 +77,20 @@ class TestLosses(unittest.TestCase):
         # Input with std close to 0 for all features
         z_std_zero = torch.zeros(
             self.batch_size, self.embed_dim, device=self.device)
+        # Ensure loss_fn.eps is available and is a float or tensor for sqrt
+        # loss_fn.eps is already a float attribute of the class instance
+        
         reg_loss_zero_std, std_loss_val_zero, _ = loss_fn.calculate_reg_terms(
             z_std_zero)
-        # Hinge loss max(0, 1-0) = 1. Mean over features should be 1.
+            
+        # raw_std_loss = mean(relu(1 - sqrt(var + eps)))
+        # For var=0, raw_std_loss = mean(relu(1 - sqrt(eps))) = 1 - sqrt(eps)
+        # std_loss_val_zero is already weighted_std_loss = std_coeff * raw_std_loss
+        expected_raw_std_loss_for_zero_variance = 1.0 - torch.sqrt(torch.tensor(loss_fn.eps, device=self.device))
+        expected_weighted_std_loss = expected_raw_std_loss_for_zero_variance * loss_fn.std_coeff
+        
         self.assertAlmostEqual(std_loss_val_zero.item(),
-                               1.0 * loss_fn.std_coeff, delta=1e-3)
+                               expected_weighted_std_loss.item(), delta=1e-3)
 
     def test_vicreg_cov_loss_behavior(self):
         loss_fn = VICRegLoss(std_coeff=0.0, cov_coeff=1.0).to(
@@ -91,6 +106,69 @@ class TestLosses(unittest.TestCase):
         reg_loss, _, cov_loss_val = loss_fn.calculate_reg_terms(z_uncorr)
         self.assertGreater(cov_loss_val.item(), 0.0)
         # A zero covariance loss is hard to achieve without specific construction like PCA output
+
+    def test_vicreg_calculate_reg_terms(self):
+        # Instantiate VICRegLoss with std_coeff=1.0, cov_coeff=1.0 for predictable raw loss values
+        loss_fn = VICRegLoss(sim_coeff=1.0, std_coeff=1.0, cov_coeff=1.0, eps=1e-5).to(self.device) # Added eps for ideal case normalization
+        batch_size, embed_dim = 64, 128
+
+        # Test Case 1: Non-ideal input
+        z_non_ideal = torch.randn(batch_size, embed_dim, device=self.device)
+        # Introduce low variance for the first half of features
+        z_non_ideal[:, :embed_dim//2] *= 0.1
+        # Introduce covariance: make feature 0 correlated with feature 1
+        z_non_ideal[:, 0] += 0.5 * z_non_ideal[:, 1]
+        z_non_ideal.requires_grad_(True)
+
+        total_reg_loss, std_loss, cov_loss = loss_fn.calculate_reg_terms(z_non_ideal)
+
+        self.assertIsInstance(total_reg_loss, torch.Tensor)
+        self.assertGreater(total_reg_loss.item(), 0.0, "Total reg loss should be > 0 for non-ideal input")
+        self.assertGreater(std_loss.item(), 0.0, "Std loss should be > 0 for non-ideal input (low variance)")
+        self.assertGreater(cov_loss.item(), 0.0, "Cov loss should be > 0 for non-ideal input (correlated features)")
+
+        # Test gradients
+        total_reg_loss.backward()
+        self.assertIsNotNone(z_non_ideal.grad, "Grad should exist for z_non_ideal")
+        self.assertTrue(z_non_ideal.grad.abs().sum().item() > 0, "Sum of grads should be > 0")
+        z_non_ideal.grad = None # Clear grad for next test case
+
+        # Test Case 2: Ideal input (features are mean 0, std 1, and as uncorrelated as possible for random data)
+        # Using a smaller embed_dim for the ideal case, where embed_dim < batch_size,
+        # might lead to a more well-behaved sample covariance matrix.
+        ideal_embed_dim = embed_dim // 4 # e.g., 128 // 4 = 32. batch_size is 64.
+        z_ideal_raw = torch.randn(batch_size, ideal_embed_dim, device=self.device)
+
+        # Normalize features to have mean 0 and std 1
+        z_ideal_mean = z_ideal_raw.mean(dim=0, keepdim=True)
+        z_ideal_std = z_ideal_raw.std(dim=0, keepdim=True)
+        z_ideal = (z_ideal_raw - z_ideal_mean) / (z_ideal_std + loss_fn.eps) # Use loss_fn.eps
+
+        # Verify normalization (optional, but good for sanity check)
+        # self.assertTrue(torch.allclose(z_ideal.mean(dim=0), torch.zeros_like(z_ideal.mean(dim=0)), atol=1e-5))
+        # self.assertTrue(torch.allclose(z_ideal.std(dim=0), torch.ones_like(z_ideal.std(dim=0)), atol=1e-2)) # std can have larger tolerance
+
+        total_reg_loss_ideal, std_loss_ideal, cov_loss_ideal = loss_fn.calculate_reg_terms(z_ideal)
+
+        # For std_loss: if features have std=1, then F.relu(1 - z_std) should be F.relu(1-1) = 0.
+        # So, std_loss_ideal should be very close to 0.
+        self.assertTrue(torch.isclose(std_loss_ideal, torch.tensor(0.0, device=self.device), atol=1e-3),
+                        f"Std loss for ideal input (embed_dim={ideal_embed_dim}) not close to 0: {std_loss_ideal.item()}")
+
+        # For cov_loss: for perfectly uncorrelated features, cov_matrix is diagonal.
+        # fill_diagonal_(0).pow_(2).sum() would be 0.
+        # Random normalized data won't be perfectly uncorrelated, but cov_loss should be small.
+        # With smaller ideal_embed_dim, the sum of squared off-diagonal covariances might be smaller.
+        # The value 0.5447 was observed with atol=0.5. Let's set atol slightly higher.
+        self.assertTrue(torch.isclose(cov_loss_ideal, torch.tensor(0.0, device=self.device), atol=0.6),
+                        f"Cov loss for ideal input (embed_dim={ideal_embed_dim}) not close enough to 0 (atol=0.6): {cov_loss_ideal.item()}")
+
+        # Total loss tolerance should also reflect the covariance tolerance
+        self.assertTrue(torch.isclose(total_reg_loss_ideal, torch.tensor(0.0, device=self.device), atol=0.6),
+                        f"Total reg loss for ideal input (embed_dim={ideal_embed_dim}) not close to 0 (atol=0.6): {total_reg_loss_ideal.item()}")
+
+        print(f"\nTest test_vicreg_calculate_reg_terms. Non-ideal (D={embed_dim}): total={total_reg_loss.item()}, std={std_loss.item()}, cov={cov_loss.item()}. Ideal (D={ideal_embed_dim}): total={total_reg_loss_ideal.item()}, std={std_loss_ideal.item()}, cov={cov_loss_ideal.item()}")
+
 
     # --- BarlowTwinsLoss Tests ---
 

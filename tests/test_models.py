@@ -2,11 +2,12 @@ import unittest
 import torch
 
 # Models to test
-from models.cnn import CNNEncoder
-from models.mlp import MLPEncoder
-from models.vit import ViT
-from models.encoder_decoder import StandardEncoderDecoder
-from models.jepa import JEPA
+from src.models.cnn import CNNEncoder
+from src.models.mlp import MLPEncoder
+from src.models.vit import ViT
+from src.models.encoder_decoder import StandardEncoderDecoder
+from src.models.jepa import JEPA
+from src.losses.vicreg import VICRegLoss # Added import
 
 
 class TestEncoders(unittest.TestCase):
@@ -362,6 +363,87 @@ class TestJEPATargetEncoderModes(unittest.TestCase):
         # Just ensure no error occurs.
 
         self._perform_gradient_check(model, outputs)
+
+    def test_jepa_vjepa2_aux_loss_gradient(self):
+        mode = "vjepa2"
+        # Define basic parameters
+        image_size = 32  # Effectively flattened input dimension for MLP
+        patch_size = 4   # Dummy for MLP
+        input_channels = 1 # For flattened input
+        action_dim = 3
+        latent_dim = 16
+        predictor_hidden_dim = 32
+        predictor_output_dim = latent_dim # Must match latent_dim
+
+        # Encoder params for MLP
+        mlp_encoder_params = {
+            'num_hidden_layers': 1,
+            'hidden_dim': 64
+        }
+
+        # Instantiate JEPA
+        model = JEPA(
+            image_size=(image_size, 1), # Corrected: Pass as tuple for MLPEncoder
+            patch_size=patch_size,
+            input_channels=input_channels,
+            action_dim=action_dim,
+            action_emb_dim=action_dim * 2, # Dummy action_emb_dim
+            latent_dim=latent_dim,
+            predictor_hidden_dim=predictor_hidden_dim,
+            predictor_output_dim=predictor_output_dim,
+            ema_decay=0.99, # Dummy value
+            encoder_type='mlp',
+            encoder_params=mlp_encoder_params,
+            target_encoder_mode=mode
+        )
+
+        # Instantiate VICRegLoss
+        aux_loss_fn = VICRegLoss()
+
+        # Create dummy input tensors
+        batch_size = self.batch_size # from setUp
+        # For MLP, input should be (batch_size, input_channels * image_size_flat)
+        # However, our MLPEncoder expects (batch, channels, height, width) and flattens internally.
+        # So, we can use (batch_size, input_channels, image_size, 1) or similar for flat vector.
+        # Let's adjust image_size for MLPEncoder to be (image_size_flat, 1)
+        # And input_channels = 1.
+        # The MLPEncoder will calculate input_dim as input_channels * image_size[0] * image_size[1]
+        # So, if image_size = (32,1) and input_channels = 1, input_dim = 32.
+
+        # Create s_t, action, s_t_plus_1
+        # The MLPEncoder internally flattens, so we provide it as if it's an "image"
+        # (batch_size, input_channels, feature_dim, 1)
+        s_t = torch.randn(batch_size, input_channels, image_size, 1)
+        action = torch.randn(batch_size, action_dim)
+        s_t_plus_1 = torch.randn(batch_size, input_channels, image_size, 1)
+
+        # Ensure online_encoder parameters initially have no gradients
+        for param in model.online_encoder.parameters():
+            param.grad = None
+
+        # Perform the model's forward pass
+        # For vjepa2, the 4th output (online_s_t_plus_1_emb) is None
+        _, _, online_s_t_emb, _ = model(s_t, action, s_t_plus_1)
+
+        # Assert that online_s_t_emb is not None and requires gradients
+        self.assertIsNotNone(online_s_t_emb, "online_s_t_emb should not be None.")
+        self.assertTrue(online_s_t_emb.requires_grad, "online_s_t_emb should require gradients.")
+
+        # Calculate the auxiliary loss
+        aux_loss, _, _ = aux_loss_fn.calculate_reg_terms(online_s_t_emb)
+        self.assertTrue(aux_loss.requires_grad, "aux_loss should require gradients.")
+
+        # Call aux_loss.backward()
+        aux_loss.backward()
+
+        # Check for gradients in online_encoder parameters
+        grad_sum = 0.0
+        for param in model.online_encoder.parameters():
+            self.assertIsNotNone(param.grad, "Parameter in online_encoder should have gradient.")
+            grad_sum += param.grad.abs().sum()
+
+        self.assertTrue(grad_sum > 0, "Sum of gradients in online_encoder should be > 0.")
+        print(f"\nTest test_jepa_vjepa2_aux_loss_gradient for mode '{mode}' passed. Grad sum: {grad_sum.item()}")
 
 
 if __name__ == '__main__':
