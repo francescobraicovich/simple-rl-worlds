@@ -148,7 +148,6 @@ class JEPA(nn.Module):
 
         elif self.target_encoder_mode == "vjepa2":
             online_s_t_representation = self.online_encoder(s_t) # z_t
-
             # Target for predictor is from target_encoder(s_t_plus_1)
             with torch.no_grad():
                 if self.target_encoder is None: # Should not happen in vjepa2 mode due to __init__ logic
@@ -183,5 +182,5 @@ class JEPA(nn.Module):
         # This method is called by the training loop.
         # For "vjepa2", EMA is handled within the forward pass.
         # For "none", EMA is not used.
-        if self.target_encoder_mode == "default":
+        if self.target_encoder_mode in ["default", "vjepa2"]:
             self._update_target_encoder_ema()
