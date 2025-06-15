@@ -19,6 +19,7 @@ load_model_path: "" # empty string means don't load, otherwise it's a path relat
 model_type_to_load: "" # options: "std_enc_dec", "jepa", or potentially others if the system supports more
 
 # Training Configuration
+frame_skipping: 0 # Number of frames to skip (0 means no skipping)
 num_epochs: 20
 batch_size: 64
 learning_rate: 0.003

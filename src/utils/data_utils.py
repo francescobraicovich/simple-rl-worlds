@@ -43,7 +43,7 @@ class ExperienceDataset(Dataset):
         return state, action_tensor, reward_tensor, next_state
 
 
-def collect_random_episodes(config, max_steps_per_episode, image_size, validation_split_ratio):
+def collect_random_episodes(config, max_steps_per_episode, image_size, validation_split_ratio, frame_skipping):
     env_name = config['environment_name']
     num_episodes = config['num_episodes_data_collection']
 
@@ -66,6 +66,10 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
                 loaded_train_dataset = data['train_dataset']
                 loaded_val_dataset = data['val_dataset']
                 metadata = data['metadata']
+                print(f"Loaded metadata: {metadata}") # Print loaded metadata
+                loaded_frame_skipping = metadata.get('frame_skipping', 'N/A')
+                print(f"Frame skipping from loaded metadata: {loaded_frame_skipping}")
+
 
                 loaded_env_name = metadata.get('environment_name')
                 if loaded_env_name != env_name:
@@ -149,11 +153,40 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
         cumulative_reward_episode = 0.0  # Initialize cumulative reward
 
         while not (terminated or truncated) and step_count < max_steps_per_episode:
-            action = env.action_space.sample()
-            next_state_img, reward, terminated, truncated, info = env.step(
-                action)
+            recorded_current_state_img = current_state_img
+            accumulated_reward = 0.0
 
-            # Standardize image check for next_state
+            action = env.action_space.sample() # Primary action
+
+            # First step
+            next_state_img, reward, terminated, truncated, info = env.step(action)
+            accumulated_reward += reward
+            current_step_next_state_img = next_state_img
+            # Primary step counts towards step_count here for the main loop condition,
+            # but the actual recorded transition will use the state *after* skipping.
+            # The step_count increment for the main recorded transition happens *after* skipping block.
+
+            if frame_skipping > 0:
+                for _ in range(frame_skipping):
+                    if terminated or truncated:
+                        break
+
+                    # Increment step_count for each actual environment step *during* skipping
+                    step_count += 1 # This step is part of the episode's max_steps
+                    if step_count >= max_steps_per_episode:
+                        break
+
+                    action_skip = env.action_space.sample()
+                    next_state_skip, reward_skip, terminated, truncated, info = env.step(action_skip)
+                    accumulated_reward += reward_skip
+                    current_step_next_state_img = next_state_skip
+
+            # Now, current_step_next_state_img holds S' after all skips
+            # and accumulated_reward has the sum of rewards over the skipped frames.
+            # The action is the original action taken from recorded_current_state_img.
+            next_state_img = current_step_next_state_img # Use this for subsequent checks and storage
+
+            # Standardize image check for next_state (which is current_step_next_state_img)
             next_obs_is_uint8_image = isinstance(
                 next_state_img, np.ndarray) and next_state_img.dtype == np.uint8
 
@@ -191,10 +224,11 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
                     # Try next step with the (potentially problematic) next_state_img as current
                     continue
 
+            # The transition uses recorded_current_state_img, the original action, accumulated_reward, and the final next_state_img after skipping
             episode_transitions.append(
-                (current_state_img, action, reward, next_state_img))
-            current_state_img = next_state_img
-            step_count += 1
+                (recorded_current_state_img, action, accumulated_reward, next_state_img))
+            current_state_img = next_state_img # Update current state for the next iteration of the main while loop
+            step_count += 1 # Increment step_count for the primary transition that was just recorded
 
         if episode_transitions:
             all_episodes_raw_data.append(episode_transitions)
@@ -256,7 +290,8 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
                 'validation_split_ratio': validation_split_ratio,
                 'num_train_transitions': len(train_dataset),
                 'num_val_transitions': len(validation_dataset),
-                'collection_method': 'random' # Added collection method
+                'collection_method': 'random', # Added collection method
+                'frame_skipping': frame_skipping # Add frame_skipping to metadata
             }
 
             data_to_save = {
@@ -278,7 +313,7 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
     return train_dataset, validation_dataset
 
 
-def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_split_ratio):
+def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_split_ratio, frame_skipping):
     env_name = config['environment_name']
     num_episodes = config['num_episodes_data_collection']
 
@@ -299,6 +334,9 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
                 loaded_train_dataset = data['train_dataset']
                 loaded_val_dataset = data['val_dataset']
                 metadata = data['metadata']
+                print(f"Loaded PPO metadata: {metadata}") # Print loaded metadata
+                loaded_frame_skipping = metadata.get('frame_skipping', 'N/A')
+                print(f"Frame skipping from loaded PPO metadata: {loaded_frame_skipping}")
                 loaded_env_name = metadata.get('environment_name')
                 if loaded_env_name != env_name:
                     print(f"Error: Mismatch between loaded dataset environment ('{loaded_env_name}') and config environment ('{env_name}').")
@@ -404,12 +442,36 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
         cumulative_reward_episode = 0.0  # Initialize cumulative reward
 
         while not (terminated or truncated) and step_count < max_steps_per_episode:
-            # Action selection by PPO agent
-            # current_state_img is HWC, uint8 numpy array. SB3 CnnPolicy expects this.
-            action, _ = ppo_agent.predict(current_state_img, deterministic=True) # Use deterministic for collection consistency
+            recorded_current_state_img = current_state_img
+            accumulated_reward = 0.0
 
-            next_state_img, reward, terminated, truncated, info = env.step(action)
-            cumulative_reward_episode += reward  # Add reward to cumulative sum
+            # Action selection by PPO agent for the primary action
+            original_action, _ = ppo_agent.predict(recorded_current_state_img, deterministic=True)
+
+            # First step
+            next_state_img, reward, terminated, truncated, info = env.step(original_action)
+            accumulated_reward += reward
+            current_step_next_state_img = next_state_img
+            # Similar to random collection, step_count for the main recorded transition is incremented after skipping.
+
+            if frame_skipping > 0:
+                for _ in range(frame_skipping):
+                    if terminated or truncated:
+                        break
+
+                    step_count += 1 # This step is part of the episode's max_steps
+                    if step_count >= max_steps_per_episode:
+                        break
+
+                    # Action for skip step based on the *actual current* state in the environment
+                    action_skip, _ = ppo_agent.predict(current_step_next_state_img, deterministic=True)
+                    next_state_skip, reward_skip, terminated, truncated, info = env.step(action_skip)
+                    accumulated_reward += reward_skip
+                    current_step_next_state_img = next_state_skip
+
+            next_state_img = current_step_next_state_img # S' after all skips
+
+            # Standardize image check for next_state_img (which is current_step_next_state_img)
             next_obs_is_uint8_image = isinstance(next_state_img, np.ndarray) and next_state_img.dtype == np.uint8
 
             if not next_obs_is_uint8_image:
@@ -434,9 +496,11 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
                 if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2): break
                 else: continue
 
-            episode_transitions.append((current_state_img, action.item() if isinstance(action, np.ndarray) and env.action_space.shape == () else action, reward, next_state_img))
-            current_state_img = next_state_img
-            step_count += 1
+            # The transition uses recorded_current_state_img, the original_action, accumulated_reward, and the final next_state_img
+            processed_action = original_action.item() if isinstance(original_action, np.ndarray) and env.action_space.shape == () else original_action
+            episode_transitions.append((recorded_current_state_img, processed_action, accumulated_reward, next_state_img))
+            current_state_img = next_state_img # Update current state for the next iteration
+            step_count += 1 # Increment step_count for the primary transition
 
         if episode_transitions:
             all_episodes_raw_data.append(episode_transitions)
@@ -487,7 +551,8 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
                 'num_train_transitions': len(train_dataset),
                 'num_val_transitions': len(validation_dataset),
                 'collection_method': 'ppo', # Added collection method
-                'ppo_config_params': ppo_specific_config # Save PPO params used for collection
+                'ppo_config_params': ppo_specific_config, # Save PPO params used for collection
+                'frame_skipping': frame_skipping # Add frame_skipping to metadata
             }
             data_to_save = {
                 'train_dataset': train_dataset,
@@ -538,7 +603,8 @@ if __name__ == '__main__':
                 config=dummy_config,
                 max_steps_per_episode=50,
                 image_size=(64, 64),
-                validation_split_ratio=0.4
+                validation_split_ratio=0.4,
+                frame_skipping=0 # Add frame_skipping argument
             )
 
             print(f"\n--- Training Dataset (Size: {len(train_d)}) ---")
@@ -589,7 +655,8 @@ if __name__ == '__main__':
                     config=dummy_config_load, # Pass the updated dummy_config_load
                     max_steps_per_episode=50, # These are not used when loading but function expects them
                     image_size=(64, 64),    # Same here
-                    validation_split_ratio=0.4 # Same here
+                    validation_split_ratio=0.4, # Same here
+                    frame_skipping=0 # Add frame_skipping, not used in loading but needed for signature
                 )
 
                 print(f"\n--- Loaded Training Dataset (Size: {len(train_d_loaded)}) ---")
