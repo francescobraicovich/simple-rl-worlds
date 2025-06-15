@@ -105,7 +105,6 @@ def train_validate_model_epoch(
             total_loss = loss_primary
 
         total_loss_item = total_loss.item()
-        total_loss.backward()
         optimizer.step()
 
         if model_name_log_prefix == "JEPA":

@@ -22,7 +22,7 @@ model_type_to_load: "" # options: "std_enc_dec", "jepa", or potentially others i
 num_epochs: 20
 batch_size: 64
 learning_rate: 0.003
-learning_rate_jepa: 0.003 # Can be different from the main learning_rate
+learning_rate_jepa: 0.01 # Can be different from the main learning_rate
 num_workers: 1 # For DataLoader
 log_interval: 50 # Log training progress every N batches
 
@@ -59,7 +59,6 @@ encoder_params:
     hidden_dim: 256         # Dimension of hidden layers in the MLP encoder
     activation_fn_str: 'relu' # Activation function ('relu' or 'gelu')
 
-# Model-Specific Configurations
 
 # Shared Latent Dimension
 latent_dim: 96 # Output dimension of the encoder, input to predictor/decoder logic for JEPA/StandardEncoderDecoder
@@ -120,7 +119,7 @@ reward_predictors:
 
 auxiliary_loss:
   type: "vicreg"  # Options: "vicreg", "barlow_twins", "dino"
-  weight: 5.0     # General weight for the chosen auxiliary loss
+  weight: 100.0     # General weight for the chosen auxiliary loss
   params:
     vicreg:
       # sim_coeff is not used by calculate_reg_terms, but kept for completeness if full VICReg was used.
