@@ -7,18 +7,25 @@ import random  # Added for shuffling episodes
 import os
 import pickle
 from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv
 from src.rl_agent import create_ppo_agent, train_ppo_agent
-# from stable_baselines3.common.vec_env import DummyVecEnv # Not strictly needed here if rl_agent handles it
+from src.utils.env_wrappers import ActionRepeatWrapper
 # import cv2 # For image resizing - Removed as torchvision.transforms is used
 
 
 class ExperienceDataset(Dataset):
-    def __init__(self, states, actions, rewards, next_states, transform=None):
+    def __init__(self, states, actions, rewards, next_states, transform=None, config=None):
         self.states = states
         self.actions = actions
         self.rewards = rewards
         self.next_states = next_states
         self.transform = transform
+        self.config = config
+        if self.config is None:
+            # This is a fallback if config is not provided, though the plan is to always provide it.
+            # Consider raising an error if config is essential for all uses.
+            print("Warning: ExperienceDataset created without a config. State shape validation will be skipped.")
+
 
     def __len__(self):
         return len(self.states)
@@ -32,6 +39,23 @@ class ExperienceDataset(Dataset):
         if self.transform:
             state = self.transform(state)
             next_state = self.transform(next_state)
+
+        if self.config:
+            expected_input_channels = self.config['input_channels']
+            # image_size in config is an int (e.g., 64)
+            expected_image_height = self.config['image_size']
+            expected_image_width = self.config['image_size']
+            expected_shape = (expected_input_channels, expected_image_height, expected_image_width)
+
+            if state.shape != expected_shape:
+                error_msg = f"State shape {state.shape} does not match target {expected_shape} for idx {idx}."
+                # print(f"STATE (raw an transformed): {self.states[idx]} --> {state}") # for debugging
+                raise ValueError(error_msg)
+
+            if next_state.shape != expected_shape:
+                error_msg = f"Next state shape {next_state.shape} does not match target {expected_shape} for idx {idx}."
+                # print(f"NEXT_STATE (raw an transformed): {self.next_states[idx]} --> {next_state}") # for debugging
+                raise ValueError(error_msg)
 
         # Convert action to tensor, ensure it's float for potential nn.Linear embedding
         # Adjust dtype based on action type (discrete typically long, continuous float)
@@ -238,7 +262,8 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
 
     if not all_episodes_raw_data:
         print("No data collected. Returning empty datasets.")
-        empty_dataset = ExperienceDataset([], [], [], [], transform=preprocess)
+        # Pass config to ExperienceDataset constructor
+        empty_dataset = ExperienceDataset([], [], [], [], transform=preprocess, config=config)
         return empty_dataset, empty_dataset
 
     random.shuffle(all_episodes_raw_data)
@@ -254,7 +279,8 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
     print(
         f"Splitting into {len(train_episodes_list)} training episodes and {len(val_episodes_list)} validation episodes.")
 
-    def create_dataset_from_episode_list(episode_list, transform_fn):
+    # Modified to accept and pass config
+    def create_dataset_from_episode_list(episode_list, transform_fn, dataset_config):
         flat_states, flat_actions, flat_rewards, flat_next_states = [], [], [], []
         for episode_data in episode_list:
             for s, a, r, ns in episode_data:
@@ -264,12 +290,14 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
                 flat_next_states.append(ns)
 
         # If flat_states is empty, ExperienceDataset will handle it (or should)
-        return ExperienceDataset(flat_states, flat_actions, flat_rewards, flat_next_states, transform=transform_fn)
+        # Pass dataset_config to ExperienceDataset constructor
+        return ExperienceDataset(flat_states, flat_actions, flat_rewards, flat_next_states, transform=transform_fn, config=dataset_config)
 
+    # Pass config to create_dataset_from_episode_list
     train_dataset = create_dataset_from_episode_list(
-        train_episodes_list, preprocess)
+        train_episodes_list, preprocess, config)
     validation_dataset = create_dataset_from_episode_list(
-        val_episodes_list, preprocess)
+        val_episodes_list, preprocess, config)
 
     print(f"Training dataset: {len(train_dataset)} transitions.")
     print(f"Validation dataset: {len(validation_dataset)} transitions.")
@@ -375,7 +403,12 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
     if not ppo_specific_config or not ppo_specific_config.get('enabled', False):
         print("PPO agent configuration is missing or disabled in config. Cannot collect PPO episodes.")
         # Return empty datasets or raise an error
-        empty_dataset = ExperienceDataset([], [], [], [], transform=T.Compose([T.ToPILImage(),T.Resize(image_size),T.ToTensor()]))
+        # Pass config to ExperienceDataset constructor
+        empty_dataset = ExperienceDataset(
+            [], [], [], [],
+            transform=T.Compose([T.ToPILImage(),T.Resize(image_size),T.ToTensor()]),
+            config=config
+        )
         return empty_dataset, empty_dataset
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -384,8 +417,24 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
 
     # Create a temporary env for PPO training if needed, or use the main `env`
     # It's better to pass the same env instance to ensure compatibility of obs/action spaces
-    ppo_agent = create_ppo_agent(env, ppo_specific_config, device=device)
-    train_ppo_agent(ppo_agent, ppo_specific_config, task_name="Initial PPO Training for Data Collection")
+
+    # Action Repetition Wrapper
+    action_repetition_k = ppo_specific_config.get('action_repetition_k', 0)
+    original_frame_skipping = frame_skipping # Store original frame_skipping
+
+    if action_repetition_k > 1: # k=1 means no repetition, k=0 means not set or disabled
+        print(f"Applying ActionRepeatWrapper with k={action_repetition_k}")
+        env = ActionRepeatWrapper(env, action_repetition_k)
+        frame_skipping = 0 # Disable internal frame skipping if action repetition wrapper is active
+        print(f"Frame skipping disabled due to ActionRepeatWrapper being active.")
+    elif action_repetition_k == 1:
+        print("action_repetition_k is 1, no ActionRepeatWrapper will be applied.")
+
+    # Create VecEnv for PPO agent
+    vec_env = DummyVecEnv([lambda: env])
+
+    ppo_agent = create_ppo_agent(vec_env, ppo_specific_config, device=device) # Pass vec_env
+    train_ppo_agent(ppo_agent, ppo_specific_config, task_name="Initial PPO Training for Data Collection") # Uses the vec_env
 
     additional_noise = ppo_specific_config.get('additional_log_std_noise', 0.0)
     if additional_noise != 0.0: # Only proceed if noise is non-zero
@@ -512,7 +561,8 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
 
     if not all_episodes_raw_data:
         print("No data collected with PPO. Returning empty datasets.")
-        empty_dataset = ExperienceDataset([], [], [], [], transform=preprocess)
+        # Pass config to ExperienceDataset constructor
+        empty_dataset = ExperienceDataset([], [], [], [], transform=preprocess, config=config)
         return empty_dataset, empty_dataset
 
     random.shuffle(all_episodes_raw_data)
@@ -524,7 +574,12 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
     print(f"Total PPO episodes collected: {num_total_episodes}")
     print(f"Splitting into {len(train_episodes_list)} training episodes and {len(val_episodes_list)} validation episodes.")
 
-    def create_dataset_from_episode_list(episode_list, transform_fn):
+    # This is a re-definition of the helper function.
+    # It should be identical to the one in collect_random_episodes if it's meant to be shared,
+    # or named differently if specific. Assuming it's intended to be the same.
+    # It already has been modified in the previous hunk for collect_random_episodes if this diff is applied sequentially.
+    # For safety, ensuring the change here if it wasn't.
+    def create_dataset_from_episode_list(episode_list, transform_fn, dataset_config): # Added dataset_config
         flat_states, flat_actions, flat_rewards, flat_next_states = [], [], [], []
         for episode_data in episode_list:
             for s, a, r, ns in episode_data:
@@ -532,10 +587,12 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
                 flat_actions.append(a)
                 flat_rewards.append(r)
                 flat_next_states.append(ns)
-        return ExperienceDataset(flat_states, flat_actions, flat_rewards, flat_next_states, transform=transform_fn)
+        # Pass dataset_config to ExperienceDataset constructor
+        return ExperienceDataset(flat_states, flat_actions, flat_rewards, flat_next_states, transform=transform_fn, config=dataset_config)
 
-    train_dataset = create_dataset_from_episode_list(train_episodes_list, preprocess)
-    validation_dataset = create_dataset_from_episode_list(val_episodes_list, preprocess)
+    # Pass config to create_dataset_from_episode_list
+    train_dataset = create_dataset_from_episode_list(train_episodes_list, preprocess, config)
+    validation_dataset = create_dataset_from_episode_list(val_episodes_list, preprocess, config)
 
     print(f"PPO Training dataset: {len(train_dataset)} transitions.")
     print(f"PPO Validation dataset: {len(validation_dataset)} transitions.")
@@ -554,7 +611,8 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
                 'num_val_transitions': len(validation_dataset),
                 'collection_method': 'ppo', # Added collection method
                 'ppo_config_params': ppo_specific_config, # Save PPO params used for collection
-                'frame_skipping': frame_skipping # Add frame_skipping to metadata
+                'frame_skipping': original_frame_skipping, # Save original frame_skipping
+                'action_repetition_k': action_repetition_k # Save action_repetition_k
             }
             data_to_save = {
                 'train_dataset': train_dataset,
@@ -578,110 +636,110 @@ if __name__ == '__main__':
     # Ensure you have a display server if using environments like CarRacing-v2 locally without headless mode.
     # For servers, use Xvfb: Xvfb :1 -screen 0 1024x768x24 &
     # export DISPLAY=:1
+    # The __main__ block below is primarily for testing collect_random_episodes.
+    # Testing collect_ppo_episodes would require a more elaborate setup,
+    # including a full config with ppo_agent settings.
 
-    print(f"Testing data collection with a sample environment...")
+    print(f"Testing data collection with a sample environment (collect_random_episodes)...")
     try:
         # Attempt to use a known pixel-based environment
         try:
-            gym.make("PongNoFrameskip-v4")
-            test_env_name = "PongNoFrameskip-v4"
-            print("Using PongNoFrameskip-v4 for testing data collection.")
+            # Try a simpler environment first that is less likely to have missing dependencies
+            gym.make("CartPole-v1")
+            test_env_name = "CartPole-v1"
+            print("Using CartPole-v1 for testing data collection (will try to render for image).")
         except gym.error.MissingEnvDependency:
-            print("PongNoFrameskip-v4 not available. Skipping data_utils.py example run.")
+            try:
+                gym.make("PongNoFrameskip-v4")
+                test_env_name = "PongNoFrameskip-v4"
+                print("Using PongNoFrameskip-v4 for testing data collection.")
+            except gym.error.MissingEnvDependency:
+                print("Neither CartPole-v1 nor PongNoFrameskip-v4 are available. Skipping data_utils.py example run.")
+                test_env_name = None
+        except Exception as e: # Catch other potential errors during gym.make
+            print(f"Could not make test environment: {e}. Skipping data_utils.py example run.")
             test_env_name = None
 
+
         if test_env_name:
-            # Dummy config for testing
-            dummy_config = {
+            # Dummy config for testing collect_random_episodes
+            # Add necessary keys for the new validation logic in ExperienceDataset
+            dummy_config_random = {
                 'environment_name': test_env_name,
-                'num_episodes_data_collection': 5, # Small number for test
-                'load_dataset': False, # Test data collection and saving
-                'dataset_name': ''
+                'num_episodes_data_collection': 2, # Small number for test
+                'dataset_dir': "datasets/random_test",
+                'load_dataset_path': "", # Don't load, force collection
+                'dataset_filename': "random_collected_data.pkl",
+                'input_channels': 3, # Assuming RGB for test environments like Pong, CartPole gives 3 channels after render
+                'image_size': 32      # Must match image_size below for T.Resize and validation
             }
 
-            # Test case 1: Collect and save
-            print("\n--- Test Case 1: Collect and Save ---")
+            print("\n--- Test Case 1: Collect and Save (Random Episodes) ---")
             train_d, val_d = collect_random_episodes(
-                config=dummy_config,
-                max_steps_per_episode=50,
-                image_size=(64, 64),
-                validation_split_ratio=0.4,
-                frame_skipping=0 # Add frame_skipping argument
+                config=dummy_config_random,
+                max_steps_per_episode=30,
+                image_size=(32, 32), # Smaller images for faster test
+                validation_split_ratio=0.5,
+                frame_skipping=2
             )
 
-            print(f"\n--- Training Dataset (Size: {len(train_d)}) ---")
+            print(f"\n--- Random Training Dataset (Size: {len(train_d)}) ---")
             if len(train_d) > 0:
-                train_dataloader = DataLoader(train_d, batch_size=4, shuffle=True)
+                train_dataloader = DataLoader(train_d, batch_size=2, shuffle=True)
                 s_batch, a_batch, r_batch, s_next_batch = next(iter(train_dataloader))
-                print(f"Training Sample batch shapes: States {s_batch.shape}, Actions {a_batch.shape}, Rewards {r_batch.shape}, Next States {s_next_batch.shape}")
+                print(f"Random Training Sample batch shapes: States {s_batch.shape}, Actions {a_batch.shape}, Rewards {r_batch.shape}, Next States {s_next_batch.shape}")
             else:
-                print("Training dataset is empty.")
+                print("Random training dataset is empty.")
 
-            print(f"\n--- Validation Dataset (Size: {len(val_d)}) ---")
+            print(f"\n--- Random Validation Dataset (Size: {len(val_d)}) ---")
             if len(val_d) > 0:
-                val_dataloader = DataLoader(val_d, batch_size=4, shuffle=False)
+                val_dataloader = DataLoader(val_d, batch_size=2, shuffle=False)
                 s_val_batch, a_val_batch, r_val_batch, s_next_val_batch = next(iter(val_dataloader))
-                print(f"Validation Sample batch shapes: States {s_val_batch.shape}, Actions {a_val_batch.shape}, Rewards {r_val_batch.shape}, Next States {s_next_val_batch.shape}")
+                print(f"Random Validation Sample batch shapes: States {s_val_batch.shape}, Actions {a_val_batch.shape}, Rewards {r_val_batch.shape}, Next States {s_next_val_batch.shape}")
             else:
-                print("Validation dataset is empty.")
+                print("Random validation dataset is empty.")
 
-            # Test case 2: Load the saved dataset
-            print("\n--- Test Case 2: Load Saved Dataset ---")
-            # For testing, we'll use the save_dataset_filename from the previous run.
-            # This means the dummy_config for loading needs to be updated.
-
-            # The filename used for saving in Test Case 1 will be based on the new logic if we were to run it with the modified code.
-            # However, the current test code saves with f"{env_name.replace('/', '_')}_{num_episodes_collected}.pkl"
-            # To make Test Case 2 work with the *current* test structure without modifying the test case logic itself too much now,
-            # we'll keep the old way of determining `saved_dataset_filename` for the *test only*.
-            # The actual function logic uses `config['dataset_filename']` for saving.
-
-            # This specific part of the test may need more robust updates if the goal is to test the new load/save names directly from config.
-            # For now, let's ensure the function itself is correct. The test will try to load what the *original* test code saved.
-
-            _test_case_saved_filename = f"{test_env_name.replace('/', '_')}_{dummy_config['num_episodes_data_collection']}.pkl"
-
-            dummy_config_load = {
+            # Test case 2: Load the saved random dataset
+            print("\n--- Test Case 2: Load Saved Random Dataset ---")
+            dummy_config_load_random = {
                 'environment_name': test_env_name,
-                'num_episodes_data_collection': dummy_config['num_episodes_data_collection'],
-                'dataset_dir': "datasets/", # Added to match new requirements
-                'load_dataset_path': _test_case_saved_filename, # What the old test case 1 would have saved
-                'dataset_filename': "test_data_save.pkl" # Name for saving if this run were to save
+                'num_episodes_data_collection': dummy_config_random['num_episodes_data_collection'],
+                'dataset_dir': dummy_config_random['dataset_dir'],
+                'load_dataset_path': dummy_config_random['dataset_filename'], # What test case 1 saved
+                'dataset_filename': "random_collected_data_new_save.pkl", # In case this run also saves
+                'input_channels': 3, # Must match for validation when loading
+                'image_size': 32      # Must match for validation when loading
             }
 
-            # Check if the file actually exists before attempting to load
-            # The dataset_dir for test case 2 should also align with the new config.
-            dataset_file_path = os.path.join(dummy_config_load['dataset_dir'], dummy_config_load['load_dataset_path'])
+            dataset_file_path = os.path.join(dummy_config_load_random['dataset_dir'], dummy_config_load_random['load_dataset_path'])
             if os.path.exists(dataset_file_path):
                 train_d_loaded, val_d_loaded = collect_random_episodes(
-                    config=dummy_config_load, # Pass the updated dummy_config_load
-                    max_steps_per_episode=50, # These are not used when loading but function expects them
-                    image_size=(64, 64),    # Same here
-                    validation_split_ratio=0.4, # Same here
-                    frame_skipping=0 # Add frame_skipping, not used in loading but needed for signature
+                    config=dummy_config_load_random,
+                    max_steps_per_episode=30,
+                    image_size=(32, 32),
+                    validation_split_ratio=0.5,
+                    frame_skipping=2
                 )
 
-                print(f"\n--- Loaded Training Dataset (Size: {len(train_d_loaded)}) ---")
+                print(f"\n--- Loaded Random Training Dataset (Size: {len(train_d_loaded)}) ---")
                 if len(train_d_loaded) > 0:
-                    # Basic check: compare sizes with originally collected data
-                    assert len(train_d_loaded) == len(train_d), "Loaded train dataset size mismatch!"
-                    print("Loaded training dataset size matches original.")
-                    # Deeper checks could involve comparing actual data points if necessary
+                    assert len(train_d_loaded) == len(train_d), "Loaded random train dataset size mismatch!"
+                    print("Loaded random training dataset size matches original.")
                 else:
-                    print("Loaded training dataset is empty.")
+                    print("Loaded random training dataset is empty.")
 
-                print(f"\n--- Loaded Validation Dataset (Size: {len(val_d_loaded)}) ---")
+                print(f"\n--- Loaded Random Validation Dataset (Size: {len(val_d_loaded)}) ---")
                 if len(val_d_loaded) > 0:
-                    assert len(val_d_loaded) == len(val_d), "Loaded validation dataset size mismatch!"
-                    print("Loaded validation dataset size matches original.")
+                    assert len(val_d_loaded) == len(val_d), "Loaded random validation dataset size mismatch!"
+                    print("Loaded random validation dataset size matches original.")
                 else:
-                    print("Loaded validation dataset is empty.")
+                    print("Loaded random validation dataset is empty.")
             else:
-                print(f"Dataset file {dataset_file_path} not found for Test Case 2. Skipping loading test.")
+                print(f"Random dataset file {dataset_file_path} not found for Test Case 2. Skipping loading test.")
 
     except ImportError as e:
-        print(f"Import error, likely missing a dependency for the test environment: {e}")
+        print(f"Import error during test, likely missing a dependency for the test environment: {e}")
     except Exception as e:
-        print(f"An error occurred during the example run: {e}")
+        print(f"An error occurred during the data_utils.py example run: {e}")
         import traceback
         traceback.print_exc()
