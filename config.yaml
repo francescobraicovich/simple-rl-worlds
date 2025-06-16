@@ -6,7 +6,7 @@ image_size: 64    # Target size (height and width) for processed images
 
 # Data Collection
 num_episodes_data_collection: 70 # Number of episodes to collect for the dataset
-max_steps_per_episode_data_collection: 500 # Max steps per episode during data collection
+max_steps_per_episode_data_collection: 600 # Max steps per episode during data collection
 
 # Dataset Management
 dataset_dir: "datasets/"
