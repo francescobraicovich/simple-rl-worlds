@@ -62,8 +62,7 @@ def initialize_optimizers(models_map, config): # Renamed models to models_map fo
         # Fallback: jepa_decoder LR -> global LR -> default 0.0003
         learning_rate_jepa_decoder = jepa_decoder_training_config.get('learning_rate', config.get('learning_rate', 0.0003))
 
-        # Using Adam for JEPA State Decoder as specified, not AdamW like others, can be changed if needed.
-        optimizer_jepa_decoder = torch.optim.Adam(
+        optimizer_jepa_decoder = torch.optim.AdamW(
             jepa_decoder_model.parameters(),
             lr=learning_rate_jepa_decoder
         )
