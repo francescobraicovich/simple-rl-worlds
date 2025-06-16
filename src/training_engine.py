@@ -94,8 +94,9 @@ def run_training_epochs(
             wandb_run.define_metric(f"reward_mlp/{model_prefix}/train/step")
             wandb_run.define_metric(f"reward_mlp/{model_prefix}/epoch")
             wandb_run.define_metric(f"reward_mlp/{model_prefix}/train/*", step_metric=f"reward_mlp/{model_prefix}/train/step")
-            wandb_run.define_metric(f"reward_mlp/{model_prefix}/val/*", step_metric=f"reward_mlp/{model_prefix}/epoch")
+            # wandb_run.define_metric(f"reward_mlp/{model_prefix}/val/*", step_metric=f"reward_mlp/{model_prefix}/epoch") # Original, possibly for batch val
             wandb_run.define_metric(f"reward_mlp/{model_prefix}/train_epoch_avg/*", step_metric=f"reward_mlp/{model_prefix}/epoch")
+            wandb_run.define_metric(f"reward_mlp/{model_prefix}/val_epoch_avg/*", step_metric=f"reward_mlp/{model_prefix}/epoch") # New for epoch-wise val
 
         # Define metrics for JEPA_Decoder
         wandb_run.define_metric("JEPA_Decoder/train/step")      # Step for batch-wise train logs
@@ -209,11 +210,13 @@ def run_training_epochs(
     # --- Reward MLP Training using train_reward_mlp_epoch ---
     if reward_mlp_enc_dec and enc_dec_mlp_config.get('enabled', False) and optimizer_reward_mlp_enc_dec and std_enc_dec and train_dataloader:
         print("\nStarting Reward MLP (Standard Encoder/Decoder) training...")
+        early_stopping_patience_enc_dec_reward_mlp = enc_dec_mlp_config.get('early_stopping_patience', 15)
         train_reward_mlp_epoch(
             reward_mlp_model=reward_mlp_enc_dec,
             base_model=std_enc_dec, # This is the best loaded std_enc_dec
             optimizer_reward_mlp=optimizer_reward_mlp_enc_dec,
             train_dataloader=train_dataloader,
+            val_dataloader=val_dataloader, # Added
             loss_fn=mse_loss_fn,
             device=device,
             action_dim=action_dim,
@@ -221,6 +224,7 @@ def run_training_epochs(
             model_name_log_prefix="Reward MLP (Enc-Dec)",
             num_epochs_reward_mlp=enc_dec_mlp_config.get('num_epochs', 1), # Default to 1 epoch if not specified
             log_interval_reward_mlp=enc_dec_mlp_config.get('log_interval', log_interval), # Use specific or general log_interval
+            early_stopping_patience=early_stopping_patience_enc_dec_reward_mlp, # Added
             is_jepa_base_model=False,
             wandb_run=wandb_run
         )
@@ -229,11 +233,13 @@ def run_training_epochs(
 
     if reward_mlp_jepa and jepa_mlp_config.get('enabled', False) and optimizer_reward_mlp_jepa and jepa_model and train_dataloader:
         print("\nStarting Reward MLP (JEPA) training...")
+        early_stopping_patience_jepa_reward_mlp = jepa_mlp_config.get('early_stopping_patience', 15)
         train_reward_mlp_epoch(
             reward_mlp_model=reward_mlp_jepa,
             base_model=jepa_model, # This is the best loaded jepa_model
             optimizer_reward_mlp=optimizer_reward_mlp_jepa,
             train_dataloader=train_dataloader,
+            val_dataloader=val_dataloader, # Added
             loss_fn=mse_loss_fn,
             device=device,
             action_dim=action_dim,
@@ -241,6 +247,7 @@ def run_training_epochs(
             model_name_log_prefix="Reward MLP (JEPA)",
             num_epochs_reward_mlp=jepa_mlp_config.get('num_epochs', 1), # Default to 1 epoch
             log_interval_reward_mlp=jepa_mlp_config.get('log_interval', log_interval),
+            early_stopping_patience=early_stopping_patience_jepa_reward_mlp, # Added
             is_jepa_base_model=True,
             wandb_run=wandb_run
         )
