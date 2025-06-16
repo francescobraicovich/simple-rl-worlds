@@ -1,14 +1,14 @@
 # src/rl_agent.py
 import torch
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import VecEnv # Changed import
 
-def create_ppo_agent(env, ppo_config: dict, device: str = 'mps'):
+def create_ppo_agent(vec_env: VecEnv, ppo_config: dict, device: str = 'mps'): # Signature changed
     """
     Creates a PPO agent.
 
     Args:
-        env: The Gym environment (non-vectorized).
+        vec_env: The already vectorized Gym environment (e.g., DummyVecEnv or SubprocVecEnv).
         ppo_config: Dictionary containing PPO parameters like
                     learning_rate, n_steps, batch_size, n_epochs,
                     gamma, gae_lambda, clip_range, policy_type.
@@ -18,13 +18,12 @@ def create_ppo_agent(env, ppo_config: dict, device: str = 'mps'):
         A PPO agent.
     """
 
-    # Wrap the environment in a DummyVecEnv for SB3
-    # SB3 typically expects a vectorized environment
-    vec_env = DummyVecEnv([lambda: env])
+    # vec_env is now passed directly and should already be vectorized.
+    # Removed: vec_env = DummyVecEnv([lambda: env])
 
     agent = PPO(
         ppo_config.get('policy_type', 'MlpPolicy'), # Default to MlpPolicy if not specified
-        vec_env,
+        vec_env, # Use the provided vec_env directly
         learning_rate=ppo_config.get('learning_rate', 0.0003),
         n_steps=ppo_config.get('n_steps', 2048),
         batch_size=ppo_config.get('batch_size', 64),
@@ -111,13 +110,17 @@ if __name__ == '__main__':
 
 
             if test_env:
+                from stable_baselines3.common.vec_env import DummyVecEnv # Local import for testing
+                print("Wrapping test_env in DummyVecEnv for create_ppo_agent testing...")
+                vec_test_env = DummyVecEnv([lambda: test_env])
+
                 # Determine device
                 device = "cuda" if torch.cuda.is_available() else "cpu"
                 print(f"Using device: {device}")
 
                 # Create agent
                 print("Creating PPO agent...")
-                agent = create_ppo_agent(test_env, ppo_specific_config, device=device)
+                agent = create_ppo_agent(vec_test_env, ppo_specific_config, device=device) # Pass vec_test_env
                 print("PPO agent created.")
 
                 # Train agent (using a very small number of timesteps for a quick test)
@@ -129,13 +132,15 @@ if __name__ == '__main__':
                 train_ppo_agent(agent, test_train_config, task_name="PPO Test Training")
                 print("PPO agent training (test) complete.")
 
-                # Example of getting an action (requires an observation)
-                obs, _ = test_env.reset()
+                # Example of getting an action (requires an observation from the vectorized env)
+                obs = vec_test_env.reset() # Reset the vectorized environment
                 action, _ = agent.predict(obs, deterministic=True)
                 print(f"Agent predicted action: {action}")
 
-                test_env.close()
-                print("Test environment closed.")
+                vec_test_env.close() # Closing the VecEnv also closes its constituent environments
+                print("Test vectorized environment closed.")
+                # test_env.close() # Not strictly necessary if DummyVecEnv handles it, but good for clarity if it doesn't hurt.
+                                 # SB3 DummyVecEnv typically closes its environments.
                 print("rl_agent.py test completed.")
 
     except FileNotFoundError:

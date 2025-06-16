@@ -19,7 +19,7 @@ load_model_path: "" # empty string means don't load, otherwise it's a path relat
 model_type_to_load: "" # options: "std_enc_dec", "jepa", or potentially others if the system supports more
 
 # Training Configuration
-frame_skipping: 0 # Number of frames to skip (0 means no skipping)
+frame_skipping: 0 # Number of frames to skip (0 means no skipping). Note: If using action_repetition_k in PPO data collection, this should ideally be 0 to avoid compounded effects.
 num_epochs: 20
 batch_size: 64
 learning_rate: 0.003
@@ -173,6 +173,7 @@ training_options: # New section name, as 'training_configuration' is too generic
 # PPO Agent Configuration for Data Collection
 ppo_agent:
   enabled: true # Master switch for using PPO for data collection
+  action_repetition_k: 4
   learning_rate: 0.0003
   total_train_timesteps: 3000 # Timesteps to train PPO before data collection
   n_steps: 512       # PPO n_steps parameter (number of steps to run for each environment per update)

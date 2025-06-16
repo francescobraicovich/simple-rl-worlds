@@ -1,5 +1,5 @@
 """
-Tests for PPO Reward Collection Issues.
+Tests for PPO Reward Collection Issues, including ActionRepeatWrapper and PPO integration.
 
 This test suite aims to diagnose problems related to cumulative episode rewards
 being zero or incorrect during PPO data collection.
@@ -44,6 +44,11 @@ training script, the problem might be:
 import unittest
 import gymnasium as gym
 import numpy as np
+from src.utils import ActionRepeatWrapper # Added import
+from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack # Ensure present
+from stable_baselines3 import PPO # Ensure present
+from stable_baselines3.common.monitor import Monitor # For new test
+
 
 class TestPPOBasicRewardCollection(unittest.TestCase):
 
@@ -221,7 +226,167 @@ class TestPPOBasicRewardCollection(unittest.TestCase):
         # #                  "Reward from frame skipping wrapper does not match sum of individual frame rewards.")
         #
         # # wrapped_env.close()
-        print("Conceptual frame skipping test was skipped as intended.")
+        print("Conceptual frame skipping test was skipped as intended.") # This line will be removed by the next change block
+
+    def test_action_repeat_wrapper_reward_accumulation(self): # Renamed and implemented
+        """
+        Tests if the ActionRepeatWrapper correctly accumulates rewards.
+        """
+        env_name = 'CartPole-v1'
+        k_repeat = 4
+        base_env = None
+        wrapped_env_instance = None
+
+        try:
+            base_env = gym.make(env_name)
+            wrapped_env_instance = ActionRepeatWrapper(base_env, k=k_repeat)
+
+            # Reset both environments - CartPole is deterministic with seed, but rewards are always +1 per step
+            # For simplicity, not setting a seed here as basic reward accumulation is the focus.
+            obs_base, _ = base_env.reset(seed=42)
+            obs_wrapped, _ = wrapped_env_instance.reset(seed=42)
+
+            # It's good to check if initial observations are consistent if relevant, but not primary for reward test.
+            # self.assertTrue(np.array_equal(obs_base, obs_wrapped), "Initial observations should be the same.")
+
+            action = 0  # A specific action, e.g., push cart left
+
+            # Manually step k_repeat times in the base environment
+            manual_total_reward = 0.0
+            current_obs_base = obs_base
+            for i in range(k_repeat):
+                # Need to use the same instance of base_env for manual stepping
+                # The ActionRepeatWrapper has its own instance of the env, so we need a separate one
+                # for manual calculation if we want to match internal states precisely.
+                # However, the prompt implies using 'env' for manual steps and 'wrapped_env' for wrapped step.
+                # This means ActionRepeatWrapper's internal env will advance, and our manual 'env' will advance.
+                # For CartPole's +1 reward/step, this is fine. For state-dependent rewards, more care needed.
+                # The current setup is: wrapped_env_instance steps its internal env, base_env is stepped separately.
+                # Let's re-create base_env for manual calculation to ensure state isolation if needed,
+                # or ensure ActionRepeatWrapper uses the *exact same instance* if that's the design.
+                # The prompt seems to imply two separate instances that start from same state.
+                # For CartPole, this distinction is less critical for rewards.
+
+                # Let's create a fresh env for manual stepping to avoid state conflicts if ActionRepeatWrapper modifies its env
+                # This is the most robust way if ActionRepeatWrapper truly encapsulates its own env instance.
+                # However, the current ActionRepeatWrapper takes 'env' as arg.
+                # Let's assume ActionRepeatWrapper uses the passed 'env' instance internally.
+                # To test this correctly, we need to be careful.
+                # The provided ActionRepeatWrapper in a previous subtask does `self.env = env`.
+
+                # If ActionRepeatWrapper uses the *same instance* of 'env', then manual stepping on 'env'
+                # *before* wrapped_env.step() would alter the state seen by wrapped_env.step().
+                # We should reset them to the same state, then step wrapped_env, then step a fresh base_env.
+                # OR, step wrapped_env, then analyze its *internal* state if possible (not easy).
+
+                # Safest: Reset both. Step wrapped. Then, reset a *new* base_env and manually step it.
+                # This ensures the manual calculation starts from the same initial state as the wrapped step.
+
+                # Simpler for CartPole: reset both. Step base_env manually. Reset wrapped_env *again* to same seed. Step wrapped.
+                # This is because CartPole's rewards are not state-dependent.
+                # The prompt's flow: reset both, step base manually, step wrapped. This is fine for CartPole.
+
+                # Re-evaluating: The ActionRepeatWrapper internally steps `self.env`.
+                # If `base_env` is the same instance as `wrapped_env_instance.env`, then stepping `base_env`
+                # manually will affect the state for `wrapped_env_instance.step()`.
+                # The most straightforward test is to have two separate env instances starting from the same seed.
+
+                # Let's refine:
+                # 1. Create env1, wrapped_env = ActionRepeatWrapper(env1, k)
+                # 2. Create env2 (for manual stepping)
+                # 3. obs1, _ = wrapped_env.reset(seed=42)
+                # 4. obs2, _ = env2.reset(seed=42)
+                # 5. Take action in wrapped_env.
+                # 6. Take same action k times in env2.
+
+                # The original prompt's flow for manual stepping:
+                # _, r, terminated, truncated, _ = base_env.step(action) # base_env is the one wrapped
+                # This implies that the manual stepping is on the *same instance* that the wrapper uses.
+                # This is incorrect for testing the wrapper's accumulation independently.
+                # The wrapper should be tested as a black box.
+
+                # Correct approach for testing ActionRepeatWrapper:
+                # It takes an env, and steps it k times.
+                # So, we compare its output to manually stepping a *separate, identical* env k times.
+
+                # Create a fresh env for manual calculation, seeded identically
+                manual_env = gym.make(env_name)
+                manual_env.reset(seed=42) # Ensure it starts from the same state as wrapped_env's internal env after its reset
+
+                # Manually step k_repeat times in the fresh 'manual_env'
+                current_manual_total_reward = 0.0
+                for _ in range(k_repeat):
+                    _, r_manual, terminated_manual, truncated_manual, _ = manual_env.step(action)
+                    current_manual_total_reward += r_manual
+                    if terminated_manual or truncated_manual:
+                        break
+                manual_env.close() # Close the temporary manual_env
+
+                # Step once in wrapped_env
+                _, wrapped_reward, _, _, _ = wrapped_env_instance.step(action)
+
+                self.assertEqual(wrapped_reward, current_manual_total_reward,
+                                 f"Wrapped reward {wrapped_reward} does not match manual total reward {current_manual_total_reward}")
+
+        except gym.error.DependencyNotInstalled as e:
+            self.skipTest(f"Skipping test as environment {env_name} or its dependencies are not installed: {e}")
+        except Exception as e:
+            self.fail(f"Test failed due to an unexpected error: {e}")
+        finally:
+            if base_env:
+                base_env.close()
+            # wrapped_env_instance uses base_env, so closing base_env (if distinct) or wrapped_env_instance (if it has close)
+            # If ActionRepeatWrapper does not have its own close method, base_env.close() is enough.
+            # The ActionRepeatWrapper in the problem description does not have a close method itself.
+
+    def test_ppo_integration_with_wrappers(self):
+        """
+        Tests PPO agent initialization and minimal training with ActionRepeatWrapper and VecFrameStack.
+        """
+        k_repeat = 2 # Use a small k for speed
+        env_name = 'CartPole-v1'
+        stacked_vec_env = None
+
+        try:
+            def make_env_fn():
+                env = gym.make(env_name)
+                env = Monitor(env) # Monitor is good practice for PPO
+                env = ActionRepeatWrapper(env, k=k_repeat)
+                return env
+
+            vec_env = DummyVecEnv([make_env_fn])
+            # Stack k_repeat frames. If ActionRepeatWrapper outputs single frames, this stacks them.
+            # If ActionRepeatWrapper changes observation space (it shouldn't by default), this might need adjustment.
+            # The ActionRepeatWrapper from previous task does not change observation space.
+            stacked_vec_env = VecFrameStack(vec_env, n_stack=k_repeat)
+
+            # Minimal PPO config for a quick test
+            agent = PPO(
+                policy='MlpPolicy',
+                env=stacked_vec_env,
+                n_steps=16, # Small n_steps
+                batch_size=8, # Small batch_size
+                n_epochs=1,   # Minimal epochs
+                seed=123,
+                # Ensure other params are minimal if they affect speed, e.g. learning_rate doesn't matter here.
+            )
+
+            # Attempt to train for a very short duration
+            agent.learn(total_timesteps=32) # Must be >= n_steps
+
+            self.assertTrue(True, "PPO agent learned for a short duration with wrappers without error.")
+
+        except gym.error.DependencyNotInstalled as e:
+            self.skipTest(f"Skipping test as environment {env_name} or its dependencies are not installed: {e}")
+        except ImportError as e:
+            self.skipTest(f"Skipping test due to import error (e.g., stable-baselines3 not installed): {e}")
+        except Exception as e:
+            import traceback
+            self.fail(f"PPO integration test failed: {e}\n{traceback.format_exc()}")
+        finally:
+            if stacked_vec_env:
+                stacked_vec_env.close()
+
 
     def test_ppo_agent_data_collection_reward_sanity(self):
         """
