@@ -487,6 +487,8 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
                     step_count += 1
                     if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2): break
                     else: continue
+                
+                cumulative_reward_episode += accumulated_reward # Add accumulated reward to cumulative reward for the episode
 
             if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2 and
                     isinstance(next_state_img, np.ndarray) and next_state_img.ndim >= 2):
