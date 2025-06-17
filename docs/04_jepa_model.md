@@ -42,38 +42,62 @@ The JEPA model comprises three principal components: an online encoder, a target
 -   **Function:** It takes the target-encoded representation of the current state (`target_encoded_s_t`, i.e., `z'_t`) and an embedding of the action `a_t` (produced by `self.action_embedding`) as input. Its objective is to predict the embedding of the *next state*, specifically aiming to match the *target encoder's* representation of `s_t+1`. That is, it outputs `predicted_s_t_plus_1_embedding` (denoted `\hat{z}_{t+1}`), which should be close to `target_encoded_s_t_plus_1` (`z'_{t+1}`).
 -   **Configuration:** Key parameters for the predictor MLP, such as `jepa_predictor_hidden_dim` and `predictor_output_dim` (which must equal `latent_dim`), are set in `config.yaml`.
 
-### 4. Target Encoder Mode (`target_encoder_mode`)
+### 4. Target Encoder Mode (`jepa_model.target_encoder_mode`)
 
-The `target_encoder_mode` parameter in the `jepa_model` section of `config.yaml` (and passed to the `JEPA` class constructor) dictates the operational strategy for the online and target encoders, influencing how predictions are made, how targets are generated, and how EMA updates and auxiliary losses are handled. It offers three distinct modes:
+The `jepa_model.target_encoder_mode` parameter in `config.yaml` dictates the operational strategy for the online and target encoders. This choice significantly influences how predictions are made, how targets are generated, and how EMA updates and auxiliary losses are handled. It offers three distinct modes:
 
 -   **`"default"`**:
-    -   **Description:** This is the standard JEPA behavior as described in earlier sections.
-    -   **Data Flow:**
-        -   Current state `s_t` is encoded by the **target encoder**: `target_encoded_s_t = target_encoder(s_t)`.
-        -   Next state `s_t_plus_1` is encoded by the **target encoder**: `target_encoded_s_t_plus_1 = target_encoder(s_t_plus_1)`. This serves as the prediction target.
-        -   The predictor takes `target_encoded_s_t` and the embedded action to predict `target_encoded_s_t_plus_1`.
-    -   **EMA Updates:** The target encoder is updated via EMA of the online encoder's weights once per training step (typically after the optimizer step, managed by `perform_ema_update()` called from the training loop).
-    -   **Auxiliary Loss:** Calculated using online encoder representations of both `s_t` (`online_encoded_s_t`) and `s_t_plus_1` (`online_encoded_s_t_plus_1`). Both representations are returned by the `forward` method.
+    -   **Description:** This mode implements a standard JEPA behavior.
+    -   **Predictor Input (`s_t` representation):** Provided by the **target encoder** (`target_encoder(s_t)`).
+    -   **Prediction Target (`s_{t+1}` representation):** Provided by the **target encoder** (`target_encoder(s_{t+1}).detach()`).
+    -   **EMA Updates:** The target encoder's weights are updated via EMA of the online encoder's weights after each training step.
+    -   **Auxiliary Loss Input:** Typically uses online encoder representations of both `s_t` (`online_encoder(s_t)`) and `s_{t+1}` (`online_encoder(s_{t+1})`).
 
 -   **`"vjepa2"`**:
-    -   **Description:** This mode is inspired by aspects of the V-JEPA 2 (Video Joint Embedding Predictive Architecture) approach, focusing on predicting the target from an online-encoded current state.
-    -   **Data Flow:**
-        -   Current state `s_t` is encoded by the **online encoder**: `online_encoded_s_t = online_encoder(s_t)`.
-        -   Next state `s_t_plus_1` is encoded by the **target encoder**: `target_encoded_s_t_plus_1 = target_encoder(s_t_plus_1)`. This (detached) representation serves as the prediction target.
-        -   The predictor takes `online_encoded_s_t` (from the online encoder) and the embedded action to predict `target_encoded_s_t_plus_1`.
-    -   **EMA Updates:** The target encoder is updated via EMA of the online encoder's weights once per training step, managed by `perform_ema_update()` called from the training loop (similar to 'default' mode).
-    -   **Auxiliary Loss:** Calculated **only** on the online encoder's representation of the current state `s_t` (`online_encoded_s_t`). The `forward` method returns `None` for the `online_encoded_s_t_plus_1` representation to signal this.
+    -   **Description:** Inspired by V-JEPA, this mode uses the online encoder for the current state representation fed to the predictor.
+    -   **Predictor Input (`s_t` representation):** Provided by the **online encoder** (`online_encoder(s_t)`).
+    -   **Prediction Target (`s_{t+1}` representation):** Provided by the **target encoder** (`target_encoder(s_{t+1}).detach()`).
+    -   **EMA Updates:** The target encoder is updated via EMA of the online encoder's weights.
+    -   **Auxiliary Loss Input:** Typically uses only the online encoder's representation of the current state `s_t` (`online_encoder(s_t)`). The `forward` method of the JEPA model might return `None` for the `s_{t+1}` online embedding in this mode to signal this.
 
 -   **`"none"`**:
-    -   **Description:** In this mode, the target encoder is entirely disabled. All predictions are based on the online encoder.
-    -   **Data Flow:**
-        -   Current state `s_t` is encoded by the **online encoder**: `online_encoded_s_t = online_encoder(s_t)`.
-        -   Next state `s_t_plus_1` is also encoded by the **online encoder**: `online_encoded_s_t_plus_1 = online_encoder(s_t_plus_1)`. The (detached) version of this serves as the prediction target.
-        -   The predictor takes `online_encoded_s_t` and the embedded action to predict `online_encoded_s_t_plus_1.detach()`.
-    -   **EMA Updates:** No EMA updates are performed as there is effectively no target encoder to update. The `perform_ema_update()` method does nothing.
-    -   **Auxiliary Loss:** Calculated using online encoder representations of both `s_t` (`online_encoded_s_t`) and `s_t_plus_1` (`online_encoded_s_t_plus_1`). Both representations are returned by the `forward` method.
+    -   **Description:** This mode disables the target encoder. All representations for prediction and targets come from the online encoder.
+    -   **Predictor Input (`s_t` representation):** Provided by the **online encoder** (`online_encoder(s_t)`).
+    -   **Prediction Target (`s_{t+1}` representation):** Provided by the **online encoder** (`online_encoder(s_{t+1}).detach()`).
+    -   **EMA Updates:** No EMA updates are performed as the target encoder is not used.
+    -   **Auxiliary Loss Input:** Uses online encoder representations of both `s_t` (`online_encoder(s_t)`) and `s_{t+1}` (`online_encoder(s_{t+1})`).
 
-Choosing the appropriate `target_encoder_mode` allows for flexibility in experimenting with different JEPA-style architectures and update rules, potentially impacting representation quality and model performance.
+The choice of `target_encoder_mode` is critical for defining the specific JEPA variant being experimented with and impacts the learned representations and model stability.
+
+## Training Process
+
+The JEPA model (comprising the online encoder and the predictor) is trained using a supervised learning approach, where the "supervision" comes from predicting target embeddings generated by the (potentially EMA-updated) target encoder.
+
+### JEPA Model Training (Online Encoder & Predictor)
+
+The primary training process for the JEPA model is managed by `src/training_engine.py`. This engine employs a versatile training and validation loop, typically found within `src/training_loops/epoch_loop.py` (e.g., the `train_validate_model_epoch` function, which is adapted based on the model type, or a JEPA-specific derivative). This loop generally performs the following steps for each batch:
+
+1.  **Forward Pass:**
+    *   The online encoder processes the current state `s_t` and next state `s_{t+1}` to produce `online_encoded_s_t` and `online_encoded_s_{t+1}`.
+    *   The target encoder (if active, depending on `target_encoder_mode`) processes `s_t` and `s_{t+1}` to produce `target_encoded_s_t` and `target_encoded_s_{t+1}`.
+    *   The predictor takes the appropriate representation of `s_t` (from online or target encoder based on `target_encoder_mode`) and the embedded action `a_t` to predict the embedding of `s_{t+1}`.
+2.  **Loss Calculation:**
+    *   **Prediction Loss:** Calculated between the predictor's output and the (detached) target representation of `s_{t+1}` (from online or target encoder).
+    *   **Auxiliary Loss:** Calculated based on the outputs of the online encoder, using the configured auxiliary loss type (e.g., VICReg, Barlow Twins).
+    *   The total loss is a weighted sum of the prediction and auxiliary losses.
+3.  **Backpropagation:** Gradients are computed for the online encoder and predictor based on the total loss.
+4.  **Optimizer Step:** The weights of the online encoder and predictor are updated.
+5.  **EMA Update:** If a target encoder is used (`"default"` or `"vjepa2"` modes), its weights are updated via Exponential Moving Average (EMA) of the online encoder's weights.
+6.  **Validation:** Periodically, the model is evaluated on a validation set to monitor performance and check for early stopping conditions.
+
+### JEPAStateDecoder Training (Optional)
+
+If the `JEPAStateDecoder` is enabled (via `jepa_decoder_training.enabled: true` in `config.yaml`), it is trained in a separate, subsequent phase after the main JEPA model training (or loading) is complete. This decoder is designed to reconstruct the pixel-space state `s_t` from the learned JEPA embeddings (`online_encoded_s_t` or `target_encoded_s_t`, depending on configuration).
+
+-   **Purpose:** The `JEPAStateDecoder` serves as a tool for visually inspecting and evaluating the quality of the representations learned by the JEPA model. It is not part of the core JEPA representation learning process itself.
+-   **Training Management:** Its training is also orchestrated by `src/training_engine.py`, which calls the `train_jepa_state_decoder` function located in `src/training_loops/jepa_decoder_loop.py`. This loop handles the specific training requirements for the decoder, such as loading JEPA embeddings and optimizing the decoder for image reconstruction.
+
+For practical details on configuring and running the training for both the JEPA model and its optional state decoder, please refer to **[`docs/06_usage_guide.md`](../06_usage_guide.md)**.
 
 ## Prediction Loss
 
@@ -142,3 +166,47 @@ The total loss function for training the JEPA model (specifically the online enc
 This combined objective trains the predictor to make accurate forecasts in the embedding space while simultaneously ensuring that the online encoder learns rich, non-collapsed representations. The target encoder provides the stable targets necessary for this learning process.
 
 By operating in embedding space and carefully regularizing its representations, JEPA aims to learn world models that are both efficient and effective at capturing the underlying dynamics of an environment.
+
+## Relevant Configuration Parameters
+
+The architecture, training, and behavior of the JEPA model and its optional `JEPAStateDecoder` are controlled by parameters in `config.yaml`.
+
+### Core JEPA Model Parameters:
+
+-   **`encoder_type`**: (string, e.g., `"vit"`, `"cnn"`, `"mlp"`) Shared encoder architecture for online and target encoders.
+-   **`encoder_params`**: (dict) Nested dictionary with parameters for the chosen `encoder_type` (e.g., `encoder_params.vit`).
+-   **`latent_dim`**: (integer) Dimensionality of the embeddings produced by the encoders and targeted by the predictor.
+-   **`action_emb_dim`**: (integer, top-level) Dimensionality of the action embedding used by the predictor.
+-   **`jepa_model.predictor_hidden_dim`**: (integer) Hidden dimension size within the MLP predictor.
+-   **`jepa_model.predictor_dropout_rate`**: (float) Dropout rate in the predictor.
+-   **`jepa_model.ema_decay`**: (float) Decay rate for EMA updates of the target encoder (e.g., 0.996).
+-   **`jepa_model.target_encoder_mode`**: (string: `"default"`, `"vjepa2"`, `"none"`) Defines the operational mode for target/online encoders (see details in the "Target Encoder Mode" section).
+-   **`learning_rate_jepa`**: (float) Learning rate for the JEPA online encoder and predictor.
+-   **`batch_size`**: (integer, top-level) Batch size for training.
+-   **`num_epochs`**: (integer, top-level) Main number of training epochs for JEPA.
+-   **`early_stopping.metric_jepa`**: (string, e.g., `"val_loss_jepa"`) Metric for JEPA early stopping.
+-   **`early_stopping.checkpoint_path_jepa`**: (string) Filename for saving the best JEPA model.
+-   **`training_options.skip_jepa_training_if_loaded`**: (boolean) If true, skips JEPA training if a model is loaded.
+
+### Auxiliary Loss Parameters (under `auxiliary_loss`):
+
+-   **`auxiliary_loss.type`**: (string, e.g., `"vicreg"`, `"barlow_twins"`, `"dino"`) Type of auxiliary loss.
+-   **`auxiliary_loss.weight`**: (float) Weight factor for the auxiliary loss term.
+-   **`auxiliary_loss.params.*`**: Nested dictionary for parameters specific to the chosen auxiliary loss (e.g., `auxiliary_loss.params.vicreg.sim_coeff`).
+
+### JEPAStateDecoder Parameters (under `jepa_decoder_training`):
+
+The `JEPAStateDecoder` reuses the general Transformer decoder architecture defined by parameters like `decoder_dim`, `decoder_depth`, `decoder_heads`, `decoder_mlp_dim`, and `decoder_patch_size` (top-level in `config.yaml`).
+
+-   **`jepa_decoder_training.enabled`**: (boolean) Set to `true` to enable training of the JEPA state decoder after JEPA model training.
+-   **`jepa_decoder_training.num_epochs`**: (integer) Number of epochs for training the state decoder.
+-   **`jepa_decoder_training.learning_rate`**: (float) Learning rate for the state decoder.
+-   **`jepa_decoder_training.batch_size`**: (integer) Batch size for decoder training.
+-   **`jepa_decoder_training.embedding_source`**: (string: `"online"`, `"target"`) Specifies whether to use embeddings from the JEPA online or target encoder as input for reconstruction.
+-   **`jepa_decoder_training.checkpoint_path`**: (string) Filename for saving the best state decoder model.
+-   **`jepa_decoder_training.validation_plot_dir`**: (string) Directory to save validation image reconstructions.
+-   **`jepa_decoder_training.early_stopping.metric`**: (string, e.g., `"val_loss_jepa_decoder"`) Metric for state decoder early stopping.
+-   **`jepa_decoder_training.early_stopping.patience`**: (integer) Patience for state decoder early stopping.
+-   **`jepa_decoder_training.early_stopping.delta`**: (float) Minimum change for state decoder early stopping.
+
+For a comprehensive list and detailed explanations, refer to the heavily commented `config.yaml` and **[`docs/06_usage_guide.md`](../06_usage_guide.md)**.
