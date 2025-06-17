@@ -60,6 +60,7 @@ The `config.yaml` file is the central hub for controlling all aspects of the exp
 -   `dataset_dir`: Directory where datasets are stored (e.g., `"datasets/"`).
 -   `load_dataset_path`: Path to a dataset file (relative to `dataset_dir`) to load. If empty or the file doesn't exist, new data will be collected. Otherwise, the specified dataset is loaded, skipping new data collection.
 -   `dataset_filename`: Filename used when saving newly collected data (e.g., `"collected_data.pkl"`).
+-   `frame_skipping`: (integer) Number of frames to skip after each action during data collection. For each action taken (by PPO or random agent), the environment steps `frame_skipping` additional times. During these skipped frames, new actions are sampled (randomly or by PPO based on intermediate states). Rewards are accumulated. This setting is internally disabled (treated as 0) during PPO data collection if `ppo_agent.action_repetition_k > 1`. See `docs/02_data_collection.md` for more details.
 
 ### PPO Agent for Data Collection (`ppo_agent`)
 This block configures the PPO agent used if guided exploration is chosen for data collection.
@@ -70,6 +71,7 @@ This block configures the PPO agent used if guided exploration is chosen for dat
 -   `batch_size`: Minibatch size for PPO training.
 -   `n_epochs`: Number of epochs when optimizing the PPO surrogate loss.
 -   `policy_type`: The type of policy network for PPO (e.g., `"CnnPolicy"` for image-based environments, `"MlpPolicy"` for vector-based environments).
+-   `action_repetition_k`: (integer, default: 1) If PPO is enabled and this value is > 1, the PPO agent's chosen action is repeated for `k` consecutive steps in the environment. Rewards are accumulated over these steps, and the state after `k` repetitions becomes the next state observed by the agent. If `action_repetition_k > 1`, the global `frame_skipping` parameter is internally set to 0 during PPO data collection to avoid conflicting behaviors. See `docs/02_data_collection.md` for detailed interaction.
 
 ### Model Loading Configuration
 -   `model_dir`: Directory where trained models are stored (e.g., `"trained_models/"`).
@@ -110,6 +112,7 @@ Parameters specific to the `StandardEncoderDecoder` model architecture:
 Parameters specific to the `JEPA` model architecture:
 -   `jepa_predictor_hidden_dim`: Hidden dimension(s) for the MLP predictor network in JEPA.
 -   `ema_decay`: Decay rate for the Exponential Moving Average (EMA) update of the target encoder's weights.
+-   `target_encoder_mode`: (string: `"default"`, `"vjepa2"`, `"none"`) Defines the operational strategy for JEPA's online and target encoders. This critical parameter affects how target embeddings are generated for the predictor and which encoder's outputs are used. Refer to `docs/04_jepa_model.md` for a detailed explanation of each mode's behavior regarding predictor inputs, prediction targets, EMA updates, and auxiliary loss inputs.
 -   `auxiliary_loss`: Configures the auxiliary loss used to prevent representation collapse in JEPA's online encoder.
     -   `type`: Specifies the type of auxiliary loss. Options: `"vicreg"`, `"barlow_twins"`, `"dino"`.
     -   `weight`: A float controlling the contribution of this auxiliary loss to JEPA's total loss.
@@ -172,7 +175,7 @@ The `main.py` script orchestrates the entire experimental pipeline:
 6.  **Initialize Models:** Sets up the Standard Encoder-Decoder, JEPA, Reward Predictor MLPs, and JEPA State Decoder based on the configuration. This complex initialization is handled by `src/model_setup.py`.
 7.  **Load Pre-trained Models:** If `load_model_path` is specified in the config, `main.py` attempts to load the weights into the designated `model_type_to_load`.
 8.  **Initialize Losses and Optimizers:** `src/loss_setup.py` and `src/optimizer_setup.py` prepare the necessary loss functions (including auxiliary losses for JEPA) and optimizers for all trainable components.
-9.  **Run Training Engine:** The core training logic resides in `src/training_engine.py`. This module:
+9.  **Run Training Engine:** The core training logic orchestration resides in `src/training_engine.py`. This module calls specialized functions from the `src/training_loops/` directory (e.g., `epoch_loop.py` for main world models, `reward_predictor_loop.py` for reward MLPs, `jepa_decoder_loop.py` for the JEPA state decoder), which contain the detailed epoch-level training and validation logic for each component. The `training_engine.py` module:
     *   Conducts training epochs for the Standard Encoder-Decoder model (if not skipped and configured).
     *   Conducts training epochs for the JEPA model (if not skipped and configured), including EMA updates for JEPA's target encoder.
     *   Manages early stopping for both models based on validation performance and saves the best model checkpoints.
