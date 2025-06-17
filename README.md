@@ -134,7 +134,3 @@ For a detailed description, see **[`docs/04_jepa_model.md`](docs/04_jepa_model.m
 ## Contributing
 
 Contributions to this project are welcome. Please refer to the documentation and existing code structure for guidance. (Further details on contributing can be added here or in a separate `CONTRIBUTING.md` file).
-
-## License
-
-This project is licensed under the MIT License. See the `LICENSE` file for details (assuming a LICENSE file will be added).
