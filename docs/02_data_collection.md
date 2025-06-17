@@ -31,6 +31,39 @@ As an alternative, or for baseline comparisons, data can be collected by taking 
 
 The script `src/utils/data_utils.py` contains the function `collect_random_episodes` which handles this mode of data collection.
 
+## Temporal Data Handling: Action Repetition and Frame Skipping
+
+To control the temporal characteristics of the collected data and potentially align data collection with the decision-making frequency of agents or the nature of environment dynamics, this project incorporates two mechanisms: Action Repetition and Frame Skipping.
+
+### Action Repetition (`ActionRepeatWrapper`)
+
+*   **Purpose**: Action repetition is primarily used during PPO-guided data collection to allow the agent to make decisions at a lower frequency than the environment's native step rate.
+*   **Implementation**: This is achieved using the `ActionRepeatWrapper` (located in `src/utils/env_wrappers.py`).
+*   **Activation**: It is active when PPO-guided data collection is enabled (`ppo_agent.enabled: true` in `config.yaml`) and the configuration parameter `ppo_agent.action_repetition_k` is set to a value greater than 1.
+*   **Behavior**:
+    *   When `ppo_agent.action_repetition_k > 1`, the PPO agent selects an action, and this chosen action is then repeated for `k` consecutive steps in the environment.
+    *   The rewards obtained during these `k` steps are accumulated (summed).
+    *   The `next_state` observed by the PPO agent (and subsequently stored in the dataset) is the state after these `k` action repetitions. The PPO agent only receives an observation and chooses a new action every `k` environment steps.
+*   **Interaction with Frame Skipping**: **Crucially, if `ppo_agent.action_repetition_k > 1`, the global `frame_skipping` parameter (see below) is internally treated as 0 during PPO data collection.** This is to prevent compounded or conflicting temporal effects and to ensure that action repetition provides precise control over the agent's decision interval.
+*   **Rationale**: Repeating actions can help the agent learn more temporally abstract policies and can be beneficial in environments where decisions do not need to be made at every single frame. It can also speed up effective interaction time if the environment runs faster than the agent can make decisions.
+
+### Frame Skipping (Global)
+
+*   **Purpose**: Frame skipping is a technique to increase the effective step size in the environment by executing multiple simulation steps for each action taken by the agent (either PPO or random).
+*   **Configuration**: This is controlled by the top-level `frame_skipping` parameter in `config.yaml`.
+*   **Behavior**:
+    *   For each action selected by the agent (PPO or random), the environment executes this action and then steps `frame_skipping` additional times.
+    *   **During these skipped frames, new actions are sampled and executed**:
+        *   In random data collection (`collect_random_episodes`), these intermediate actions are chosen randomly.
+        *   In PPO-guided data collection (`collect_ppo_episodes`), the PPO agent selects new actions based on the intermediate states observed during the skips (unless `action_repetition_k > 1`, as noted above).
+    *   Rewards from all steps (the initial action step + `frame_skipping` steps) are accumulated.
+    *   The `next_state` recorded in the dataset is the state observed after the initial action and all subsequent skipped frames.
+*   **Availability**: Frame skipping is available for both random data collection and PPO-guided data collection.
+*   **Override by Action Repetition**: As mentioned, if `ppo_agent.action_repetition_k > 1` during PPO data collection, `frame_skipping` is effectively disabled (treated as 0) to give precedence to the `ActionRepeatWrapper`.
+*   **Rationale**: Frame skipping can speed up data collection by covering more environment steps in less wall-clock time. It's also useful in environments where observations do not change significantly frame-to-frame, allowing the agent to observe more substantial changes between decision points.
+
+Careful configuration of `action_repetition_k` and `frame_skipping` is important to tailor the data collection process to the specific requirements of the environment and the world model being trained.
+
 ## Dataset Management: Saving, Loading, and Configuration
 
 The collected datasets are managed through functionalities within `src/utils/data_utils.py` and configured via `config.yaml`.
@@ -46,7 +79,9 @@ The collected datasets are managed through functionalities within `src/utils/dat
     -   `dataset_dir`: The directory where datasets are stored.
     -   `load_dataset_path`: Path to a dataset file to load (if any). If empty, new data is collected.
     -   `dataset_filename`: The name of the file to save newly collected data.
-    -   `ppo_agent`: A block containing configurations for the PPO agent if PPO-guided exploration is enabled (see above).
-    -   `validation_split` (within `early_stopping` block but used by data utility): The proportion of collected episodes to be set aside for the validation set.
+    -   `ppo_agent`: A block containing configurations for the PPO agent if PPO-guided exploration is enabled (see above). This includes general PPO settings.
+    -   `ppo_agent.action_repetition_k`: (integer, default: 1) If PPO is enabled, this specifies how many times the PPO agent's chosen action is repeated in the environment. Rewards are accumulated, and the state after `k` repetitions becomes the next state. If `> 1`, global `frame_skipping` is disabled for PPO collection.
+    -   `frame_skipping`: (integer, top-level, default: 0) For each action taken, the environment steps this many additional times, with new actions sampled for these intermediate steps. Rewards are accumulated. This is disabled for PPO if `action_repetition_k > 1`.
+    -   `validation_split` (from `early_stopping.validation_split`, but used here for splitting collected data): The proportion of collected episodes to be set aside for the validation set.
 
 This structured approach to data collection and management ensures that our world models are trained on datasets that are appropriate for the research objectives, and that the process is configurable and reproducible.
