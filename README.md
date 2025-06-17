@@ -31,7 +31,6 @@ We recommend starting with `docs/index.md` (if available) or browsing the indivi
 │   ├── 04_jepa_model.md
 │   ├── 05_representation_evaluation.md
 │   └── 06_usage_guide.md
-│   └── images/         # Directory for images used in documentation
 ├── datasets/           # Stores collected trajectory datasets
 ├── src/                # Source code (models, utilities, training logic)
 │   ├── __init__.py
