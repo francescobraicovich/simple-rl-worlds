@@ -2,22 +2,6 @@
 
 The Joint Embedding Predictive Architecture (JEPA), as implemented in `src/models/jepa.py`, offers an alternative to direct pixel-space prediction by operating entirely within an abstract embedding space. This approach is designed to encourage the learning of more semantically meaningful and efficient representations by abstracting away irrelevant pixel-level details. The core idea is to predict the embedding of a future state `s_t+1` given an embedding of the current state `s_t` and the action `a_t`.
 
-<!-- TODO: Add a high-level architectural diagram for JEPA -->
-```
-s_t (image) ---+--> [ONLINE ENCODER] ----> online_encoded_s_t (z_t) ------> (to Auxiliary Loss)
-               |         ^      |
-               |         | EMA Update
-               |         |      |
-               +--> [TARGET ENCODER] ---> target_encoded_s_t (z'_t) --+
-                                                                       |
-a_t (vector) --> [ACTION_EMB] ---------> embedded_a_t (a_emb_t) ------+--> [PREDICTOR] --> predicted_embedding_s_t+1 (z_hat_{t+1}) --+
-                                                                                                                                    | (Prediction Loss)
-s_t+1 (image) --> [ONLINE ENCODER] ----> online_encoded_s_t+1 (z_{t+1}) -> (to Auxiliary Loss)                                         |
-                |                                                                                                                     |
-                +--> [TARGET ENCODER] ---> target_encoded_s_t+1 (z'_{t+1})-------------------------------------------------------------+
-```
-*(Simplified ASCII diagram illustrating data flow and main components)*
-
 ## Core JEPA Components
 
 The JEPA model comprises three principal components: an online encoder, a target encoder, and a predictor.
