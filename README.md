@@ -25,25 +25,28 @@ We recommend starting with `docs/index.md` (if available) or browsing the indivi
 ├── requirements.txt    # Python dependencies
 ├── docs/               # Detailed project documentation
 │   ├── index.md
-│   ├── 01_introduction.md
-│   ├── 02_data_collection.md
-│   ├── 03_encoder_decoder_model.md
-│   ├── 04_jepa_model.md
-│   ├── 05_representation_evaluation.md
+│   ├── ... (other .md files)
 │   └── 06_usage_guide.md
-│   └── images/         # Directory for images used in documentation
 ├── datasets/           # Stores collected trajectory datasets
-├── src/                # Source code (models, utilities, training logic)
+├── trained_models/     # Stores trained model checkpoints
+├── validation_plots/   # Stores validation image outputs (e.g., JEPA decoder reconstructions)
+├── src/                # Source code (models, utilities, modular training loops, etc.)
 │   ├── __init__.py
 │   ├── data_handling.py
-│   ├── env_utils.py
 │   ├── loss_setup.py
-│   ├── losses/           # VICReg, Barlow Twins, DINO implementations
 │   ├── model_setup.py
-│   ├── models/           # Encoder-Decoder, JEPA, ViT, CNN, MLP, etc.
 │   ├── optimizer_setup.py
-│   ├── training_engine.py
-│   └── utils/            # General utilities
+│   ├── training_engine.py # Orchestrates training 
+│   ├── training_loops/   # Contains individual epoch-level training logic
+│   ├── models/           # Model architectures (Enc-Dec, JEPA, ViT, CNN, MLP, etc.)
+│   ├── losses/           # Loss implementations (VICReg, Barlow Twins, DINO)
+│   ├── utils/            # General utilities, config handling, data processing
+│   │   ├── __init__.py
+│   │   ├── config_utils.py
+│   │   ├── data_utils.py   # Data collection and dataset management
+│   │   ├── env_utils.py
+│   │   └── env_wrappers.py # Environment wrappers like ActionRepeat
+│   └── rl_agent.py       # PPO agent setup and training for data collection
 └── tests/              # Unit and integration tests
 ```
 
