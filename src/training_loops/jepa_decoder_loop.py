@@ -238,10 +238,7 @@ def train_jepa_state_decoder(
                 avg_val_loss_mse_diff = epoch_loss_mse_diff_val / num_batches_val if num_batches_val > 0 else float('inf')
                 print(f"  Epoch {epoch+1}/{num_epochs_decoder:<5} | "
                       f"{'Avg Train Total Loss':<22}: {avg_train_loss:>8.4f} "
-                      f"(Recon: {avg_train_loss_mse_reconstruction:>8.4f}, Diff: {avg_train_loss_mse_diff:>8.4f}) | "
-                      f"{'Avg Val Total Loss':<20}: {avg_val_loss:>8.4f} "
-                      f"(Recon: {avg_val_loss_mse_reconstruction:>8.4f}, Diff: {avg_val_loss_mse_diff:>8.4f})")
-
+                      f"{'Avg Val Total Loss':<20}: {avg_val_loss:>8.4f} ")
                 if wandb_run:
                     wandb_run.log({
                         "JEPA_Decoder/val/total_loss": avg_val_loss,
