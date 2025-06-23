@@ -4,6 +4,7 @@ from src.models.encoder_decoder import StandardEncoderDecoder
 from src.models.jepa import JEPA
 from src.models.mlp import RewardPredictorMLP
 from src.models.jepa_state_decoder import JEPAStateDecoder # Added import
+from src.models.encoder_decoder_jepa_style import EncoderDecoderJEPAStyle
 
 def initialize_models(config, action_dim, device, image_h_w, input_channels):
     models = {}
@@ -131,5 +132,30 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
     else:
         models['jepa_decoder'] = None
         print("JEPA State Decoder is disabled in the configuration.")
+
+    # Encoder-Decoder JEPA-Style Model (for fair JEPA comparison)
+    print(f"Initializing Encoder-Decoder JEPA-Style Model with {encoder_type.upper()} encoder...")
+    enc_dec_jepa_style = EncoderDecoderJEPAStyle(
+        image_size=image_h_w,
+        patch_size=global_patch_size,
+        input_channels=input_channels,
+        action_dim=action_dim,
+        action_emb_dim=config.get('action_emb_dim', config.get('latent_dim', 128)),
+        latent_dim=config.get('latent_dim', 128),
+        predictor_hidden_dim=config.get('enc_dec_jepa_style_predictor_hidden_dim', 256),
+        predictor_output_dim=config.get('enc_dec_jepa_style_predictor_output_dim', config.get('decoder_dim', 128)),
+        predictor_dropout_rate=config.get('enc_dec_jepa_style_predictor_dropout_rate', 0.0),
+        decoder_dim=config.get('decoder_dim', 128),
+        decoder_depth=config.get('decoder_depth', config.get('num_decoder_layers', 3)),
+        decoder_heads=config.get('decoder_heads', config.get('num_heads', 6)),
+        decoder_mlp_dim=config.get('decoder_mlp_dim', config.get('mlp_dim', 256)),
+        output_channels=input_channels,
+        output_image_size=image_h_w if isinstance(image_h_w, tuple) else (image_h_w, image_h_w),
+        decoder_dropout=config.get('decoder_dropout', 0.0),
+        encoder_type=encoder_type,
+        encoder_params=specific_encoder_params,
+        decoder_patch_size=config.get('decoder_patch_size', global_patch_size)
+    ).to(device)
+    models['enc_dec_jepa_style'] = enc_dec_jepa_style
 
     return models
