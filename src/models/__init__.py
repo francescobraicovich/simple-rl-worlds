@@ -4,7 +4,8 @@ from .encoder_decoder import StandardEncoderDecoder
 from .jepa import JEPA
 from .cnn import CNNEncoder
 from .mlp import MLPEncoder
-from .jepa_state_decoder import JEPAStateDecoder # Added line
+from .jepa_state_decoder import JEPAStateDecoder
+from .encoder_decoder_jepa_style import EncoderDecoderJEPAStyle
 
 __all__ = [
     "ViT",
@@ -12,5 +13,6 @@ __all__ = [
     "JEPA",
     "CNNEncoder",
     "MLPEncoder",
-    "JEPAStateDecoder" # Added line
+    "JEPAStateDecoder",
+    "EncoderDecoderJEPAStyle"
 ]

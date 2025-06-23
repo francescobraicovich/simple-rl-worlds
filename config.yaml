@@ -16,7 +16,7 @@ dataset_filename: "car_racing_v3_v2.pkl"
 # Model Loading Configuration
 model_dir: "trained_models/"
 load_model_path: "" # empty string means don't load, otherwise it's a path relative to model_dir
-model_type_to_load: "" # options: "std_enc_dec", "jepa", or potentially others if the system supports more
+model_type_to_load: "enc_dec_jepa_style" # options: "std_enc_dec", "jepa", "enc_dec_jepa_style"
 
 # Training Configuration
 frame_skipping: 0 # Number of frames to skip (0 means no skipping). Note: If using action_repetition_k in PPO data collection, this should ideally be 0 to avoid compounded effects.
@@ -191,3 +191,9 @@ wandb:
   entity: null
   run_name_prefix: "exp"
   enabled: true
+
+# Encoder-Decoder JEPA-Style Model (for fair JEPA comparison)
+enc_dec_jepa_style_predictor_hidden_dim: 256 # Hidden dim for the predictor MLP in the JEPA-style encoder-decoder
+enc_dec_jepa_style_predictor_output_dim: 128 # Output dim of the predictor (should match decoder input dim)
+enc_dec_jepa_style_predictor_dropout_rate: 0.3 # Dropout rate for predictor MLP
+# The decoder parameters (decoder_dim, decoder_depth, decoder_heads, decoder_mlp_dim, decoder_dropout, decoder_patch_size) are shared with the standard encoder-decoder above.

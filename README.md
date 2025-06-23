@@ -131,6 +131,13 @@ For a detailed description, see **[`docs/03_encoder_decoder_model.md`](docs/03_e
 
 For a detailed description, see **[`docs/04_jepa_model.md`](docs/04_jepa_model.md)**.
 
+### 3. Encoder-Decoder JEPA-Style (Fair JEPA Baseline)
+*   **Encoder:** Configurable (ViT, CNN, or MLP), same as other models.
+*   **Predictor:** A JEPA-style MLP takes the concatenated encoder output and action embedding, producing a latent vector.
+*   **Decoder:** A Transformer-based decoder reconstructs the next state image from the predictor's output.
+*   **Purpose:** This model is designed for apples-to-apples comparison with JEPA, matching parameter count and architectural complexity. It allows rigorous evaluation of whether JEPA's performance gains are due to its modeling principle or simply model capacity.
+*   **Output:** Predicts the next state in pixel space, just like the standard Encoder-Decoder, but with a JEPA-style predictor in the pipeline.
+
 ## Contributing
 
 Contributions to this project are welcome. Please refer to the documentation and existing code structure for guidance. (Further details on contributing can be added here or in a separate `CONTRIBUTING.md` file).

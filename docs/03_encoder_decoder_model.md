@@ -104,3 +104,21 @@ The behavior, architecture, and training of the Standard Encoder-Decoder model a
 -   **`training_options.skip_std_enc_dec_training_if_loaded`**: (boolean) If `true`, and a pre-trained Standard Encoder-Decoder model is successfully loaded (via `model_type_to_load` and `load_model_path`), the training phase for this model will be skipped.
 
 For a comprehensive list of all configuration options and their detailed explanations, please refer directly to the `config.yaml` file (which is heavily commented) and the **[`docs/06_usage_guide.md`](../06_usage_guide.md)**.
+
+## Encoder-Decoder JEPA-Style Variant (Fair JEPA Baseline)
+
+To enable rigorous, apples-to-apples comparison with JEPA, this repository includes an **Encoder-Decoder JEPA-style** model variant. This model:
+
+- Uses the same encoder options (ViT, CNN, MLP) as the standard Encoder-Decoder and JEPA.
+- After encoding the current state, concatenates the action embedding (as in both current models).
+- Passes the concatenated vector through a JEPA-style predictor MLP (identical to the one used in JEPA).
+- Feeds the predictor's output into a Transformer-based decoder (as in the standard Encoder-Decoder and JEPAStateDecoder) to reconstruct the next state image in pixel space.
+- All architectural parameters (encoder, predictor, decoder) are fully configurable via `config.yaml`.
+
+**Purpose:**
+This model is designed to match the parameter count and architectural complexity of JEPA as closely as possible, isolating the effect of the core modeling principle (predicting in pixel space vs. embedding space). By comparing this model to both the standard Encoder-Decoder and JEPA, researchers can determine whether JEPA's performance gains are due to its architectural philosophy or simply increased model capacity.
+
+**Usage:**
+- Select this model by setting `model_type_to_load: "enc_dec_jepa_style"` in `config.yaml`.
+- Configure all relevant parameters (encoder, predictor, decoder) as for the other models.
+- The model can be trained and evaluated using the same training and reward prediction pipelines as the other world models.
