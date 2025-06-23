@@ -12,7 +12,6 @@ import wandb # For wandb.Image
 # Models (std_enc_dec, jepa_model, reward_mlp_enc_dec, reward_mlp_jepa, jepa_decoder) via 'models_map'.
 # Optimizers (optimizer_std_enc_dec, etc.) via 'optimizers_map'.
 # Dataloaders (train_dataloader, val_dataloader) via 'dataloaders_map'.
-# Configs (early_stopping_config, enc_dec_mlp_config, jepa_mlp_config, main_config for num_epochs, log_interval) via 'config'.
 # Device, action_dim, action_type also passed as arguments.
 
 def train_validate_model_epoch(
