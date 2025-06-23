@@ -41,10 +41,6 @@ class ExperienceDataset(Dataset):
             next_state = self.transform(next_state)
 
         if self.config:
-            print('\n')
-            print('Config in ExperienceDataset:', self.config)  # Debugging line to check config structure
-            print('--'*40)
-            print('--'*40)
             expected_input_channels = self.config['environment']['input_channels']
             # image_size in config is an int (e.g., 64)
             expected_image_height = self.config['environment']['image_size']
