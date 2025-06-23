@@ -1,199 +1,180 @@
-# Environment Configuration
-environment_name: "CarRacing-v3" # Example, choose a relevant Gym environment (e.g., "CarRacing-v3", "ALE/Pong-v5")
-# For image-based environments like CarRacing or Atari, ensure appropriate wrappers are used if needed by the env.
-input_channels: 3 # Number of channels in the input image (e.g., 3 for RGB, 1 for grayscale, 4 if using FrameStack)
-image_size: 64    # Target size (height and width) for processed images
+# configs/base_config.yaml
 
-# Data Collection
-num_episodes_data_collection: 70 # Number of episodes to collect for the dataset
-max_steps_per_episode_data_collection: 600 # Max steps per episode during data collection
+# --- Environment Configuration ---
+environment:
+  name: "CarRacing-v3" # Example, choose a relevant Gym environment (e.g., "CarRacing-v3", "ALE/Pong-v5")
+  # For image-based environments like CarRacing or Atari, ensure appropriate wrappers are used if needed by the env.
+  input_channels: 3 # Number of channels in the input image (e.g., 3 for RGB, 1 for grayscale, 4 if using FrameStack)
+  image_size: 64    # Target size (height and width) for processed images
 
-# Dataset Management
-dataset_dir: "datasets/"
-load_dataset_path: "" # empty string means don't load, otherwise it's a path relative to dataset_dir
-dataset_filename: "car_racing_v3_v2.pkl"
+# --- Data Collection & Dataset Management ---
+data:
+  collection:
+    num_episodes: 150 # Number of episodes to collect for the dataset
+    max_steps_per_episode: 600 # Max steps per episode during data collection
+  dataset:
+    dir: "datasets/"
+    load_path: ".pkl" # empty string means don't load, otherwise it's a path relative to dataset.dir
+    filename: "car_racing_v3_action_rep_6.pkl"
+  validation_split: 0.2 # Proportion of data to use for validation (moved from early_stopping)
 
-# Model Loading Configuration
-model_dir: "trained_models/"
-load_model_path: "" # empty string means don't load, otherwise it's a path relative to model_dir
-model_type_to_load: "enc_dec_jepa_style" # options: "std_enc_dec", "jepa", "enc_dec_jepa_style"
+# --- Model Loading Configuration ---
+model_loading:
+  dir: "trained_models/"
+  load_path: "" # empty string means don't load, otherwise it's a path relative to model_loading.dir
+  model_type_to_load: "enc_dec_jepa_style" # options: "std_enc_dec", "jepa", "enc_dec_jepa_style"
 
-# Training Configuration
-frame_skipping: 0 # Number of frames to skip (0 means no skipping). Note: If using action_repetition_k in PPO data collection, this should ideally be 0 to avoid compounded effects.
-num_epochs: 50
-batch_size: 64
-learning_rate: 0.003
-learning_rate_jepa: 0.003 # Can be different from the main learning_rate
-num_workers: 1 # For DataLoader
-log_interval: 50 # Log training progress every N batches
-
-# Encoder Configuration
-encoder_type: "vit"  # Options: "vit", "cnn", "mlp"
-# Global patch_size:
-# - Used by ViT encoder (it expects 'patch_size' in its specific params; train.py ensures this).
-# - Used as the default for 'decoder_patch_size' in StandardEncoderDecoder if not explicitly set there.
-patch_size: 8
-
-# encoder_params: Specific parameters for the chosen encoder_type.
-# train.py will select the appropriate sub-dictionary based on 'encoder_type'.
-encoder_params:
-  vit:
-    # patch_size for ViT is handled by train.py using the global 'patch_size' above.
-    depth: 8                # Number of Transformer blocks in ViT
-    heads: 4                # Number of attention heads in ViT
-    mlp_dim: 512            # Dimension of the MLP within ViT Transformer blocks
-    pool: 'cls'             # Type of pooling ('cls' token or 'mean' pooling)
-    dropout: 0.3            # Dropout rate in ViT
-    emb_dropout: 0.25        # Embedding dropout rate in ViT
-
-  cnn:
-    num_conv_layers: 3      # Number of convolutional layers
-    base_filters: 32        # Number of filters in the first convolutional layer
-    kernel_size: 3          # Kernel size for convolutional layers
-    stride: 2               # Stride for convolutional layers
-    padding: 1              # Padding for convolutional layers
-    activation_fn_str: 'relu' # Activation function ('relu' or 'gelu')
-    fc_hidden_dim: null     # Dimension of an optional fully connected layer before the latent output (null for direct)
-    dropout_rate: 0.2       # Dropout rate for CNN encoder
-
-  mlp:
-    num_hidden_layers: 2    # Number of hidden layers in the MLP encoder
-    hidden_dim: 256         # Dimension of hidden layers in the MLP encoder
-    activation_fn_str: 'relu' # Activation function ('relu' or 'gelu')
-    dropout_rate: 0.1       # Dropout rate for MLP encoder
-
-
-# Shared Latent Dimension
-latent_dim: 256 # Output dimension of the encoder, input to predictor/decoder logic for JEPA/StandardEncoderDecoder
-
-# Standard Encoder-Decoder Model
-action_emb_dim: 64      # Dimension for embedding actions
-decoder_dim: 128        # Internal dimension of the Transformer decoder
-# For decoder_depth, decoder_heads, decoder_mlp_dim, train.py attempts to read specific keys like 'decoder_depth'
-# or falls back to legacy keys like 'num_decoder_layers', 'num_heads', 'mlp_dim'.
-# It's recommended to use specific keys for clarity if they differ from encoder/legacy values.
-decoder_depth: 4        # Number of layers in the Transformer decoder (preferred key)
-decoder_heads: 4        # Number of attention heads in the Transformer decoder (preferred key)
-decoder_mlp_dim: 512    # MLP dimension in the Transformer decoder (preferred key)
-decoder_dropout: 0.2    # Dropout for the decoder
-decoder_patch_size: 8   # Patch size for reconstructing the output image by the decoder.
-                        # If null or not specified, train.py defaults this to global 'patch_size'.
-
-# JEPA Model
-jepa_predictor_hidden_dim: 256 # Hidden dimension for the JEPA predictor MLP
-predictor_dropout_rate: 0.3  # Dropout rate for JEPA predictor MLP layers
-ema_decay: 0.99              # EMA decay rate for updating the target encoder in JEPA
-target_encoder_mode: "vjepa2" # Options: "default", "vjepa2", "none"
-#vicreg_loss_weight: 1.0       # Weight for the VICReg loss component in JEPA's total loss
-# VICRegLoss coefficients (sim_coeff, std_coeff, cov_coeff) are currently set to defaults
-# within train.py when VICRegLoss is instantiated. To configure them from here,
-# add them to this config file (e.g., vicreg_sim_coeff: 25.0) and modify train.py
-# to pass these values to the VICRegLoss constructor.
-# Example:
-# #vicreg_sim_coeff: 25.0
-# #vicreg_std_coeff: 25.0
-# #vicreg_cov_coeff: 1.0
-
-# Reward Predictor MLPs
-reward_predictors:
-  encoder_decoder_reward_mlp:
-    enabled: true
-    input_type: "flatten" # Assumes flattened decoded image from StandardEncoderDecoder
-    hidden_dims: [128, 64]
-    num_epochs: 50
-    activation: "relu"
-    use_batch_norm: false
-    learning_rate: 0.0003
-    log_interval: 100
-    dropout_rate: 0.2       # Dropout rate for enc-dec reward MLP
-  jepa_reward_mlp:
-    enabled: true
-    # Input for JEPA's reward MLP will typically be the output of JEPA's encoder (target or online)
-    # This will be handled in train.py logic. No explicit 'input_type' needed here like for enc-dec.
-    num_epochs: 200
-    hidden_dims: [128, 64]
-    activation: "relu"
-    use_batch_norm: false
-    learning_rate: 0.0003
-    log_interval: 100
-    dropout_rate: 0.2       # Dropout rate for JEPA reward MLP
-
-# Legacy/Shared Transformer parameters (These are less critical if using encoder_params and specific decoder params above)
-# num_encoder_layers: 4 # Primarily for old ViT direct init, now effectively superseded by encoder_params.vit.depth
-# num_heads: 6          # Legacy, consider using encoder_params.vit.heads and specific decoder_heads
-# mlp_dim: 256          # Legacy, consider using encoder_params.vit.mlp_dim and specific decoder_mlp_dim
-
-auxiliary_loss:
-  type: "vicreg"  # Options: "vicreg", "barlow_twins", "dino"
-  weight: 3.0     # General weight for the chosen auxiliary loss
-  params:
-    vicreg:
-      # sim_coeff is not used by calculate_reg_terms, but kept for completeness if full VICReg was used.
-      # For JEPA's use of calculate_reg_terms, only std_coeff and cov_coeff are relevant.
-      sim_coeff: 0.0  # Default to 0 as per current train.py for reg_terms
-      std_coeff: 1.0
-      cov_coeff: 1.0
-      eps: 0.0001     # Default VICRegLoss epsilon
-    barlow_twins:
-      lambda_param: 0.0051 # Common value, e.g. from SimCLR paper for similar scale
-      eps: 0.00001    # Default BarlowTwinsLoss epsilon
-      scale_loss: 1.0   # Default BarlowTwinsLoss scale_loss
-    dino:
-      # out_dim for DINOLoss will be set programmatically from model's latent_dim in train.py
-      center_ema_decay: 0.9 # Default DINOLoss center_ema_decay
-      eps: 0.00001        # Default DINOLoss epsilon
-
-early_stopping:
-  patience: 30 # Number of epochs to wait for improvement before stopping
-  delta: 0.001 # Minimum change in the monitored quantity to qualify as an improvement
-  # Metric for Encoder/Decoder, e.g., "val_loss_enc_dec" or "val_accuracy_enc_dec"
-  metric_enc_dec: "val_loss_enc_dec"
-  # Metric for JEPA, e.g., "val_total_loss_jepa"
-  metric_jepa: "val_total_loss_jepa"
-  checkpoint_path_enc_dec: "best_encoder_decoder.pth"
-  checkpoint_path_jepa: "best_jepa.pth"
-  validation_split: 0.2 # Proportion of data to use for validation
-
-jepa_decoder_training:
-  enabled: true # Set to true to enable training this decoder
+# --- General Training Configuration ---
+training:
   num_epochs: 50
-  learning_rate: 0.0003
-  checkpoint_path: "best_jepa_decoder.pth"
-  validation_plot_dir: "validation_plots/" # New line
-  # Add early stopping parameters similar to the main ones if desired
-  early_stopping:
-    patience: 15
+  batch_size: 64
+  learning_rate: 0.003 # General learning rate, can be overridden by specific model configs
+  num_workers: 1 # For DataLoader
+  log_interval: 50 # Log training progress every N batches
+  frame_skipping: 0 # Number of frames to skip. Note: If using action_repetition_k in PPO, this should ideally be 0.
+  options:
+    skip_std_enc_dec_training_if_loaded: false
+    skip_jepa_training_if_loaded: false
+  early_stopping: # General early stopping settings; specific metrics/paths are per model type if needed
+    patience: 30
     delta: 0.001
-    metric: "val_loss_jepa_decoder" # Example metric
+    # Metric for Encoder/Decoder, e.g., "val_loss_enc_dec" or "val_accuracy_enc_dec"
+    metric_enc_dec: "val_loss_enc_dec"
+    checkpoint_path_enc_dec: "best_encoder_decoder.pth" # Relative to model_loading.dir
+    # Metric for JEPA, e.g., "val_total_loss_jepa"
+    metric_jepa: "val_total_loss_jepa"
+    checkpoint_path_jepa: "best_jepa.pth" # Relative to model_loading.dir
 
-training_options: # New section name, as 'training_configuration' is too generic
-  skip_std_enc_dec_training_if_loaded: false
-  skip_jepa_training_if_loaded: false
+# --- Models Configuration ---
+models:
+  shared_latent_dim: 256 # Output dimension of encoders, input to predictors/decoders
+  shared_patch_size: 8   # Global patch_size: Used by ViT encoder, default for decoder_patch_size
 
-# PPO Agent Configuration for Data Collection
+  encoder:
+    type: "vit"  # Options: "vit", "cnn", "mlp"
+    # Specific parameters for the chosen encoder_type.
+    # train.py will select the appropriate sub-dictionary based on 'encoder.type'.
+    params:
+      vit:
+        # patch_size for ViT is handled by train.py using models.shared_patch_size
+        depth: 8                # Number of Transformer blocks in ViT
+        heads: 4                # Number of attention heads in ViT
+        mlp_dim: 512            # Dimension of the MLP within ViT Transformer blocks
+        pool: 'cls'             # Type of pooling ('cls' token or 'mean' pooling)
+        dropout: 0.3            # Dropout rate in ViT
+        emb_dropout: 0.25       # Embedding dropout rate in ViT
+      cnn:
+        num_conv_layers: 3      # Number of convolutional layers
+        base_filters: 32        # Number of filters in the first convolutional layer
+        kernel_size: 3          # Kernel size for convolutional layers
+        stride: 2               # Stride for convolutional layers
+        padding: 1              # Padding for convolutional layers
+        activation_fn_str: 'relu' # Activation function ('relu' or 'gelu')
+        fc_hidden_dim: null     # Dimension of an optional fully connected layer before latent output (null for direct)
+        dropout_rate: 0.2       # Dropout rate for CNN encoder
+      mlp:
+        num_hidden_layers: 2    # Number of hidden layers in the MLP encoder
+        hidden_dim: 256         # Dimension of hidden layers in the MLP encoder
+        activation_fn_str: 'relu' # Activation function ('relu' or 'gelu')
+        dropout_rate: 0.1       # Dropout rate for MLP encoder
+
+  standard_encoder_decoder:
+    action_emb_dim: 64      # Dimension for embedding actions
+    decoder_dim: 128        # Internal dimension of the Transformer decoder
+    decoder_depth: 4        # Number of layers in the Transformer decoder
+    decoder_heads: 4        # Number of attention heads in the Transformer decoder
+    decoder_mlp_dim: 512    # MLP dimension in the Transformer decoder
+    decoder_dropout: 0.2    # Dropout for the decoder
+    decoder_patch_size: 8   # Patch size for reconstructing output. If null, defaults to models.shared_patch_size.
+
+  jepa:
+    learning_rate: 0.003    # Specific learning rate for JEPA optimizer
+    predictor_hidden_dim: 256 # Hidden dimension for the JEPA predictor MLP
+    predictor_dropout_rate: 0.3  # Dropout rate for JEPA predictor MLP layers
+    ema_decay: 0.99              # EMA decay rate for updating the target encoder in JEPA
+    target_encoder_mode: "vjepa2" # Options: "default", "vjepa2", "none"
+    # For VICRegLoss coefficients used in JEPA's regularization terms (if not using full auxiliary_loss block for this)
+    # vicreg_sim_coeff: 25.0 # (Example, often 0 for JEPA's reg_terms use)
+    # vicreg_std_coeff: 25.0
+    # vicreg_cov_coeff: 1.0
+    decoder_training: # Configuration for the JEPA State Decoder
+      enabled: true # Set to true to enable training this decoder
+      num_epochs: 50
+      learning_rate: 0.0003
+      checkpoint_path: "best_jepa_decoder.pth" # Relative to model_loading.dir
+      validation_plot_dir: "validation_plots/"
+      early_stopping:
+        patience: 15
+        delta: 0.001
+        metric: "val_loss_jepa_decoder" # Example metric
+
+  enc_dec_jepa_style: # Model for fair JEPA comparison using Encoder-Decoder architecture
+    # Decoder parameters (decoder_dim, decoder_depth, etc.) are shared with models.standard_encoder_decoder
+    predictor_hidden_dim: 256 # Hidden dim for the predictor MLP
+    predictor_output_dim: 128 # Output dim of the predictor (should match decoder input dim)
+    predictor_dropout_rate: 0.3 # Dropout rate for predictor MLP
+
+  reward_predictors:
+    encoder_decoder_reward_mlp:
+      enabled: true
+      input_type: "flatten" # Assumes flattened decoded image from StandardEncoderDecoder
+      hidden_dims: [128, 64]
+      num_epochs: 50
+      activation: "relu"
+      use_batch_norm: false
+      learning_rate: 0.0003
+      log_interval: 100
+      dropout_rate: 0.2
+    jepa_reward_mlp:
+      enabled: true
+      # Input for JEPA's reward MLP typically comes from JEPA's encoder output.
+      num_epochs: 200
+      hidden_dims: [128, 64]
+      activation: "relu"
+      use_batch_norm: false
+      learning_rate: 0.0003
+      log_interval: 100
+      dropout_rate: 0.2
+
+  auxiliary_loss: # Configuration for auxiliary losses like VICReg, Barlow Twins, DINO
+    type: "vicreg"  # Options: "vicreg", "barlow_twins", "dino"
+    use_for_jepa: true # Whether to use this auxiliary loss for JEPA training
+    use_for_enc_dec: true # Whether to use this auxiliary loss for Encoder-Decoder training
+    weight: 3.0     # General weight for the chosen auxiliary loss
+    params:
+      vicreg:
+        # For JEPA's use of calculate_reg_terms, only std_coeff and cov_coeff are relevant.
+        sim_coeff: 0.0  # Default to 0 as per current train.py for reg_terms
+        std_coeff: 1.0
+        cov_coeff: 1.0
+        eps: 0.0001     # Default VICRegLoss epsilon
+      barlow_twins:
+        lambda_param: 0.0051
+        eps: 0.00001
+        scale_loss: 1.0
+      dino:
+        # out_dim for DINOLoss will be set programmatically from model's latent_dim in train.py
+        center_ema_decay: 0.9
+        eps: 0.00001
+
+# --- PPO Agent Configuration for Data Collection ---
 ppo_agent:
   enabled: true # Master switch for using PPO for data collection
   action_repetition_k: 6
   learning_rate: 0.0003
-  total_train_timesteps: 100000 # Timesteps to train PPO before data collection
-  n_steps: 1024       # PPO n_steps parameter (number of steps to run for each environment per update)
-  batch_size: 64      # PPO batch_size parameter (minibatch size)
-  n_epochs: 5        # PPO n_epochs parameter (number of epoch when optimizing the surrogate loss)
-  gamma: 0.99         # PPO gamma parameter (discount factor)
-  gae_lambda: 0.95    # PPO gae_lambda parameter (factor for trade-off General Advantage Estimation)
-  clip_range: 0.2     # PPO clip_range parameter (clipping parameter)
-  additional_log_std_noise: 0.0 # New parameter
+  total_train_timesteps: 3000 # Timesteps to train PPO before data collection
+  n_steps: 1024       # PPO n_steps parameter
+  batch_size: 64      # PPO batch_size parameter
+  n_epochs: 5         # PPO n_epochs parameter
+  gamma: 0.99         # PPO gamma parameter
+  gae_lambda: 0.95    # PPO gae_lambda parameter
+  clip_range: 0.2     # PPO clip_range parameter
+  additional_log_std_noise: 0.0
   policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
 
-
+# --- Weights & Biases Logging ---
 wandb:
   project: "rl_worlds"
-  entity: null
+  entity: null # Your W&B entity (username or team name)
   run_name_prefix: "exp"
   enabled: true
-
-# Encoder-Decoder JEPA-Style Model (for fair JEPA comparison)
-enc_dec_jepa_style_predictor_hidden_dim: 256 # Hidden dim for the predictor MLP in the JEPA-style encoder-decoder
-enc_dec_jepa_style_predictor_output_dim: 128 # Output dim of the predictor (should match decoder input dim)
-enc_dec_jepa_style_predictor_dropout_rate: 0.3 # Dropout rate for predictor MLP
-# The decoder parameters (decoder_dim, decoder_depth, decoder_heads, decoder_mlp_dim, decoder_dropout, decoder_patch_size) are shared with the standard encoder-decoder above.

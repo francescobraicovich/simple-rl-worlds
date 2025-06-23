@@ -20,8 +20,8 @@ def load_training_dataset():
         with open("config.yaml", "r") as f:
             config = yaml.safe_load(f)
 
-        dataset_dir_from_config = config.get("dataset_dir", "datasets")
-        dataset_filename = config.get("dataset_filename", "car_racing_v3_v2.pkl")
+        dataset_dir_from_config = config.get("data", {}).get("dataset", {}).get("dir", "datasets")
+        dataset_filename = config.get("data", {}).get("dataset", {}).get("filename", "car_racing_v3_v2.pkl")
         dataset_path = os.path.join(dataset_dir_from_config, dataset_filename)
 
         if not os.path.exists(dataset_path):
@@ -45,7 +45,7 @@ def load_training_dataset():
         print("Error: Could not parse config.yaml.")
         return None, None
     except pickle.UnpicklingError:
-        full_path_attempted = os.path.join(dataset_dir_from_config, config.get("dataset_filename", "unknown.pkl") if 'config' in locals() else "unknown.pkl")
+        full_path_attempted = os.path.join(dataset_dir_from_config, config.get("data", {}).get("dataset", {}).get("filename", "unknown.pkl") if 'config' in locals() else "unknown.pkl")
         print(f"Error: Could not unpickle dataset file at {full_path_attempted}.")
         return None, None
     except Exception as e:

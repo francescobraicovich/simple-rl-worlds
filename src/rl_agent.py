@@ -85,7 +85,7 @@ if __name__ == '__main__':
             # Create a dummy environment for testing
             # Replace 'CartPole-v1' with an environment that matches your PPO policy_type
             # e.g., if policy_type is 'CnnPolicy', use an image-based environment
-            env_name_test = full_config.get('environment_name', 'CartPole-v1')
+            env_name_test = full_config.get('environment', {}).get('name', 'CartPole-v1')
             print(f"Creating test environment: {env_name_test}")
 
             # Determine if the environment is image-based to select appropriate default policy

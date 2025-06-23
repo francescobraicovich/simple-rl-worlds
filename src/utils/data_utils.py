@@ -41,10 +41,10 @@ class ExperienceDataset(Dataset):
             next_state = self.transform(next_state)
 
         if self.config:
-            expected_input_channels = self.config['input_channels']
+            expected_input_channels = self.config['environment']['input_channels']
             # image_size in config is an int (e.g., 64)
-            expected_image_height = self.config['image_size']
-            expected_image_width = self.config['image_size']
+            expected_image_height = self.config['environment']['image_size']
+            expected_image_width = self.config['environment']['image_size']
             expected_shape = (expected_input_channels, expected_image_height, expected_image_width)
 
             if state.shape != expected_shape:
@@ -68,13 +68,13 @@ class ExperienceDataset(Dataset):
 
 
 def collect_random_episodes(config, max_steps_per_episode, image_size, validation_split_ratio, frame_skipping):
-    env_name = config['environment_name']
-    num_episodes = config['num_episodes_data_collection']
+    env_name = config['environment']['name']
+    num_episodes = config['data']['collection']['num_episodes']
 
     # New configuration keys
-    dataset_dir = config['dataset_dir']
-    load_dataset_filename = config['load_dataset_path'] # Filename or path relative to dataset_dir
-    save_dataset_filename = config['dataset_filename'] # Filename for saving new datasets
+    dataset_dir = config['data']['dataset']['dir']
+    load_dataset_filename = config['data']['dataset']['load_path'] # Filename or path relative to dataset_dir
+    save_dataset_filename = config['data']['dataset']['filename'] # Filename for saving new datasets
 
     os.makedirs(dataset_dir, exist_ok=True)
 
@@ -108,7 +108,7 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
         else:
             print(f"Warning: Dataset {dataset_path} not found. Proceeding to data collection.")
     else:
-        print("`load_dataset_path` is empty. Proceeding to data collection.")
+        print("`data.dataset.load_path` is empty. Proceeding to data collection.")
 
     # If data was not loaded, proceed with data collection
     print(f"Collecting data from environment: {env_name}")
@@ -305,9 +305,9 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
     # Save the collected dataset if new data was collected
     if not data_loaded_successfully:
         if all_episodes_raw_data: # Check if new data was actually collected
-            num_episodes_collected = config['num_episodes_data_collection'] # Or len(all_episodes_raw_data) if actual count is preferred
+            num_episodes_collected = config['data']['collection']['num_episodes'] # Or len(all_episodes_raw_data) if actual count is preferred
 
-            # Use config['dataset_filename'] for saving
+            # Use config['data']['dataset']['filename'] for saving
             save_path = os.path.join(dataset_dir, save_dataset_filename)
 
             metadata_to_save = {
@@ -342,12 +342,12 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
 
 
 def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_split_ratio, frame_skipping):
-    env_name = config['environment_name']
-    num_episodes = config['num_episodes_data_collection']
+    env_name = config['environment']['name']
+    num_episodes = config['data']['collection']['num_episodes']
 
-    dataset_dir = config['dataset_dir']
-    load_dataset_filename = config['load_dataset_path']
-    save_dataset_filename = config['dataset_filename']
+    dataset_dir = config['data']['dataset']['dir']
+    load_dataset_filename = config['data']['dataset']['load_path']
+    save_dataset_filename = config['data']['dataset']['filename']
 
     os.makedirs(dataset_dir, exist_ok=True)
 
@@ -381,7 +381,7 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
         else:
             print(f"Warning: Dataset {dataset_path} not found. Proceeding to PPO data collection.")
     else:
-        print("`load_dataset_path` is empty. Proceeding to PPO data collection.")
+        print("`data.dataset.load_path` is empty. Proceeding to PPO data collection.")
 
 
     print(f"Collecting data from environment: {env_name} using PPO agent.")
@@ -466,6 +466,12 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
         T.ToTensor()
     ])
 
+    if action_repetition_k > 1:
+        print(f"Note: Action repetition is active with k={action_repetition_k}.\
+              Even though max_steps_per_episode is set to {max_steps_per_episode},\
+              the actual number of steps per episode may be higher due to action repetition.\
+              For car_racing_v3, the max_steps_per_episode is typically 1000, but with action repetition it will be {1000 // action_repetition_k} effective steps.\n")
+
     for episode_idx in range(num_episodes):
         current_state_img, info = env.reset()
         initial_obs_is_uint8_image = isinstance(current_state_img, np.ndarray) and current_state_img.dtype == np.uint8
@@ -529,13 +535,17 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
                     if not (isinstance(next_state_img, np.ndarray) and next_state_img.dtype == np.uint8):
                         print(f"Error: env.render() for next_state (PPO) did not return uint8 array for ep {episode_idx+1}, step {step_count+1}. Skipping step.")
                         step_count += 1
-                        if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2): break
-                        else: continue
+                        if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2):
+                            break
+                        else:
+                            continue
                 else:
                     print(f"Warning: Next PPO obs for ep {episode_idx+1}, step {step_count+1} not uint8 and env not 'rgb_array'. Skipping step. Obs: {next_state_img}")
                     step_count += 1
-                    if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2): break
-                    else: continue
+                    if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2):
+                        break
+                    else:
+                        continue
                 
             cumulative_reward_episode += accumulated_reward # Add accumulated reward to cumulative reward for the episode
 
@@ -544,8 +554,10 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
                 print(f"Warning: Skipping PPO step in ep {episode_idx+1}, step {step_count+1} due to unsuitable state dims. Current: {current_state_img.shape if hasattr(current_state_img, 'shape') else 'N/A'}, Next: {next_state_img.shape if hasattr(next_state_img, 'shape') else 'N/A'}")
                 current_state_img = next_state_img
                 step_count += 1
-                if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2): break
-                else: continue
+                if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2):
+                    break
+                else:
+                    continue
 
             # The transition uses recorded_current_state_img, the original_action, accumulated_reward, and the final next_state_img
             processed_action = original_action.item() if isinstance(original_action, np.ndarray) and env.action_space.shape == () else original_action
@@ -599,7 +611,7 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
 
     if not data_loaded_successfully:
         if all_episodes_raw_data:
-            num_episodes_collected = config['num_episodes_data_collection']
+            num_episodes_collected = config['data']['collection']['num_episodes']
             save_path = os.path.join(dataset_dir, save_dataset_filename)
             metadata_to_save = {
                 'environment_name': env_name,
@@ -640,7 +652,7 @@ if __name__ == '__main__':
     # Testing collect_ppo_episodes would require a more elaborate setup,
     # including a full config with ppo_agent settings.
 
-    print(f"Testing data collection with a sample environment (collect_random_episodes)...")
+    print("Testing data collection with a sample environment (collect_random_episodes)...")
     try:
         # Attempt to use a known pixel-based environment
         try:
@@ -665,13 +677,21 @@ if __name__ == '__main__':
             # Dummy config for testing collect_random_episodes
             # Add necessary keys for the new validation logic in ExperienceDataset
             dummy_config_random = {
-                'environment_name': test_env_name,
-                'num_episodes_data_collection': 2, # Small number for test
-                'dataset_dir': "datasets/random_test",
-                'load_dataset_path': "", # Don't load, force collection
-                'dataset_filename': "random_collected_data.pkl",
-                'input_channels': 3, # Assuming RGB for test environments like Pong, CartPole gives 3 channels after render
-                'image_size': 32      # Must match image_size below for T.Resize and validation
+                'environment': {
+                    'name': test_env_name,
+                    'input_channels': 3, # Assuming RGB for test environments like Pong, CartPole gives 3 channels after render
+                    'image_size': 32      # Must match image_size below for T.Resize and validation
+                },
+                'data': {
+                    'collection': {
+                        'num_episodes': 2 # Small number for test
+                    },
+                    'dataset': {
+                        'dir': "datasets/random_test",
+                        'load_path': "", # Don't load, force collection
+                        'filename': "random_collected_data.pkl"
+                    }
+                }
             }
 
             print("\n--- Test Case 1: Collect and Save (Random Episodes) ---")
@@ -702,16 +722,24 @@ if __name__ == '__main__':
             # Test case 2: Load the saved random dataset
             print("\n--- Test Case 2: Load Saved Random Dataset ---")
             dummy_config_load_random = {
-                'environment_name': test_env_name,
-                'num_episodes_data_collection': dummy_config_random['num_episodes_data_collection'],
-                'dataset_dir': dummy_config_random['dataset_dir'],
-                'load_dataset_path': dummy_config_random['dataset_filename'], # What test case 1 saved
-                'dataset_filename': "random_collected_data_new_save.pkl", # In case this run also saves
-                'input_channels': 3, # Must match for validation when loading
-                'image_size': 32      # Must match for validation when loading
+                'environment': {
+                    'name': test_env_name,
+                    'input_channels': 3, # Must match for validation when loading
+                    'image_size': 32      # Must match for validation when loading
+                },
+                'data': {
+                    'collection': {
+                        'num_episodes': dummy_config_random['data']['collection']['num_episodes']
+                    },
+                    'dataset': {
+                        'dir': dummy_config_random['data']['dataset']['dir'],
+                        'load_path': dummy_config_random['data']['dataset']['filename'], # What test case 1 saved
+                        'filename': "random_collected_data_new_save.pkl" # In case this run also saves
+                    }
+                }
             }
 
-            dataset_file_path = os.path.join(dummy_config_load_random['dataset_dir'], dummy_config_load_random['load_dataset_path'])
+            dataset_file_path = os.path.join(dummy_config_load_random['data']['dataset']['dir'], dummy_config_load_random['data']['dataset']['load_path'])
             if os.path.exists(dataset_file_path):
                 train_d_loaded, val_d_loaded = collect_random_episodes(
                     config=dummy_config_load_random,
