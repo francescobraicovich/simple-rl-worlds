@@ -466,6 +466,12 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
         T.ToTensor()
     ])
 
+    if action_repetition_k > 1:
+        print(f"Note: Action repetition is active with k={action_repetition_k}.\
+              Even though max_steps_per_episode is set to {max_steps_per_episode},\
+              the actual number of steps per episode may be higher due to action repetition.\
+              For car_racing_v3, the max_steps_per_episode is typically 1000, but with action repetition it will be {1000 // action_repetition_k} effective steps.\n")
+
     for episode_idx in range(num_episodes):
         current_state_img, info = env.reset()
         initial_obs_is_uint8_image = isinstance(current_state_img, np.ndarray) and current_state_img.dtype == np.uint8
