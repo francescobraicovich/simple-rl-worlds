@@ -17,6 +17,7 @@ import wandb # For wandb.Image
 def train_validate_model_epoch(
     model, optimizer, train_dataloader, val_dataloader,
     loss_fn, aux_loss_fn, aux_loss_name, aux_loss_weight,
+    use_aux_for_jepa, use_aux_for_enc_dec,  # New parameters
     device, epoch_num, log_interval, action_dim, action_type,
     early_stopping_state, checkpoint_path, model_name_log_prefix,
     wandb_run,
@@ -41,6 +42,8 @@ def train_validate_model_epoch(
         aux_loss_fn (callable, optional): An auxiliary loss function (e.g., for regularization).
         aux_loss_name (str): Name of the auxiliary loss, used for logging.
         aux_loss_weight (float): Weighting factor for the auxiliary loss.
+        use_aux_for_jepa (bool): Whether to apply auxiliary loss for JEPA models.
+        use_aux_for_enc_dec (bool): Whether to apply auxiliary loss for Encoder-Decoder models.
         device (torch.device): The device (CPU or GPU) to perform computations on.
         epoch_num (int): The current epoch number.
         log_interval (int): Interval (in batches) for logging training progress.
@@ -88,20 +91,72 @@ def train_validate_model_epoch(
 
         if model_name_log_prefix == "JEPA":
             # Dummy logic for JEPA model forward pass
+            # JEPA model forward pass and primary loss
             pred_emb, target_emb_detached, online_s_t_emb, _ = model(s_t, a_t_processed, s_t_plus_1)
             loss_primary = loss_fn(pred_emb, target_emb_detached)
             current_loss_primary_item = loss_primary.item()
+            
             current_loss_aux = torch.tensor(0.0, device=device)
-            if aux_loss_fn is not None and aux_loss_weight > 0:
+            # Apply auxiliary loss if configured for JEPA
+            if use_aux_for_jepa and aux_loss_fn is not None and aux_loss_weight > 0:
                 aux_term_s_t, _, _ = aux_loss_fn.calculate_reg_terms(online_s_t_emb)
                 current_loss_aux = aux_term_s_t
                 current_loss_aux_item = current_loss_aux.item()
+            
             total_loss = loss_primary + current_loss_aux * aux_loss_weight
-        else:  # Standard Encoder-Decoder
-            predicted_s_t_plus_1 = model(s_t, a_t_processed)
+
+        else:  # Standard Encoder-Decoder or EncDecJEPAStyle
+            # For Encoder-Decoder, the model's forward pass might just return the prediction.
+            # We need the encoder's representation of s_t for the auxiliary loss.
+            # Assuming model has an 'encoder' attribute and it can process s_t.
+            # If model's forward needs to be changed to return embeddings, that's a separate step.
+            
+            s_t_emb = None
+            if hasattr(model, 'encoder') and callable(model.encoder):
+                 s_t_emb = model.encoder(s_t)
+            elif hasattr(model, 'encode') and callable(model.encode): # Alternative common pattern
+                 s_t_emb = model.encode(s_t)
+            # If EncDecJEPAStyle model, it might already return embeddings.
+            # Let's assume 'model(s_t, a_t_processed)' returns (prediction, s_t_embedding)
+            # or we can get s_t_embedding from model.encoder(s_t)
+            
+            # Standard forward pass for prediction
+            output = model(s_t, a_t_processed)
+
+            # Adapt based on what the model returns.
+            # Common patterns:
+            # 1. model returns only prediction: predicted_s_t_plus_1 = output
+            # 2. model returns (prediction, embedding): predicted_s_t_plus_1, s_t_emb_from_fwd = output
+            # For now, assume model.encoder(s_t) is the way for aux loss, and output is prediction.
+            
+            predicted_s_t_plus_1 = output
+            if isinstance(output, tuple): # Handle cases like EncDecJEPAStyle that might return more
+                predicted_s_t_plus_1 = output[0] # Assuming prediction is the first element
+                if s_t_emb is None and len(output) > 1 and torch.is_tensor(output[1]): # Check if second output could be s_t_emb
+                    # This is a guess; ideally, the model's API is clear.
+                    # For EncDecJEPAStyle, s_t_emb might be output[2] if it returns (pred, context_emb, s_t_emb_for_predictor)
+                    # For simplicity, we rely on model.encoder or model.encode first.
+                    # If specific models (like EncDecJEPAStyle) expose embeddings differently,
+                    # this part might need refinement or specific handling for that model_name_log_prefix.
+                    pass
+
+
             loss_primary = loss_fn(predicted_s_t_plus_1, s_t_plus_1)
             current_loss_primary_item = loss_primary.item()
             total_loss = loss_primary
+            
+            current_loss_aux = torch.tensor(0.0, device=device)
+            # Apply auxiliary loss if configured for Encoder-Decoder
+            if use_aux_for_enc_dec and aux_loss_fn is not None and aux_loss_weight > 0:
+                if s_t_emb is not None:
+                    aux_term_s_t, _, _ = aux_loss_fn.calculate_reg_terms(s_t_emb)
+                    current_loss_aux = aux_term_s_t
+                    current_loss_aux_item = current_loss_aux.item()
+                    total_loss = total_loss + current_loss_aux * aux_loss_weight
+                else:
+                    if batch_idx == 0 and epoch_num == 1: # Log warning only once per run
+                         print(f"Warning: Could not get s_t_emb for {model_name_log_prefix} to apply auxiliary loss. Model might need 'encoder' attribute or 'encode' method.")
+
 
         total_loss_item = total_loss.item()
         total_loss.backward()
@@ -125,12 +180,18 @@ def train_validate_model_epoch(
                 f"{model_name_log_prefix}/train/Total_Loss": total_loss_item,
                 f"{model_name_log_prefix}/train/Learning_Rate": optimizer.param_groups[0]['lr']
             }
-            if model_name_log_prefix == "JEPA":
-                if aux_loss_fn and aux_loss_weight > 0:
-                    log_data[f"{model_name_log_prefix}/train/Aux_Raw_Loss"] = current_loss_aux_item
-                    log_data[f"{model_name_log_prefix}/train/Aux_Weighted_Loss"] = current_loss_aux_item * aux_loss_weight
-                if hasattr(model, 'online_encoder'):
-                    log_data[f"{model_name_log_prefix}/train/Encoder_Weight_Diff_MSE"] = diff_metric
+            # Log auxiliary loss if it was applied for JEPA
+            if model_name_log_prefix == "JEPA" and use_aux_for_jepa and aux_loss_fn and aux_loss_weight > 0 and current_loss_aux_item > 0:
+                log_data[f"{model_name_log_prefix}/train/Aux_Raw_Loss"] = current_loss_aux_item
+                log_data[f"{model_name_log_prefix}/train/Aux_Weighted_Loss"] = current_loss_aux_item * aux_loss_weight
+            
+            # Log auxiliary loss if it was applied for Encoder-Decoder
+            if model_name_log_prefix != "JEPA" and use_aux_for_enc_dec and aux_loss_fn and aux_loss_weight > 0 and current_loss_aux_item > 0:
+                log_data[f"{model_name_log_prefix}/train/Aux_Raw_Loss"] = current_loss_aux_item
+                log_data[f"{model_name_log_prefix}/train/Aux_Weighted_Loss"] = current_loss_aux_item * aux_loss_weight
+
+            if model_name_log_prefix == "JEPA" and hasattr(model, 'online_encoder'):
+                log_data[f"{model_name_log_prefix}/train/Encoder_Weight_Diff_MSE"] = diff_metric
 
             if wandb_run:
                 current_global_step = (epoch_num - 1) * num_train_batches + batch_idx
@@ -138,7 +199,12 @@ def train_validate_model_epoch(
                 wandb_run.log(log_data)
 
     avg_epoch_train_loss_primary = epoch_train_loss_primary / num_train_batches
-    avg_epoch_train_loss_aux = epoch_train_loss_aux / num_train_batches if aux_loss_fn and aux_loss_weight > 0 else 0
+    # Calculate avg_epoch_train_loss_aux only if aux loss was actually used for this model type
+    condition_for_train_aux_avg = (model_name_log_prefix == "JEPA" and use_aux_for_jepa) or \
+                                  (model_name_log_prefix != "JEPA" and use_aux_for_enc_dec)
+    avg_epoch_train_loss_aux = epoch_train_loss_aux / num_train_batches \
+        if aux_loss_fn and aux_loss_weight > 0 and condition_for_train_aux_avg and epoch_train_loss_aux > 0 else 0
+
 
     # === Validation and Epoch Summary Phase ===
     if val_dataloader:
@@ -164,40 +230,79 @@ def train_validate_model_epoch(
                     pred_emb_val, target_emb_detached_val, online_s_t_emb_val, _ = model(s_t_val, a_t_val_processed, s_t_plus_1_val)
                     val_loss_primary = loss_fn(pred_emb_val, target_emb_detached_val)
                     val_loss_primary_item = val_loss_primary.item()
-                    if aux_loss_fn is not None and aux_loss_weight > 0:
+                    if use_aux_for_jepa and aux_loss_fn is not None and aux_loss_weight > 0:
                         aux_term_s_t_val, _, _ = aux_loss_fn.calculate_reg_terms(online_s_t_emb_val)
                         val_loss_aux_item = aux_term_s_t_val.item()
-                else: # Standard Encoder-Decoder
-                    predicted_s_t_plus_1_val = model(s_t_val, a_t_val_processed)
+                else: # Standard Encoder-Decoder or EncDecJEPAStyle
+                    s_t_emb_val = None
+                    if hasattr(model, 'encoder') and callable(model.encoder):
+                        s_t_emb_val = model.encoder(s_t_val)
+                    elif hasattr(model, 'encode') and callable(model.encode):
+                        s_t_emb_val = model.encode(s_t_val)
+                    
+                    output_val = model(s_t_val, a_t_val_processed)
+                    predicted_s_t_plus_1_val = output_val
+                    if isinstance(output_val, tuple):
+                        predicted_s_t_plus_1_val = output_val[0]
+                        # s_t_emb_val could potentially be output_val[1] or output_val[2] here too
+                        # but we prioritize explicit .encoder() or .encode() for aux loss input
+
                     val_loss_primary = loss_fn(predicted_s_t_plus_1_val, s_t_plus_1_val)
                     val_loss_primary_item = val_loss_primary.item()
+
+                    if use_aux_for_enc_dec and aux_loss_fn is not None and aux_loss_weight > 0:
+                        if s_t_emb_val is not None:
+                            aux_term_s_t_val, _, _ = aux_loss_fn.calculate_reg_terms(s_t_emb_val)
+                            val_loss_aux_item = aux_term_s_t_val.item()
+                        # else: warning already printed in training loop if s_t_emb is not found
 
                 epoch_val_loss_primary += val_loss_primary_item
                 epoch_val_loss_aux += val_loss_aux_item
 
         avg_val_loss_primary = epoch_val_loss_primary / num_val_batches if num_val_batches > 0 else float('inf')
-        avg_val_loss_aux_raw = epoch_val_loss_aux / num_val_batches if num_val_batches > 0 and aux_loss_fn and aux_loss_weight > 0 else 0
+        
+        condition_for_val_aux_avg = (model_name_log_prefix == "JEPA" and use_aux_for_jepa) or \
+                                    (model_name_log_prefix != "JEPA" and use_aux_for_enc_dec)
+        avg_val_loss_aux_raw = epoch_val_loss_aux / num_val_batches \
+            if num_val_batches > 0 and aux_loss_fn and aux_loss_weight > 0 and condition_for_val_aux_avg and epoch_val_loss_aux > 0 else 0
+
 
         # Consolidated Epoch Logging
         log_epoch_summary = {}
         log_epoch_summary[f"{model_name_log_prefix}/train_epoch_avg/Prediction_Loss"] = avg_epoch_train_loss_primary
         log_epoch_summary[f"{model_name_log_prefix}/val/Prediction_Loss"] = avg_val_loss_primary
-        current_total_val_loss = avg_val_loss_primary
+        current_total_val_loss = avg_val_loss_primary # Start with primary loss for validation
 
-        if model_name_log_prefix == "JEPA" and aux_loss_fn and aux_loss_weight > 0:
-            avg_total_train_loss = avg_epoch_train_loss_primary + (avg_epoch_train_loss_aux * aux_loss_weight)
-            log_epoch_summary[f"{model_name_log_prefix}/train_epoch_avg/Aux_Raw_Loss"] = avg_epoch_train_loss_aux
-            log_epoch_summary[f"{model_name_log_prefix}/train_epoch_avg/Total_Loss"] = avg_total_train_loss
+        avg_total_train_loss = avg_epoch_train_loss_primary # Start with primary loss for training
 
-            current_total_val_loss += avg_val_loss_aux_raw * aux_loss_weight
-            log_epoch_summary[f"{model_name_log_prefix}/val/Aux_Raw_Loss"] = avg_val_loss_aux_raw
-            log_epoch_summary[f"{model_name_log_prefix}/val/Aux_Weighted_Loss"] = avg_val_loss_aux_raw * aux_loss_weight
-            log_epoch_summary[f"{model_name_log_prefix}/val/Total_Loss"] = current_total_val_loss
+        # Common flag to check if aux loss is active for current model type and configured
+        is_aux_active = aux_loss_fn and aux_loss_weight > 0 and \
+                        ((model_name_log_prefix == "JEPA" and use_aux_for_jepa) or \
+                         (model_name_log_prefix != "JEPA" and use_aux_for_enc_dec))
 
+        if is_aux_active:
+            if avg_epoch_train_loss_aux > 0 : # Only add if it was actually calculated
+                avg_total_train_loss += (avg_epoch_train_loss_aux * aux_loss_weight)
+                log_epoch_summary[f"{model_name_log_prefix}/train_epoch_avg/Aux_Raw_Loss"] = avg_epoch_train_loss_aux
+                log_epoch_summary[f"{model_name_log_prefix}/train_epoch_avg/Aux_Weighted_Loss"] = avg_epoch_train_loss_aux * aux_loss_weight
+
+
+            if avg_val_loss_aux_raw > 0 : # Only add if it was actually calculated
+                current_total_val_loss += avg_val_loss_aux_raw * aux_loss_weight
+                log_epoch_summary[f"{model_name_log_prefix}/val/Aux_Raw_Loss"] = avg_val_loss_aux_raw
+                log_epoch_summary[f"{model_name_log_prefix}/val/Aux_Weighted_Loss"] = avg_val_loss_aux_raw * aux_loss_weight
+
+        # Log total losses regardless of aux presence for consistent reporting structure
+        log_epoch_summary[f"{model_name_log_prefix}/train_epoch_avg/Total_Loss"] = avg_total_train_loss
+        log_epoch_summary[f"{model_name_log_prefix}/val/Total_Loss"] = current_total_val_loss
+        
         print(f"  {'Avg Train Loss':<22}: {avg_epoch_train_loss_primary:>8.4f} | {'Avg Val Loss':<22}: {avg_val_loss_primary:>8.4f}")
-        if model_name_log_prefix == "JEPA" and aux_loss_fn and aux_loss_weight > 0:
+        if is_aux_active and (avg_epoch_train_loss_aux > 0 or avg_val_loss_aux_raw > 0): # Print aux losses only if they are active and calculated
             print(f"  {'Avg Train Aux Loss':<22}: {avg_epoch_train_loss_aux:>8.4f} | {'Avg Val Aux Loss':<22}: {avg_val_loss_aux_raw:>8.4f}")
             print(f"  {'Avg Train Total Loss':<22}: {avg_total_train_loss:>8.4f} | {'Avg Val Total Loss':<22}: {current_total_val_loss:>8.4f}")
+        elif not is_aux_active : # If aux is not active, total loss is just primary loss, already printed effectively
+             print(f"  {'Avg Train Total Loss':<22}: {avg_total_train_loss:>8.4f} | {'Avg Val Total Loss':<22}: {current_total_val_loss:>8.4f}")
+
 
         if wandb_run:
             log_epoch_summary[f"{model_name_log_prefix}/epoch"] = epoch_num
