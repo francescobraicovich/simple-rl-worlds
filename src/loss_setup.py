@@ -11,7 +11,7 @@ def initialize_loss_functions(config, device, jepa_model_latent_dim=None):
     losses['mse'] = nn.MSELoss()
 
     # Auxiliary Loss Setup
-    aux_loss_config = config.get('auxiliary_loss', {})
+    aux_loss_config = config.get('models', {}).get('auxiliary_loss', {})
     aux_loss_type = aux_loss_config.get('type', 'vicreg').lower()
     aux_loss_weight = aux_loss_config.get('weight', 1.0) # Weight is used in training loop
     aux_loss_params_all = aux_loss_config.get('params', {})
@@ -42,9 +42,9 @@ def initialize_loss_functions(config, device, jepa_model_latent_dim=None):
         dino_params = aux_loss_params_all.get('dino', {})
         if jepa_model_latent_dim is None:
             # Try to get from config as a fallback, though passing it is preferred
-            jepa_model_latent_dim = config.get('latent_dim')
+            jepa_model_latent_dim = config.get('models', {}).get('shared_latent_dim')
             if jepa_model_latent_dim is None:
-                raise ValueError("jepa_model_latent_dim must be provided for DINO loss, or 'latent_dim' in config.")
+                raise ValueError("jepa_model_latent_dim must be provided for DINO loss, or 'models.shared_latent_dim' in config.")
 
         aux_fn = DINOLoss(
             out_dim=jepa_model_latent_dim,

@@ -14,17 +14,17 @@ from src.training_engine import run_training_epochs
 
 def main():
     # 1. Load Configuration
-    config = load_config(config_path='config.yaml')
+    config = load_config()
 
     # Initialize wandb
-    wandb_config = config.get('wandb', {})
+    wandb_cfg = config.get('wandb', {}) # wandb_config is a bit generic
     wandb_run = None
-    if wandb_config.get('enabled', False):
+    if wandb_cfg.get('enabled', False):
         try:
             wandb_run = wandb.init(
-                project=wandb_config.get('project'),
-                entity=wandb_config.get('entity'),
-                name=f"{wandb_config.get('run_name_prefix', 'exp')}-{time.strftime('%Y%m%d-%H%M%S')}",
+                project=wandb_cfg.get('project'),
+                entity=wandb_cfg.get('entity'),
+                name=f"{wandb_cfg.get('run_name_prefix', 'exp')}-{time.strftime('%Y%m%d-%H%M%S')}",
                 config=config  # Log the entire experiment config
             )
             print("Weights & Biases initialized successfully.")
@@ -42,8 +42,9 @@ def main():
     )
     print(f"Using device: {device}")
 
-    model_dir = config.get('model_dir', 'trained_models/')
-    dataset_dir = config.get('dataset_dir', 'datasets/')
+    # Get directories from the new config structure
+    model_dir = config.get('model_loading', {}).get('dir', 'trained_models/')
+    dataset_dir = config.get('data', {}).get('dataset', {}).get('dir', 'datasets/')
     os.makedirs(model_dir, exist_ok=True)
     os.makedirs(dataset_dir, exist_ok=True)
     print(f"Ensured model directory exists: {model_dir}")
@@ -51,11 +52,14 @@ def main():
 
     # 3. Get Environment Details
     print("Fetching environment details...")
-    action_dim, action_type, observation_space = get_env_details(config['environment_name'])
+    env_config = config.get('environment', {})
+    action_dim, action_type, observation_space = get_env_details(env_config.get('name')) # Updated
 
     # 4. Prepare Dataloaders
-    early_stopping_config = config.get('early_stopping', {})
-    validation_split = early_stopping_config.get('validation_split', 0.2)
+    data_config = config.get('data', {})
+    validation_split = data_config.get('validation_split', 0.2) # Updated
+    # The prepare_dataloaders function itself will need to be updated to use the new config structure.
+    # For now, we pass the main config, assuming prepare_dataloaders will handle the new structure.
     dataloaders_map = {}
     train_dataloader, val_dataloader = prepare_dataloaders(config, validation_split)
     if train_dataloader is None:
@@ -66,18 +70,20 @@ def main():
         dataloaders_map['val'] = val_dataloader
 
     # 5. Initialize Models
-    image_h_w = config['image_size']
-    input_channels = config.get('input_channels', 3)
+    image_h_w = env_config.get('image_size') # Updated
+    input_channels = env_config.get('input_channels', 3) # Updated
+    # initialize_models will also need to be updated to use the new config structure.
     models_map = initialize_models(config, action_dim, device, image_h_w, input_channels)
 
     # --- Model Loading Logic ---
-    load_model_path = config.get('load_model_path', '')
-    model_type_to_load = config.get('model_type_to_load', 'std_enc_dec') # e.g., 'std_enc_dec', 'jepa'
+    model_loading_config = config.get('model_loading', {})
+    load_model_path = model_loading_config.get('load_path', '') # Updated
+    model_type_to_load = model_loading_config.get('model_type_to_load', 'std_enc_dec') # Updated
 
     std_enc_dec_loaded_successfully = False
     jepa_model_loaded_successfully = False
 
-    if load_model_path:
+    if load_model_path: # This path is relative to model_loading.dir
         full_model_load_path = os.path.join(model_dir, load_model_path)
         if os.path.exists(full_model_load_path):
             print(f"Attempting to load pre-trained model from: {full_model_load_path}")
@@ -90,7 +96,7 @@ def main():
                     models_map['jepa'].load_state_dict(torch.load(full_model_load_path, map_location=device))
                     print(f"Loaded JEPA model from {full_model_load_path}")
                     jepa_model_loaded_successfully = True
-                # Add other model types here if they can be loaded independently via 'load_model_path'
+                # Add other model types here
                 else:
                     print(f"Warning: Model type '{model_type_to_load}' specified for loading, but it's either not configured or not supported by this loading block.")
             except Exception as e:
@@ -98,77 +104,80 @@ def main():
         else:
             print(f"Warning: Specified model path '{full_model_load_path}' not found. Proceeding with default initialization(s).")
     else:
-        print("No pre-trained model path specified in 'load_model_path'. Models will be initialized from scratch or use their default initialization.")
+        print("No pre-trained model path specified in 'model_loading.load_path'. Models will be initialized from scratch or use their default initialization.")
     # --- End of Model Loading Logic ---
 
     std_enc_dec = models_map.get('std_enc_dec')
     jepa_model = models_map.get('jepa')
 
+    # Accessing auxiliary_loss config from the new structure
     jepa_model_latent_dim_for_dino = None
-    if jepa_model and config.get('auxiliary_loss', {}).get('type') == 'dino':
-        jepa_model_latent_dim_for_dino = jepa_model.latent_dim
+    aux_loss_config = config.get('models', {}).get('auxiliary_loss', {})
+    if jepa_model and aux_loss_config.get('type') == 'dino': # Updated
+        # Assuming jepa_model.latent_dim is the correct attribute to access
+        # This part of the logic remains similar, just the config access changes
+        jepa_model_latent_dim_for_dino = config.get('models', {}).get('shared_latent_dim')
 
+
+    # initialize_loss_functions and initialize_optimizers will also need updates for the new config structure.
     losses_map = initialize_loss_functions(config, device, jepa_model_latent_dim=jepa_model_latent_dim_for_dino)
     optimizers_map = initialize_optimizers(models_map, config)
 
     # 8. Run Training Epochs
+    # run_training_epochs will need to be updated to use the new config structure.
     training_results = run_training_epochs( # Store results
         models_map=models_map,
         optimizers_map=optimizers_map,
         losses_map=losses_map,
         dataloaders_map=dataloaders_map,
         device=device,
-        config=config,
+        config=config, # Pass the main config, function needs internal adaptation
         action_dim=action_dim,
         action_type=action_type,
-        image_h_w=image_h_w,
-        input_channels=input_channels,
-        std_enc_dec_loaded_successfully=std_enc_dec_loaded_successfully, # Pass flag
-        jepa_loaded_successfully=jepa_model_loaded_successfully,          # Pass flag
-        wandb_run=wandb_run # Pass wandb_run object
+        image_h_w=image_h_w, # This is env_config.get('image_size')
+        input_channels=input_channels, # This is env_config.get('input_channels')
+        std_enc_dec_loaded_successfully=std_enc_dec_loaded_successfully,
+        jepa_loaded_successfully=jepa_model_loaded_successfully,
+        wandb_run=wandb_run
     )
 
     # 9. Post-Training: Load best models and set to eval mode
-    # Checkpoint paths from config (used by training_engine for saving, here for loading)
-    # model_dir is available. training_results contains paths to best models saved by engine.
-
     print("\nLoading best models (if available) after training and setting to eval mode...")
 
     # Standard Encoder/Decoder
-    if std_enc_dec: # Check if model was initialized
+    if std_enc_dec:
         best_checkpoint_enc_dec_path = training_results.get("best_checkpoint_enc_dec")
         if best_checkpoint_enc_dec_path and os.path.exists(best_checkpoint_enc_dec_path):
             print(f"Loading best Encoder/Decoder model from {best_checkpoint_enc_dec_path}")
             std_enc_dec.load_state_dict(torch.load(best_checkpoint_enc_dec_path, map_location=device))
-        elif not std_enc_dec_loaded_successfully: # Only print if not initially loaded
+        elif not std_enc_dec_loaded_successfully:
              print(f"No best checkpoint found for Encoder/Decoder at expected path. Model remains in its last training state.")
         std_enc_dec.eval()
 
     # JEPA Model
-    if jepa_model: # Check if model was initialized
+    if jepa_model:
         best_checkpoint_jepa_path = training_results.get("best_checkpoint_jepa")
         if best_checkpoint_jepa_path and os.path.exists(best_checkpoint_jepa_path):
             print(f"Loading best JEPA model from {best_checkpoint_jepa_path}")
             jepa_model.load_state_dict(torch.load(best_checkpoint_jepa_path, map_location=device))
-        elif not jepa_model_loaded_successfully: # Only print if not initially loaded
+        elif not jepa_model_loaded_successfully:
             print(f"No best checkpoint found for JEPA at expected path. Model remains in its last training state.")
         jepa_model.eval()
 
     # JEPA State Decoder
     jepa_decoder = models_map.get('jepa_decoder')
-    jepa_decoder_training_config = config.get('jepa_decoder_training', {})
+    # Accessing jepa_decoder_training config from the new structure
+    jepa_decoder_training_config = config.get('models', {}).get('jepa', {}).get('decoder_training', {}) # Updated
     if jepa_decoder and jepa_decoder_training_config.get('enabled', False):
-        # Path to best decoder model is now returned by run_training_epochs
         best_checkpoint_jepa_decoder_path = training_results.get("best_checkpoint_jepa_decoder")
         print(f"Attempting to load best JEPA State Decoder (if available) after training...")
         if best_checkpoint_jepa_decoder_path and os.path.exists(best_checkpoint_jepa_decoder_path):
             print(f"Loading best JEPA State Decoder model from {best_checkpoint_jepa_decoder_path}")
             jepa_decoder.load_state_dict(torch.load(best_checkpoint_jepa_decoder_path, map_location=device))
         else:
-            # This message is important if decoder training was enabled but no checkpoint was saved/found
             print(f"No best checkpoint found for JEPA State Decoder at expected path. Model remains in its last training state (if any training occurred).")
         jepa_decoder.eval()
-    elif jepa_decoder : # Decoder exists but was not enabled for training
+    elif jepa_decoder :
         print("JEPA State Decoder was initialized but not enabled for training. Setting to eval mode.")
         jepa_decoder.eval()
 
@@ -181,7 +190,7 @@ def main():
         models_map['reward_mlp_jepa'].eval()
         print("JEPA Reward MLP set to eval mode.")
 
-    if losses_map.get('aux_fn') and hasattr(losses_map['aux_fn'], 'eval'):
+    if losses_map.get('aux_fn') and hasattr(losses_map['aux_fn'], 'eval'): # DINO loss needs eval mode
         losses_map['aux_fn'].eval()
         print("Auxiliary loss function (if DINO) set to eval mode.")
 
