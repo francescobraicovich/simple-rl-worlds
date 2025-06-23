@@ -65,8 +65,10 @@ def run_training_epochs(
     val_dataloader = dataloaders_map.get('val')
 
     # Configs
-    early_stopping_config = config.get('early_stopping', {})
-    model_dir = config.get('model_dir', 'trained_models/')
+    training_config = config.get('training', {})
+    early_stopping_config = training_config.get('early_stopping', {})
+    model_loading_config = config.get('model_loading', {})
+    model_dir = model_loading_config.get('dir', 'trained_models/')
     patience = early_stopping_config.get('patience', 10)
     delta = early_stopping_config.get('delta', 0.001)
 
@@ -74,11 +76,12 @@ def run_training_epochs(
     checkpoint_path_enc_dec = os.path.join(model_dir, early_stopping_config.get('checkpoint_path_enc_dec', 'best_encoder_decoder.pth'))
     checkpoint_path_jepa = os.path.join(model_dir, early_stopping_config.get('checkpoint_path_jepa', 'best_jepa.pth'))
 
-    enc_dec_mlp_config = config.get('reward_predictors', {}).get('encoder_decoder_reward_mlp', {})
-    jepa_mlp_config = config.get('reward_predictors', {}).get('jepa_reward_mlp', {})
+    models_config = config.get('models', {})
+    enc_dec_mlp_config = models_config.get('reward_predictors', {}).get('encoder_decoder_reward_mlp', {})
+    jepa_mlp_config = models_config.get('reward_predictors', {}).get('jepa_reward_mlp', {})
 
-    num_epochs = config.get('num_epochs', 10)
-    log_interval = config.get('log_interval', 50)
+    num_epochs = training_config.get('num_epochs', 10)
+    log_interval = training_config.get('log_interval', 50)
 
     # Define custom x-axes for wandb logging
     if wandb_run:
@@ -137,7 +140,7 @@ def run_training_epochs(
     }
 
     # Handle Skip Training Flags
-    training_options = config.get('training_options', {})
+    training_options = training_config.get('options', {})
     skip_std_enc_dec_opt = training_options.get('skip_std_enc_dec_training_if_loaded', False)
     skip_jepa_opt = training_options.get('skip_jepa_training_if_loaded', False)
 
@@ -259,7 +262,7 @@ def run_training_epochs(
     # potentially best JEPA model loaded above.
     # --- JEPA State Decoder Training ---
     final_checkpoint_path_jepa_decoder = None
-    jepa_decoder_training_config = config.get('jepa_decoder_training', {})
+    jepa_decoder_training_config = models_config.get('jepa', {}).get('decoder_training', {})
 
     if (jepa_decoder and optimizer_jepa_decoder and jepa_model and
         jepa_decoder_training_config.get('enabled', False) and train_dataloader):
