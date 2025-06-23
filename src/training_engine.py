@@ -61,6 +61,11 @@ def run_training_epochs(
     aux_loss_name = losses_map.get('aux_name', "None")
     aux_loss_weight = losses_map.get('aux_weight', 0.0)
 
+    # Get auxiliary loss usage flags from config
+    aux_loss_config = config.get('models', {}).get('auxiliary_loss', {})
+    use_aux_for_jepa = aux_loss_config.get('use_for_jepa', False) # Default to False if not specified
+    use_aux_for_enc_dec = aux_loss_config.get('use_for_enc_dec', False) # Default to False
+
     train_dataloader = dataloaders_map['train']
     val_dataloader = dataloaders_map.get('val')
 
@@ -159,8 +164,13 @@ def run_training_epochs(
             print(f"Standard Encoder/Decoder: Running training and validation for (Epoch {epoch+1})...")
             early_stopping_state_enc_dec, _, _ = train_validate_model_epoch(
                 model=std_enc_dec, optimizer=optimizer_std_enc_dec, train_dataloader=train_dataloader,
-                val_dataloader=val_dataloader, loss_fn=mse_loss_fn, aux_loss_fn=None, aux_loss_name="N/A",
-                aux_loss_weight=0, device=device, epoch_num=epoch + 1, log_interval=log_interval,
+                val_dataloader=val_dataloader, loss_fn=mse_loss_fn, 
+                aux_loss_fn=aux_loss_fn, # Pass the general aux_loss_fn
+                aux_loss_name=aux_loss_name, # Pass its name
+                aux_loss_weight=aux_loss_weight, # Pass its weight
+                use_aux_for_jepa=False, # Not a JEPA model
+                use_aux_for_enc_dec=use_aux_for_enc_dec, # Use flag from config
+                device=device, epoch_num=epoch + 1, log_interval=log_interval,
                 action_dim=action_dim, action_type=action_type, early_stopping_state=early_stopping_state_enc_dec,
                 checkpoint_path=early_stopping_state_enc_dec['checkpoint_path'], model_name_log_prefix="StdEncDec",
                 wandb_run=wandb_run
@@ -178,9 +188,14 @@ def run_training_epochs(
             update_fn = getattr(jepa_model, 'perform_ema_update', None)
             early_stopping_state_jepa, _, _ = train_validate_model_epoch(
                 model=jepa_model, optimizer=optimizer_jepa, train_dataloader=train_dataloader,
-                val_dataloader=val_dataloader, loss_fn=mse_loss_fn, aux_loss_fn=aux_loss_fn,
-                aux_loss_name=aux_loss_name, aux_loss_weight=aux_loss_weight, device=device,
-                epoch_num=epoch + 1, log_interval=log_interval, action_dim=action_dim, action_type=action_type,
+                val_dataloader=val_dataloader, loss_fn=mse_loss_fn, 
+                aux_loss_fn=aux_loss_fn, # Pass the general aux_loss_fn
+                aux_loss_name=aux_loss_name, # Pass its name
+                aux_loss_weight=aux_loss_weight, # Pass its weight
+                use_aux_for_jepa=use_aux_for_jepa, # Use flag from config
+                use_aux_for_enc_dec=False, # Not an Encoder-Decoder model in this context
+                device=device, epoch_num=epoch + 1, log_interval=log_interval, 
+                action_dim=action_dim, action_type=action_type,
                 early_stopping_state=early_stopping_state_jepa, checkpoint_path=early_stopping_state_jepa['checkpoint_path'],
                 model_name_log_prefix="JEPA", wandb_run=wandb_run,
                 update_target_fn=update_fn
