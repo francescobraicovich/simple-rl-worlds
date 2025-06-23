@@ -10,12 +10,12 @@ environment:
 # --- Data Collection & Dataset Management ---
 data:
   collection:
-    num_episodes: 5 # Number of episodes to collect for the dataset
+    num_episodes: 150 # Number of episodes to collect for the dataset
     max_steps_per_episode: 600 # Max steps per episode during data collection
   dataset:
     dir: "datasets/"
-    load_path: "" # empty string means don't load, otherwise it's a path relative to dataset.dir
-    filename: "car_racing_v3_v2.pkl"
+    load_path: ".pkl" # empty string means don't load, otherwise it's a path relative to dataset.dir
+    filename: "car_racing_v3_action_rep_6.pkl"
   validation_split: 0.2 # Proportion of data to use for validation (moved from early_stopping)
 
 # --- Model Loading Configuration ---
