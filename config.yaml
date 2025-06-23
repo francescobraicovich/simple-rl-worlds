@@ -138,6 +138,8 @@ models:
 
   auxiliary_loss: # Configuration for auxiliary losses like VICReg, Barlow Twins, DINO
     type: "vicreg"  # Options: "vicreg", "barlow_twins", "dino"
+    use_for_jepa: true # Whether to use this auxiliary loss for JEPA training
+    use_for_enc_dec: true # Whether to use this auxiliary loss for Encoder-Decoder training
     weight: 3.0     # General weight for the chosen auxiliary loss
     params:
       vicreg:
