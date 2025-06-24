@@ -51,7 +51,7 @@ def main():
     print(f"Ensured dataset directory exists: {dataset_dir}")
 
     # 3. Get Environment Details
-    print("Fetching environment details...")
+    print("\nFetching environment details...")
     env_config = config.get('environment', {})
     action_dim, action_type, observation_space = get_env_details(env_config.get('name')) # Updated
 
