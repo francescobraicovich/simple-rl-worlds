@@ -34,6 +34,7 @@ def calculate_larp_input_dim_enc_dec(config, encoder_decoder_variant, image_h_w,
     # Base dimension: encoded_s_t + predicted_s_t_plus_1_flat + action_embedding
     base_dim = shared_latent_dim + action_emb_dim
 
+
     if encoder_decoder_variant == 'jepa_style':
         # For JEPAStyle, add intermediate features from the predictor module.
         # The predictor module is part of the JEPAStateDecoder.
@@ -44,11 +45,13 @@ def calculate_larp_input_dim_enc_dec(config, encoder_decoder_variant, image_h_w,
         # Let's assume this predictor's output dimension is 'input_latent_dim' of the jepa_state_decoder_arch
         # or defaults to shared_latent_dim if not specified.
         predictor_output_dim = jepa_state_decoder_arch_config.get('input_latent_dim', shared_latent_dim)
-        print(f'Shared latent dimension: {shared_latent_dim}')
-        print(f'JEPAStyle action embedding dimension: {action_emb_dim}')
-        print(f'JEPAStyle intermediate predictor features dimension: {predictor_output_dim}')
-        print(f'JEPAStyle LARP input dimension: {base_dim + predictor_output_dim}')
         return base_dim + predictor_output_dim
+    
+    else:
+        raise Warning("If encoder_decoder_variant is not 'jepa_style', the look-ahead reward predictor\n\
+                       (LARP) will not be able to use the intermediate features from the predictor module.\n\
+                       This makes LARP equivalent to a standard reward predictor.\n\
+                       If this is not intended, please set encoder_decoder_variant to 'jepa_style'.")
 
     return base_dim
 
@@ -64,9 +67,8 @@ def calculate_larp_input_dim_jepa(config):
         int: The calculated input dimension for the LARP model.
     """
     models_config = config.get('models', {})
-    shared_latent_dim = models_config.get('shared_latent_dim', 128)
+    shared_latent_dim = models_config.get('shared_latent_dim')
 
-    jepa_config = models_config.get('jepa', {})
     std_enc_dec_config = models_config.get('standard_encoder_decoder', {})
     # Action embedding dimension from std_enc_dec_config
     action_emb_dim = std_enc_dec_config.get('action_emb_dim', shared_latent_dim) # Default to shared_latent_dim if not specified
@@ -75,7 +77,4 @@ def calculate_larp_input_dim_jepa(config):
     # - encoded_s_t: shared_latent_dim (from online encoder)
     # - predicted_latent_s_t_plus_1: shared_latent_dim (output of JEPA's predictor)
     # - action_embedding: action_emb_dim
-    print(f'Shared latent dimension: {shared_latent_dim}')
-    print(f'JEPA action embedding dimension: {action_emb_dim}')
-    print(f'JEPA LARP input dimension: {shared_latent_dim + shared_latent_dim + action_emb_dim}')
     return shared_latent_dim + shared_latent_dim + action_emb_dim
