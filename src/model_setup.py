@@ -39,28 +39,94 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
 
     print(f"Initializing Standard Encoder-Decoder Model with {encoder_type.upper()} encoder...")
     std_enc_dec_config = models_config.get('standard_encoder_decoder', {})
-    std_enc_dec = StandardEncoderDecoder(
-        image_size=image_h_w,
-        patch_size=global_patch_size,
-        input_channels=input_channels,
-        action_dim=action_dim,
-        action_emb_dim=std_enc_dec_config.get('action_emb_dim', shared_latent_dim),
-        latent_dim=shared_latent_dim,
-        decoder_dim=std_enc_dec_config.get('decoder_dim', 128),
-        decoder_depth=std_enc_dec_config.get('decoder_depth', 3),
-        decoder_heads=std_enc_dec_config.get('decoder_heads', 6),
-        decoder_mlp_dim=std_enc_dec_config.get('decoder_mlp_dim', 256),
-        output_channels=input_channels,
-        output_image_size=image_h_w if isinstance(image_h_w, tuple) else (image_h_w, image_h_w),
-        decoder_dropout=std_enc_dec_config.get('decoder_dropout', 0.0),
-        encoder_type=encoder_type,
-        encoder_params=specific_encoder_params,
-        decoder_patch_size=std_enc_dec_config.get('decoder_patch_size', global_patch_size)
-    ).to(device)
-    models['std_enc_dec'] = std_enc_dec
+    # Read the variant from the config
+    encoder_decoder_variant = std_enc_dec_config.get('variant', 'standard')
+
+    jepa_config = models_config.get('jepa', {}) # Used by both variants for some params
+    jepa_state_decoder_arch_config = models_config.get('jepa_state_decoder_arch', {}) # Used by jepa_style
+
+    if encoder_decoder_variant == 'jepa_style':
+        print(f"Selected Encoder-Decoder Variant: JEPA-Style with {encoder_type.upper()} encoder.")
+        # Parameters for EncoderDecoderJEPAStyle, sourcing from various config sections as per comments in config.yaml
+        # Encoder params are already prepared (encoder_type, specific_encoder_params, shared_latent_dim)
+        # Action embedding dim from standard_encoder_decoder config (convention)
+        action_emb_dim_jepa_style = std_enc_dec_config.get('action_emb_dim', shared_latent_dim)
+        
+        # Predictor params from jepa config
+        predictor_hidden_dim_jepa_style = jepa_config.get('predictor_hidden_dim', 256)
+        predictor_dropout_rate_jepa_style = jepa_config.get('predictor_dropout_rate', 0.0)
+        # Predictor output_dim for enc_dec_jepa_style is the input_latent_dim of its internal JEPAStateDecoder
+        # This comes from jepa_state_decoder_arch.input_latent_dim
+        predictor_output_dim_jepa_style = jepa_state_decoder_arch_config.get('input_latent_dim', shared_latent_dim)
+
+        # Internal JEPAStateDecoder architectural params from jepa_state_decoder_arch config
+        # Note: input_latent_dim for this internal decoder is predictor_output_dim_jepa_style
+        jepa_decoder_dim_internal = jepa_state_decoder_arch_config.get('decoder_dim', 128)
+        jepa_decoder_depth_internal = jepa_state_decoder_arch_config.get('decoder_depth', 4)
+        jepa_decoder_heads_internal = jepa_state_decoder_arch_config.get('decoder_heads', 4)
+        jepa_decoder_mlp_dim_internal = jepa_state_decoder_arch_config.get('decoder_mlp_dim', 512)
+        jepa_decoder_dropout_internal = jepa_state_decoder_arch_config.get('decoder_dropout', 0.2)
+        # Decoder patch size: from jepa_state_decoder_arch, fallback to global_patch_size
+        jepa_decoder_patch_size_internal = jepa_state_decoder_arch_config.get('decoder_patch_size', global_patch_size)
+
+        # Output channels and image size for the final output (from environment config, passed as args)
+        # output_channels_internal = input_channels (function arg)
+        # output_image_size_internal = image_h_w (function arg)
+
+        std_enc_dec = EncoderDecoderJEPAStyle(
+            image_size=image_h_w,
+            patch_size=global_patch_size, # For ViT encoder and default for decoder patch size
+            input_channels=input_channels,
+            action_dim=action_dim,
+            action_emb_dim=action_emb_dim_jepa_style,
+            latent_dim=shared_latent_dim, # Encoder output latent dim
+
+            predictor_hidden_dim=predictor_hidden_dim_jepa_style,
+            predictor_output_dim=predictor_output_dim_jepa_style, # This is input to internal JEPAStateDecoder
+            predictor_dropout_rate=predictor_dropout_rate_jepa_style,
+
+            # Internal JEPAStateDecoder architecture params
+            jepa_decoder_dim=jepa_decoder_dim_internal,
+            jepa_decoder_depth=jepa_decoder_depth_internal,
+            jepa_decoder_heads=jepa_decoder_heads_internal,
+            jepa_decoder_mlp_dim=jepa_decoder_mlp_dim_internal,
+            jepa_decoder_dropout=jepa_decoder_dropout_internal,
+            jepa_decoder_patch_size=jepa_decoder_patch_size_internal,
+
+            output_channels=input_channels, # Final output channels
+            output_image_size=image_h_w if isinstance(image_h_w, tuple) else (image_h_w, image_h_w), # Final output image size
+
+            encoder_type=encoder_type,
+            encoder_params=specific_encoder_params
+        ).to(device)
+
+    elif encoder_decoder_variant == 'standard':
+        print(f"Selected Encoder-Decoder Variant: Standard with {encoder_type.upper()} encoder.")
+        std_enc_dec = StandardEncoderDecoder(
+            image_size=image_h_w,
+            patch_size=global_patch_size, # For ViT encoder and default for decoder patch size
+            input_channels=input_channels,
+            action_dim=action_dim,
+            action_emb_dim=std_enc_dec_config.get('action_emb_dim', shared_latent_dim),
+            latent_dim=shared_latent_dim,
+            decoder_dim=std_enc_dec_config.get('decoder_dim', 128),
+            decoder_depth=std_enc_dec_config.get('decoder_depth', 3),
+            decoder_heads=std_enc_dec_config.get('decoder_heads', 6),
+            decoder_mlp_dim=std_enc_dec_config.get('decoder_mlp_dim', 256),
+            output_channels=input_channels,
+            output_image_size=image_h_w if isinstance(image_h_w, tuple) else (image_h_w, image_h_w),
+            decoder_dropout=std_enc_dec_config.get('decoder_dropout', 0.0),
+            encoder_type=encoder_type,
+            encoder_params=specific_encoder_params,
+            decoder_patch_size=std_enc_dec_config.get('decoder_patch_size', global_patch_size)
+        ).to(device)
+    else:
+        raise ValueError(f"Unknown encoder_decoder_variant: {encoder_decoder_variant} in config.yaml")
+
+    models['std_enc_dec'] = std_enc_dec # Store the selected model
 
     print(f"Initializing JEPA Model with {encoder_type.upper()} encoder...")
-    jepa_config = models_config.get('jepa', {})
+    # jepa_config already fetched
     jepa_model = JEPA(
         image_size=image_h_w,
         patch_size=global_patch_size,
@@ -138,30 +204,10 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
         models['jepa_decoder'] = None
         print("JEPA State Decoder is disabled in the configuration.")
 
-    # Encoder-Decoder JEPA-Style Model (for fair JEPA comparison)
-    print(f"Initializing Encoder-Decoder JEPA-Style Model with {encoder_type.upper()} encoder...")
-    enc_dec_jepa_style_config = models_config.get('enc_dec_jepa_style', {})
-    enc_dec_jepa_style = EncoderDecoderJEPAStyle(
-        image_size=image_h_w,
-        patch_size=global_patch_size,
-        input_channels=input_channels,
-        action_dim=action_dim,
-        action_emb_dim=std_enc_dec_config.get('action_emb_dim', shared_latent_dim),
-        latent_dim=shared_latent_dim,
-        predictor_hidden_dim=enc_dec_jepa_style_config.get('predictor_hidden_dim', 256),
-        predictor_output_dim=enc_dec_jepa_style_config.get('predictor_output_dim', std_enc_dec_config.get('decoder_dim', 128)),
-        predictor_dropout_rate=enc_dec_jepa_style_config.get('predictor_dropout_rate', 0.0),
-        decoder_dim=std_enc_dec_config.get('decoder_dim', 128),
-        decoder_depth=std_enc_dec_config.get('decoder_depth', 3),
-        decoder_heads=std_enc_dec_config.get('decoder_heads', 6),
-        decoder_mlp_dim=std_enc_dec_config.get('decoder_mlp_dim', 256),
-        output_channels=input_channels,
-        output_image_size=image_h_w if isinstance(image_h_w, tuple) else (image_h_w, image_h_w),
-        decoder_dropout=std_enc_dec_config.get('decoder_dropout', 0.0),
-        encoder_type=encoder_type,
-        encoder_params=specific_encoder_params,
-        decoder_patch_size=std_enc_dec_config.get('decoder_patch_size', global_patch_size)
-    ).to(device)
-    models['enc_dec_jepa_style'] = enc_dec_jepa_style
+    # The EncoderDecoderJEPAStyle model is now initialized conditionally above,
+    # and stored in models['std_enc_dec'] if selected.
+    # The old models['enc_dec_jepa_style'] key is no longer used for this purpose.
+    # If a separate instance for comparison is ever needed, it would be re-added here,
+    # but for now, the logic handles selecting one or the other as the primary 'std_enc_dec'.
 
     return models
