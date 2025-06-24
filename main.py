@@ -49,13 +49,16 @@ def main():
     os.makedirs(dataset_dir, exist_ok=True)
     print(f"Ensured model directory exists: {model_dir}")
     print(f"Ensured dataset directory exists: {dataset_dir}")
+    print('--' * 40)
 
     # 3. Get Environment Details
     print("\nFetching environment details...")
     env_config = config.get('environment', {})
     action_dim, action_type, observation_space = get_env_details(env_config.get('name')) # Updated
+    print('--' * 40)
 
     # 4. Prepare Dataloaders
+    print("\nPreparing dataloaders...")
     data_config = config.get('data', {})
     validation_split = data_config.get('validation_split', 0.2) # Updated
     # The prepare_dataloaders function itself will need to be updated to use the new config structure.
@@ -68,6 +71,7 @@ def main():
     dataloaders_map['train'] = train_dataloader
     if val_dataloader:
         dataloaders_map['val'] = val_dataloader
+    print('--' * 40)
 
     # 5. Initialize Models
     image_h_w = env_config.get('image_size') # Updated
@@ -76,6 +80,7 @@ def main():
     models_map = initialize_models(config, action_dim, device, image_h_w, input_channels)
 
     # --- Model Loading Logic ---
+    print("\nInitializing models and loading pre-trained weights if specified...")
     model_loading_config = config.get('model_loading', {})
     load_model_path = model_loading_config.get('load_path', '') # Updated
     model_type_to_load = model_loading_config.get('model_type_to_load', 'std_enc_dec') # Updated

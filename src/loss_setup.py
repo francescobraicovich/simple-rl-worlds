@@ -16,7 +16,7 @@ def initialize_loss_functions(config, device, jepa_model_latent_dim=None):
     aux_loss_weight = aux_loss_config.get('weight', 1.0) # Weight is used in training loop
     aux_loss_params_all = aux_loss_config.get('params', {})
 
-    print(f"Initializing auxiliary loss: Type={aux_loss_type}, Weight={aux_loss_weight}")
+    #print(f"Initializing auxiliary loss: Type={aux_loss_type}, Weight={aux_loss_weight}")
 
     aux_fn = None
     aux_name = "None"

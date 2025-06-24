@@ -20,7 +20,7 @@ def initialize_optimizers(models_map, config): # Renamed models to models_map fo
             lr=general_lr
         )
         optimizers['std_enc_dec'] = optimizer_std_enc_dec
-        print(f"Standard Encoder-Decoder optimizer initialized with LR: {general_lr}")
+        #print(f"Standard Encoder-Decoder optimizer initialized with LR: {general_lr}")
 
     # Optimizer for JEPA
     jepa_model = models_map.get('jepa')
@@ -32,7 +32,7 @@ def initialize_optimizers(models_map, config): # Renamed models to models_map fo
             lr=lr_jepa
         )
         optimizers['jepa'] = optimizer_jepa
-        print(f"JEPA optimizer initialized with LR: {lr_jepa}")
+        #print(f"JEPA optimizer initialized with LR: {lr_jepa}")
 
     # Optimizer for Encoder-Decoder Reward MLP (if enabled and model exists)
     reward_pred_config = models_config.get('reward_predictors', {})
@@ -45,7 +45,7 @@ def initialize_optimizers(models_map, config): # Renamed models to models_map fo
             lr=lr_enc_dec_reward
         )
         optimizers['reward_mlp_enc_dec'] = optimizer_reward_mlp_enc_dec
-        print(f"Encoder-Decoder Reward MLP optimizer initialized with LR: {lr_enc_dec_reward}")
+        #print(f"Encoder-Decoder Reward MLP optimizer initialized with LR: {lr_enc_dec_reward}")
     else:
         optimizers['reward_mlp_enc_dec'] = None
 
@@ -59,7 +59,7 @@ def initialize_optimizers(models_map, config): # Renamed models to models_map fo
             lr=lr_jepa_reward
         )
         optimizers['reward_mlp_jepa'] = optimizer_reward_mlp_jepa
-        print(f"JEPA Reward MLP optimizer initialized with LR: {lr_jepa_reward}")
+        #print(f"JEPA Reward MLP optimizer initialized with LR: {lr_jepa_reward}")
     else:
         optimizers['reward_mlp_jepa'] = None
 
@@ -76,7 +76,7 @@ def initialize_optimizers(models_map, config): # Renamed models to models_map fo
             lr=learning_rate_jepa_decoder
         )
         optimizers['jepa_decoder'] = optimizer_jepa_decoder
-        print(f"JEPA State Decoder optimizer initialized with LR: {learning_rate_jepa_decoder}")
+        #print(f"JEPA State Decoder optimizer initialized with LR: {learning_rate_jepa_decoder}")
     else:
         optimizers['jepa_decoder'] = None
         # No message needed if decoder itself is None, model_setup would have printed it's disabled.
