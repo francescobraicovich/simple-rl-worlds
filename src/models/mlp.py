@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from src.utils.weight_init import initialize_weights
+from src.utils.weight_init import initialize_weights, print_num_parameters
 
 
 class MLPEncoder(nn.Module):
@@ -94,6 +94,42 @@ class MLPEncoder(nn.Module):
         latent_representation = self.mlp_net(x)  # (batch, latent_dim)
         return latent_representation
 
+class PredictorMLP(nn.Module):
+    def __init__(self,
+                 input_dim: int,
+                 hidden_dims: list[int],
+                 activation_fn_str: str = 'relu',
+                 use_batch_norm: bool = False,
+                 dropout_rate: float = 0.0):
+        super().__init__()
+        self.input_dim = input_dim
+        self.dropout_rate = dropout_rate
+        self.layers = nn.ModuleList()
+
+        if activation_fn_str == 'relu':
+            activation_fn = nn.ReLU()
+        elif activation_fn_str == 'gelu':
+            activation_fn = nn.GELU()
+        else:
+            raise ValueError(
+                f"Unsupported activation function: {activation_fn_str}")
+
+        current_dim = input_dim
+        for hidden_dim in hidden_dims:
+            self.layers.append(nn.Linear(current_dim, hidden_dim))
+            if use_batch_norm:
+                self.layers.append(nn.BatchNorm1d(hidden_dim))
+            self.layers.append(activation_fn)
+            if self.dropout_rate > 0:
+                self.layers.append(nn.Dropout(self.dropout_rate))
+            current_dim = hidden_dim
+
+        self.apply(initialize_weights)
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x  # (batch_size, 1)
 
 if __name__ == '__main__':
     # Example Usage:
