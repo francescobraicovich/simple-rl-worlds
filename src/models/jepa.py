@@ -6,7 +6,7 @@ import copy  # For deepcopying encoder for target network
 from .vit import ViT
 from .cnn import CNNEncoder
 from .mlp import MLPEncoder
-from src.utils.weight_init import initialize_weights
+from src.utils.weight_init import initialize_weights, count_parameters
 
 
 class JEPA(nn.Module):
@@ -120,6 +120,7 @@ class JEPA(nn.Module):
             "Predictor output dimension must match encoder latent dimension for JEPA loss."
 
         self.apply(initialize_weights)
+        print(f"JEPA initialized with {count_parameters(self):,} parameters.")
 
     def _create_target_encoder(self):
         return copy.deepcopy(self.online_encoder)
