@@ -158,6 +158,28 @@ models:
       learning_rate: 0.0003
       log_interval: 100
       dropout_rate: 0.2
+      early_stopping_patience: 15 # Added from problem description, though not in original file
+    larp: # Look-Ahead Reward Predictor configuration
+      encoder_decoder_larp:
+        enabled: true
+        hidden_dims: [512, 256, 128]
+        num_epochs: 20
+        activation: "relu"
+        use_batch_norm: false
+        learning_rate: 0.0003
+        log_interval: 100
+        dropout_rate: 0.2
+        early_stopping_patience: 15
+      jepa_larp:
+        enabled: true
+        hidden_dims: [512, 256, 128]
+        num_epochs: 20
+        activation: "relu"
+        use_batch_norm: false
+        learning_rate: 0.0003
+        log_interval: 100
+        dropout_rate: 0.2
+        early_stopping_patience: 15
 
   auxiliary_loss: # Configuration for auxiliary losses like VICReg, Barlow Twins, DINO
     type: "vicreg"  # Options: "vicreg", "barlow_twins", "dino"

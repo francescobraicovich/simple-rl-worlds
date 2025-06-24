@@ -195,6 +195,14 @@ def main():
         models_map['reward_mlp_jepa'].eval()
         print("JEPA Reward MLP set to eval mode.")
 
+    # LARP Models eval mode
+    if models_map.get('larp_enc_dec'):
+        models_map['larp_enc_dec'].eval()
+        print("Encoder-Decoder LARP set to eval mode.")
+    if models_map.get('larp_jepa'):
+        models_map['larp_jepa'].eval()
+        print("JEPA LARP set to eval mode.")
+
     if losses_map.get('aux_fn') and hasattr(losses_map['aux_fn'], 'eval'): # DINO loss needs eval mode
         losses_map['aux_fn'].eval()
         print("Auxiliary loss function (if DINO) set to eval mode.")

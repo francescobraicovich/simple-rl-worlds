@@ -81,4 +81,35 @@ def initialize_optimizers(models_map, config): # Renamed models to models_map fo
         optimizers['jepa_decoder'] = None
         # No message needed if decoder itself is None, model_setup would have printed it's disabled.
 
+    # --- Optimizers for LARP Models ---
+    larp_config_main = reward_pred_config.get('larp', {})
+
+    # Optimizer for Encoder-Decoder LARP
+    enc_dec_larp_config = larp_config_main.get('encoder_decoder_larp', {})
+    larp_enc_dec_model = models_map.get('larp_enc_dec')
+    if enc_dec_larp_config.get('enabled', False) and larp_enc_dec_model:
+        lr_larp_enc_dec = enc_dec_larp_config.get('learning_rate', general_lr) # Default to general_lr
+        optimizer_larp_enc_dec = optim.AdamW(
+            larp_enc_dec_model.parameters(),
+            lr=lr_larp_enc_dec
+        )
+        optimizers['larp_enc_dec'] = optimizer_larp_enc_dec
+        #print(f"Encoder-Decoder LARP optimizer initialized with LR: {lr_larp_enc_dec}")
+    else:
+        optimizers['larp_enc_dec'] = None
+
+    # Optimizer for JEPA LARP
+    jepa_larp_config = larp_config_main.get('jepa_larp', {})
+    larp_jepa_model = models_map.get('larp_jepa')
+    if jepa_larp_config.get('enabled', False) and larp_jepa_model:
+        lr_larp_jepa = jepa_larp_config.get('learning_rate', general_lr) # Default to general_lr
+        optimizer_larp_jepa = optim.AdamW(
+            larp_jepa_model.parameters(),
+            lr=lr_larp_jepa
+        )
+        optimizers['larp_jepa'] = optimizer_larp_jepa
+        #print(f"JEPA LARP optimizer initialized with LR: {lr_larp_jepa}")
+    else:
+        optimizers['larp_jepa'] = None
+
     return optimizers

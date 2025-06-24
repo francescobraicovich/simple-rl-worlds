@@ -26,6 +26,7 @@ import wandb # For wandb.Image
 from .training_loops.epoch_loop import train_validate_model_epoch
 from .training_loops.reward_predictor_loop import train_reward_mlp_epoch
 from .training_loops.jepa_decoder_loop import train_jepa_state_decoder
+from .training_loops.larp_training_loop import train_larp_epoch # Added for LARP
 
 # Note: Loss functions (mse_loss_fn, aux_loss_fn, aux_loss_name, aux_loss_weight)
 # will be passed in via the 'losses_map' dictionary.
@@ -49,12 +50,18 @@ def run_training_epochs(
     reward_mlp_enc_dec = models_map.get('reward_mlp_enc_dec')
     reward_mlp_jepa = models_map.get('reward_mlp_jepa')
     jepa_decoder = models_map.get('jepa_decoder')
+    # LARP Models
+    larp_enc_dec_model = models_map.get('larp_enc_dec')
+    larp_jepa_model = models_map.get('larp_jepa')
 
     optimizer_std_enc_dec = optimizers_map.get('std_enc_dec')
     optimizer_jepa = optimizers_map.get('jepa')
     optimizer_reward_mlp_enc_dec = optimizers_map.get('reward_mlp_enc_dec')
     optimizer_reward_mlp_jepa = optimizers_map.get('reward_mlp_jepa')
     optimizer_jepa_decoder = optimizers_map.get('jepa_decoder')
+    # LARP Optimizers
+    optimizer_larp_enc_dec = optimizers_map.get('larp_enc_dec')
+    optimizer_larp_jepa = optimizers_map.get('larp_jepa')
 
     mse_loss_fn = losses_map['mse']
     aux_loss_fn = losses_map.get('aux_fn')
@@ -127,7 +134,49 @@ def run_training_epochs(
         wandb_run.define_metric("JEPA_Decoder/train_epoch_avg/loss_mse_reconstruction", step_metric="JEPA_Decoder/epoch")
         wandb_run.define_metric("JEPA_Decoder/train_epoch_avg/loss_mse_diff", step_metric="JEPA_Decoder/epoch")
 
+        # Add WandB metrics for LARP
+        for model_prefix_larp in ["StdEncDec", "JEPA"]: # Using more descriptive internal var name
+            # LARP metrics (model_name_log_prefix in train_larp_epoch will be "LARP (Enc-Dec)" or "LARP (JEPA)")
+            # So wandb logs will be like "larp/LARP (Enc-Dec)/train/step"
+            # The "StdEncDec" and "JEPA" here are just for grouping in define_metric, actual log path comes from model_name_log_prefix
+
+            # The model_name_log_prefix passed to train_larp_epoch will include "LARP (...)"
+            # So, the actual logged names will be like:
+            # larp/LARP (Enc-Dec)/train/loss_step
+            # larp/LARP (Enc-Dec)/train/step
+            # larp/LARP (Enc-Dec)/train_epoch_avg/loss
+            # larp/LARP (Enc-Dec)/val_epoch_avg/loss
+            # larp/LARP (Enc-Dec)/epoch  (this will be current_epoch_main_training * num_epochs_larp + larp_epoch_inner)
+            # larp/LARP (Enc-Dec)/epoch_inner
+
+            # Define metrics based on how they are logged in train_larp_epoch
+            # Using a generic placeholder like "LARP_MODEL_TYPE" for the define_metric part
+            # The actual prefix "LARP (Enc-Dec)" or "LARP (JEPA)" will be used in wandb.log calls.
+            # To make define_metric effective, it should match the logged metric names.
+            # Let's use the actual prefixes that will be logged.
+
+            # For LARP (Enc-Dec)
+            wandb_run.define_metric("larp/LARP (Enc-Dec)/train/step")
+            wandb_run.define_metric("larp/LARP (Enc-Dec)/epoch") # This is the global LARP epoch step
+            wandb_run.define_metric("larp/LARP (Enc-Dec)/epoch_inner") # This is the inner epoch for a specific LARP training run
+            wandb_run.define_metric("larp/LARP (Enc-Dec)/epoch_progress_main")
+
+            wandb_run.define_metric("larp/LARP (Enc-Dec)/train/loss_step", step_metric="larp/LARP (Enc-Dec)/train/step")
+            wandb_run.define_metric("larp/LARP (Enc-Dec)/train_epoch_avg/loss", step_metric="larp/LARP (Enc-Dec)/epoch")
+            wandb_run.define_metric("larp/LARP (Enc-Dec)/val_epoch_avg/loss", step_metric="larp/LARP (Enc-Dec)/epoch")
+
+            # For LARP (JEPA)
+            wandb_run.define_metric("larp/LARP (JEPA)/train/step")
+            wandb_run.define_metric("larp/LARP (JEPA)/epoch")
+            wandb_run.define_metric("larp/LARP (JEPA)/epoch_inner")
+            wandb_run.define_metric("larp/LARP (JEPA)/epoch_progress_main")
+
+            wandb_run.define_metric("larp/LARP (JEPA)/train/loss_step", step_metric="larp/LARP (JEPA)/train/step")
+            wandb_run.define_metric("larp/LARP (JEPA)/train_epoch_avg/loss", step_metric="larp/LARP (JEPA)/epoch")
+            wandb_run.define_metric("larp/LARP (JEPA)/val_epoch_avg/loss", step_metric="larp/LARP (JEPA)/epoch")
+
     print(f"Starting training, main models for up to {num_epochs} epochs...")
+    current_main_epoch_for_larp = 0 # Variable to track current main epoch for LARP logging
 
     # Initialize early_stopping_state dictionaries
     early_stopping_state_enc_dec = {
@@ -158,6 +207,7 @@ def run_training_epochs(
         print("JEPA model training will be skipped as a pre-trained model was loaded and skip option is enabled.")
 
     for epoch in range(num_epochs):
+        current_main_epoch_for_larp = epoch + 1 # Update current main epoch
         print(f"\n--- Starting Epoch {epoch+1}/{num_epochs} ---")
 
         # --- Standard Encoder/Decoder Training ---
@@ -306,6 +356,75 @@ def run_training_epochs(
         elif not jepa_model: print("Main JEPA model (for embeddings) not available for JEPA State Decoder training.")
         elif not jepa_decoder_training_config.get('enabled', False): print("JEPA State Decoder training is disabled in config.")
         elif not train_dataloader: print("Train dataloader not available for JEPA State Decoder training.")
+
+    # --- LARP Training ---
+    # This happens after all main models, reward MLPs, and JEPA decoder are trained,
+    # using the best available checkpoints of the base models.
+
+    # Load best models again just to be certain, especially if other components might have altered them in-memory.
+    # This ensures LARP trains on the truly "best" versions of std_enc_dec and jepa_model.
+    if std_enc_dec and early_stopping_state_enc_dec['checkpoint_path'] and os.path.exists(early_stopping_state_enc_dec['checkpoint_path']):
+        print(f"Reloading best Standard Encoder/Decoder from {early_stopping_state_enc_dec['checkpoint_path']} for LARP training.")
+        std_enc_dec.load_state_dict(torch.load(early_stopping_state_enc_dec['checkpoint_path'], map_location=device))
+        std_enc_dec.eval() # Ensure it's in eval mode
+    if jepa_model and early_stopping_state_jepa['checkpoint_path'] and os.path.exists(early_stopping_state_jepa['checkpoint_path']):
+        print(f"Reloading best JEPA model from {early_stopping_state_jepa['checkpoint_path']} for LARP training.")
+        jepa_model.load_state_dict(torch.load(early_stopping_state_jepa['checkpoint_path'], map_location=device))
+        jepa_model.eval() # Ensure it's in eval mode
+
+    larp_main_config = models_config.get('reward_predictors', {}).get('larp', {})
+    enc_dec_larp_specific_config = larp_main_config.get('encoder_decoder_larp', {})
+    jepa_larp_specific_config = larp_main_config.get('jepa_larp', {})
+
+    # LARP for Encoder-Decoder
+    if (larp_enc_dec_model and enc_dec_larp_specific_config.get('enabled', False) and
+        optimizer_larp_enc_dec and std_enc_dec and train_dataloader):
+        print("\nStarting LARP (Standard Encoder/Decoder) training...")
+        train_larp_epoch(
+            larp_model=larp_enc_dec_model,
+            base_model=std_enc_dec, # Best loaded std_enc_dec
+            optimizer_larp=optimizer_larp_enc_dec,
+            train_dataloader=train_dataloader,
+            val_dataloader=val_dataloader,
+            loss_fn=mse_loss_fn, # Assuming MSE loss for rewards
+            device=device,
+            action_dim=action_dim,
+            action_type=action_type,
+            model_name_log_prefix="LARP (Enc-Dec)", # Matches wandb define_metric
+            num_epochs_larp=enc_dec_larp_specific_config.get('num_epochs', 1),
+            log_interval_larp=enc_dec_larp_specific_config.get('log_interval', log_interval),
+            early_stopping_patience=enc_dec_larp_specific_config.get('early_stopping_patience', 15),
+            is_jepa_base_model=False, # Base model is Encoder-Decoder type
+            wandb_run=wandb_run,
+            current_epoch_main_training=current_main_epoch_for_larp # Or a fixed value like num_epochs if LARP trains once after all main epochs
+        )
+    elif enc_dec_larp_specific_config.get('enabled', False):
+        print("LARP (Enc-Dec) training skipped due to missing components (model, optimizer, base_model, or dataloader).")
+
+    # LARP for JEPA
+    if (larp_jepa_model and jepa_larp_specific_config.get('enabled', False) and
+        optimizer_larp_jepa and jepa_model and train_dataloader):
+        print("\nStarting LARP (JEPA) training...")
+        train_larp_epoch(
+            larp_model=larp_jepa_model,
+            base_model=jepa_model, # Best loaded jepa_model
+            optimizer_larp=optimizer_larp_jepa,
+            train_dataloader=train_dataloader,
+            val_dataloader=val_dataloader,
+            loss_fn=mse_loss_fn, # Assuming MSE loss for rewards
+            device=device,
+            action_dim=action_dim,
+            action_type=action_type,
+            model_name_log_prefix="LARP (JEPA)", # Matches wandb define_metric
+            num_epochs_larp=jepa_larp_specific_config.get('num_epochs', 1),
+            log_interval_larp=jepa_larp_specific_config.get('log_interval', log_interval),
+            early_stopping_patience=jepa_larp_specific_config.get('early_stopping_patience', 15),
+            is_jepa_base_model=True, # Base model is JEPA type
+            wandb_run=wandb_run,
+            current_epoch_main_training=current_main_epoch_for_larp # Or a fixed value
+        )
+    elif jepa_larp_specific_config.get('enabled', False):
+        print("LARP (JEPA) training skipped due to missing components (model, optimizer, base_model, or dataloader).")
 
 
     print("\nAll training processes finished from training_engine.")
