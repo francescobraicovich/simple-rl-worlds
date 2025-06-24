@@ -57,6 +57,7 @@ def main():
     action_dim, action_type, observation_space = get_env_details(env_config.get('name')) # Updated
     print('--' * 40)
 
+
     # 4. Prepare Dataloaders
     print("\nPreparing dataloaders...")
     data_config = config.get('data', {})
@@ -73,14 +74,17 @@ def main():
         dataloaders_map['val'] = val_dataloader
     print('--' * 40)
 
+
     # 5. Initialize Models
     image_h_w = env_config.get('image_size') # Updated
     input_channels = env_config.get('input_channels', 3) # Updated
     # initialize_models will also need to be updated to use the new config structure.
     models_map = initialize_models(config, action_dim, device, image_h_w, input_channels)
+    print("--" * 40)
+    print('')
+
 
     # --- Model Loading Logic ---
-    print("\nInitializing models and loading pre-trained weights if specified...")
     model_loading_config = config.get('model_loading', {})
     load_model_path = model_loading_config.get('load_path', '') # Updated
     model_type_to_load = model_loading_config.get('model_type_to_load', 'std_enc_dec') # Updated
