@@ -3,9 +3,9 @@ import torch.nn as nn
 # Removed: from einops.layers.torch import Rearrange (will be in JEPAStateDecoder)
 from .vit import ViT
 from .cnn import CNNEncoder
-from .mlp import MLPEncoder
-from .jepa_state_decoder import JEPAStateDecoder # Import JEPAStateDecoder
-from src.utils.weight_init import initialize_weights, count_parameters
+from .mlp import MLPEncoder, PredictorMLP
+from .decoder import StateDecoder # Import JEPAStateDecoder
+from src.utils.weight_init import initialize_weights, print_num_parameters
 
 class EncoderDecoderJEPAStyle(nn.Module):
     """
@@ -24,7 +24,7 @@ class EncoderDecoderJEPAStyle(nn.Module):
                 latent_dim,  # Output dim of encoder
 
                 # Internal Predictor config (mirrors JEPA's predictor structure)
-                predictor_hidden_dim,
+                predictor_hidden_dims,
                 predictor_output_dim,  # This is input_latent_dim for the internal JEPAStateDecoder
                 # Config for the internal JEPAStateDecoder instance
                 jepa_decoder_dim,
@@ -95,33 +95,27 @@ class EncoderDecoderJEPAStyle(nn.Module):
             self.encoder = MLPEncoder(**mlp_params)
         else:
             raise ValueError(f"Unsupported encoder_type: {encoder_type}")
-
+        
         # Action embedding
         self.action_embedding = nn.Linear(action_dim, action_emb_dim)
 
         # JEPA-style predictor MLP (mimicking JEPA.predictor structure)
         predictor_input_actual_dim = latent_dim + action_emb_dim
-        predictor_layers = [
-            nn.Linear(predictor_input_actual_dim, predictor_hidden_dim),
-            nn.GELU()
-        ]
-        if predictor_dropout_rate > 0:
-            predictor_layers.append(nn.Dropout(predictor_dropout_rate))
-        predictor_layers.extend([
-            nn.Linear(predictor_hidden_dim, predictor_hidden_dim),
-            nn.GELU()
-        ])
-        if predictor_dropout_rate > 0:
-            predictor_layers.append(nn.Dropout(predictor_dropout_rate))
-        predictor_layers.append(nn.Linear(predictor_hidden_dim, predictor_output_dim))
-        self.predictor = nn.Sequential(*predictor_layers)
+            
+        self.predictor = PredictorMLP(
+            input_dim=predictor_input_actual_dim,
+            hidden_dims=predictor_hidden_dims,  # Two hidden layers
+            activation_fn_str='gelu',  # JEPA uses GELU
+            use_batch_norm=False,  # JEPA does not use batch norm in predictor
+            dropout_rate=predictor_dropout_rate
+        )
 
         # Instantiate JEPAStateDecoder
         _decoder_patch_size = jepa_decoder_patch_size if jepa_decoder_patch_size is not None else patch_size
         _output_image_size_tuple = output_image_size if isinstance(output_image_size, tuple) else (output_image_size, output_image_size)
 
 
-        self.decoder = JEPAStateDecoder(
+        self.decoder = StateDecoder(
             input_latent_dim=predictor_output_dim, # Output of self.predictor
             decoder_dim=jepa_decoder_dim,
             decoder_depth=jepa_decoder_depth,
@@ -132,9 +126,10 @@ class EncoderDecoderJEPAStyle(nn.Module):
             decoder_dropout=jepa_decoder_dropout,
             decoder_patch_size=_decoder_patch_size
         )
-
+        
         self.apply(initialize_weights)
-        print(f"EncoderDecoderJEPAStyle initialized with {count_parameters(self):,} parameters.")
+        print_num_parameters(self)
+
 
     def forward(self, current_state_img, action):
         """
