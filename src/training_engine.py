@@ -323,42 +323,8 @@ def run_training_epochs(
     elif jepa_mlp_config.get('enabled', False):
         print("Reward MLP (JEPA) training skipped due to missing components (model, optimizer, base_model, or dataloader).")
 
-    # --- JEPA State Decoder Training Loop ---
-    # The JEPA State Decoder training loop remains as is, but it will use the
-    # potentially best JEPA model loaded above.
-    # --- JEPA State Decoder Training ---
-    final_checkpoint_path_jepa_decoder = None
-    jepa_decoder_training_config = models_config.get('jepa', {}).get('decoder_training', {})
-
-    if (jepa_decoder and optimizer_jepa_decoder and jepa_model and
-        jepa_decoder_training_config.get('enabled', False) and train_dataloader):
-        # Note: jepa_model here is the one loaded from its best checkpoint (if saved)
-        final_checkpoint_path_jepa_decoder = train_jepa_state_decoder(
-            jepa_decoder_model=jepa_decoder,
-            jepa_model=jepa_model,
-            optimizer_jepa_decoder=optimizer_jepa_decoder,
-            train_dataloader=train_dataloader,
-            val_dataloader=val_dataloader,
-            loss_fn=mse_loss_fn,
-            device=device,
-            action_dim=action_dim,
-            action_type=action_type,
-            decoder_training_config=jepa_decoder_training_config,
-            main_model_dir=model_dir, # Pass the main model directory for path construction
-            general_log_interval=log_interval, # Pass general log interval as fallback
-            wandb_run=wandb_run
-        )
-    elif jepa_decoder_training_config.get('enabled', False):
-        print("JEPA State Decoder training skipped due to missing components (decoder model, its optimizer, main JEPA model, or dataloader).")
-    else:
-        if not jepa_decoder: print("JEPA State Decoder model not provided.")
-        elif not optimizer_jepa_decoder: print("Optimizer for JEPA State Decoder not provided.")
-        elif not jepa_model: print("Main JEPA model (for embeddings) not available for JEPA State Decoder training.")
-        elif not jepa_decoder_training_config.get('enabled', False): print("JEPA State Decoder training is disabled in config.")
-        elif not train_dataloader: print("Train dataloader not available for JEPA State Decoder training.")
-
     # --- LARP Training ---
-    # This happens after all main models, reward MLPs, and JEPA decoder are trained,
+    # This happens after all main models and reward MLPs are trained,
     # using the best available checkpoints of the base models.
 
     # Load best models again just to be certain, especially if other components might have altered them in-memory.
@@ -426,6 +392,42 @@ def run_training_epochs(
     elif jepa_larp_specific_config.get('enabled', False):
         print("LARP (JEPA) training skipped due to missing components (model, optimizer, base_model, or dataloader).")
 
+
+    # --- JEPA State Decoder Training Loop ---
+    # The JEPA State Decoder training loop remains as is, but it will use the
+    # potentially best JEPA model loaded above.
+    # --- JEPA State Decoder Training ---
+    final_checkpoint_path_jepa_decoder = None
+    jepa_decoder_training_config = models_config.get('jepa', {}).get('decoder_training', {})
+
+    if (jepa_decoder and optimizer_jepa_decoder and jepa_model and
+        jepa_decoder_training_config.get('enabled', False) and train_dataloader):
+        # Note: jepa_model here is the one loaded from its best checkpoint (if saved)
+        final_checkpoint_path_jepa_decoder = train_jepa_state_decoder(
+            jepa_decoder_model=jepa_decoder,
+            jepa_model=jepa_model,
+            optimizer_jepa_decoder=optimizer_jepa_decoder,
+            train_dataloader=train_dataloader,
+            val_dataloader=val_dataloader,
+            loss_fn=mse_loss_fn,
+            device=device,
+            action_dim=action_dim,
+            action_type=action_type,
+            decoder_training_config=jepa_decoder_training_config,
+            main_model_dir=model_dir, # Pass the main model directory for path construction
+            general_log_interval=log_interval, # Pass general log interval as fallback
+            wandb_run=wandb_run
+        )
+    elif jepa_decoder_training_config.get('enabled', False):
+        print("JEPA State Decoder training skipped due to missing components (decoder model, its optimizer, main JEPA model, or dataloader).")
+    else:
+        if not jepa_decoder: print("JEPA State Decoder model not provided.")
+        elif not optimizer_jepa_decoder: print("Optimizer for JEPA State Decoder not provided.")
+        elif not jepa_model: print("Main JEPA model (for embeddings) not available for JEPA State Decoder training.")
+        elif not jepa_decoder_training_config.get('enabled', False): print("JEPA State Decoder training is disabled in config.")
+        elif not train_dataloader: print("Train dataloader not available for JEPA State Decoder training.")
+
+   
 
     print("\nAll training processes finished from training_engine.")
 
