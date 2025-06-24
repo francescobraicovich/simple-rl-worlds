@@ -7,7 +7,7 @@ from einops.layers.torch import Rearrange  # For use in __init__ as a layer
 from .vit import ViT
 from .cnn import CNNEncoder
 from .mlp import MLPEncoder
-from src.utils.weight_init import initialize_weights, count_parameters
+from src.utils.weight_init import initialize_weights, print_num_parameters
 
 
 class StandardEncoderDecoder(nn.Module):
@@ -136,7 +136,7 @@ class StandardEncoderDecoder(nn.Module):
             c=self.output_channels
         )
         self.apply(initialize_weights)
-        print(f"StandardEncoderDecoder initialized with {count_parameters(self):,} parameters.")
+        print_num_parameters(self)
 
     def forward(self, current_state_img, action):
         # current_state_img: (b, c, h, w)
