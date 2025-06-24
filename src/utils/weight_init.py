@@ -46,3 +46,30 @@ def initialize_weights(module):
 def count_parameters(model: nn.Module) -> int:
     """Counts the number of trainable parameters in a PyTorch model."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+def print_num_parameters(module, check_total=True):
+    n_encoder = 0
+    n_online_encoder = 0
+    n_action_embedding = 0
+    n_predictor = 0
+    n_decoder = 0
+    if hasattr(module, 'encoder'):
+        n_encoder = count_parameters(module.encoder)
+        print(f'{"Num parameters in encoder:":<65}{n_encoder:,}')
+    if hasattr(module, 'online_encoder'):
+        n_online_encoder = count_parameters(module.online_encoder)
+        print(f'{"Num parameters in online encoder:":<65}{n_online_encoder:,}')
+    if hasattr(module, 'action_embedding'):
+        n_action_embedding = count_parameters(module.action_embedding)
+        print(f'{"Num parameters in action embedding:":<65}{n_action_embedding:,}')
+    if hasattr(module, 'predictor'):
+        n_predictor = count_parameters(module.predictor)
+        print(f'{"Num parameters in predictor:":<65}{n_predictor:,}')
+    if hasattr(module, 'decoder'):
+        n_decoder = count_parameters(module.decoder)
+        print(f'{"Num parameters in decoder:":<65}{n_decoder:,}')
+    total_params = n_encoder + n_online_encoder + n_action_embedding + n_predictor + n_decoder
+    total_count = count_parameters(module)
+    if check_total:
+        assert total_params == total_count, f"Total parameters mismatch: {total_params} != {total_count}"
+    print(f'{"Total num parameters:":<65}{total_count:,}')
