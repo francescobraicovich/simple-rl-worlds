@@ -102,12 +102,12 @@ models:
     # vicreg_cov_coeff: 1.0
     decoder_training: # Configuration for training a standalone JEPA State Decoder (not its architecture for embedding)
       enabled: true # Set to true to enable training this decoder
-      num_epochs: 50
+      num_epochs: 10
       learning_rate: 0.0003
       checkpoint_path: "best_jepa_decoder.pth" # Relative to model_loading.dir
       validation_plot_dir: "validation_plots/"
       early_stopping:
-        patience: 15
+        patience: 5
         delta: 0.001
         metric: "val_loss_jepa_decoder" # Example metric
 
