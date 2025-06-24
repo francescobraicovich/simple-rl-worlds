@@ -6,6 +6,8 @@ from src.models.mlp import RewardPredictorMLP
 from src.models.jepa_state_decoder import JEPAStateDecoder # Added import
 from src.models.encoder_decoder_jepa_style import EncoderDecoderJEPAStyle
 from copy import deepcopy
+from src.models.larp_mlp import LookAheadRewardPredictorMLP # Added for LARP
+from src.utils.larp_utils import calculate_larp_input_dim_enc_dec, calculate_larp_input_dim_jepa # Added for LARP
 
 def initialize_models(config, action_dim, device, image_h_w, input_channels):
     models = {}
@@ -198,5 +200,45 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
     # The old models['enc_dec_jepa_style'] key is no longer used for this purpose.
     # If a separate instance for comparison is ever needed, it would be re-added here,
     # but for now, the logic handles selecting one or the other as the primary 'std_enc_dec'.
+
+    # --- Initialize LARP Models ---
+    larp_config_main = reward_pred_config.get('larp', {})
+    enc_dec_larp_config = larp_config_main.get('encoder_decoder_larp', {})
+    jepa_larp_config = larp_config_main.get('jepa_larp', {})
+
+    larp_enc_dec = None
+    if enc_dec_larp_config.get('enabled', False) and std_enc_dec:
+        print("Initializing LARP for Encoder-Decoder...")
+        # Determine if the std_enc_dec is 'standard' or 'jepa_style' for correct dim calculation
+        # The 'encoder_decoder_variant' variable holds this information from earlier in the function
+        current_encoder_decoder_variant = std_enc_dec_config.get('variant', 'standard') # Re-access or pass down
+
+        larp_input_dim_enc_dec = calculate_larp_input_dim_enc_dec(
+            config=config, # Full config
+            encoder_decoder_variant=current_encoder_decoder_variant,
+            image_h_w=image_h_w,
+            input_channels=input_channels
+        )
+        larp_enc_dec = LookAheadRewardPredictorMLP(
+            input_dim=larp_input_dim_enc_dec,
+            hidden_dims=enc_dec_larp_config.get('hidden_dims', [512, 256, 128]),
+            activation_fn_str=enc_dec_larp_config.get('activation', 'relu'),
+            use_batch_norm=enc_dec_larp_config.get('use_batch_norm', False),
+            dropout_rate=enc_dec_larp_config.get('dropout_rate', 0.0)
+        ).to(device)
+    models['larp_enc_dec'] = larp_enc_dec
+
+    larp_jepa = None
+    if jepa_larp_config.get('enabled', False) and jepa_model:
+        print("Initializing LARP for JEPA...")
+        larp_input_dim_jepa = calculate_larp_input_dim_jepa(config=config) # Full config
+        larp_jepa = LookAheadRewardPredictorMLP(
+            input_dim=larp_input_dim_jepa,
+            hidden_dims=jepa_larp_config.get('hidden_dims', [512, 256, 128]),
+            activation_fn_str=jepa_larp_config.get('activation', 'relu'),
+            use_batch_norm=jepa_larp_config.get('use_batch_norm', False),
+            dropout_rate=jepa_larp_config.get('dropout_rate', 0.0)
+        ).to(device)
+    models['larp_jepa'] = larp_jepa
 
     return models
