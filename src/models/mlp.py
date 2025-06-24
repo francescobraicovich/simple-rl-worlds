@@ -169,7 +169,6 @@ class RewardPredictorMLP(nn.Module):
         self.apply(initialize_weights)
 
     def forward(self, x):
-        # x: (batch_size, input_dim)
         for layer in self.layers:
             x = layer(x)
         return x  # (batch_size, 1)
