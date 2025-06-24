@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from src.utils.weight_init import initialize_weights
+from src.utils.weight_init import initialize_weights, print_num_parameters
 
 class LookAheadRewardPredictorMLP(nn.Module):
     """
@@ -46,6 +46,8 @@ class LookAheadRewardPredictorMLP(nn.Module):
 
         # Initialize weights
         self.apply(initialize_weights)
+        print_num_parameters(self, check_total=False)
+
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
