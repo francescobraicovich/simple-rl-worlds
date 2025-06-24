@@ -162,7 +162,6 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
             use_batch_norm=enc_dec_mlp_config.get('use_batch_norm', False),
             dropout_rate=enc_dec_mlp_config.get('dropout_rate', 0.0) # Added
         ).to(device)
-        print(f"Encoder-Decoder Reward MLP: {reward_mlp_enc_dec}")
     models['reward_mlp_enc_dec'] = reward_mlp_enc_dec
 
     reward_mlp_jepa = None
@@ -177,12 +176,10 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
             dropout_rate=jepa_mlp_config.get('dropout_rate', 0.0) # Added
         ).to(device)
         print(f"JEPA Reward MLP: {reward_mlp_jepa}")
-    models['reward_mlp_jepa'] = reward_mlp_jepa
 
     # Initialize JEPA State Decoder
     jepa_decoder_config = jepa_config.get('decoder_training', {})
     if jepa_decoder_config.get('enabled', False):
-        print("Initializing JEPA State Decoder...")
 
         # Ensure image_h_w is a tuple for JEPAStateDecoder
         current_image_h_w = image_h_w if isinstance(image_h_w, tuple) else (image_h_w, image_h_w)
@@ -199,7 +196,6 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
             decoder_patch_size=std_enc_dec_config.get('decoder_patch_size', global_patch_size) # Default to global patch_size if specific not found
         ).to(device)
         models['jepa_decoder'] = jepa_decoder
-        print(f"JEPA State Decoder: {jepa_decoder}")
     else:
         models['jepa_decoder'] = None
         print("JEPA State Decoder is disabled in the configuration.")
