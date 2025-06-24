@@ -22,11 +22,11 @@ data:
 model_loading:
   dir: "trained_models/"
   load_path: "" # empty string means don't load, otherwise it's a path relative to model_loading.dir
-  model_type_to_load: "enc_dec_jepa_style" # options: "std_enc_dec", "jepa", "enc_dec_jepa_style"
+  model_type_to_load: "" # options: "std_enc_dec", "jepa", "enc_dec_jepa_style"
 
 # --- General Training Configuration ---
 training:
-  num_epochs: 50
+  num_epochs: 0
   batch_size: 64
   learning_rate: 0.003 # General learning rate, can be overridden by specific model configs
   num_workers: 1 # For DataLoader
@@ -142,7 +142,7 @@ models:
       enabled: true
       input_type: "flatten" # Assumes flattened decoded image from StandardEncoderDecoder
       hidden_dims: [128, 64]
-      num_epochs: 50
+      num_epochs: 1
       activation: "relu"
       use_batch_norm: false
       learning_rate: 0.0003
