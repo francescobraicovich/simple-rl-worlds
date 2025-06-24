@@ -5,8 +5,8 @@ import copy  # For deepcopying encoder for target network
 # Import available encoders
 from .vit import ViT
 from .cnn import CNNEncoder
-from .mlp import MLPEncoder
-from src.utils.weight_init import initialize_weights, count_parameters
+from .mlp import MLPEncoder, PredictorMLP
+from src.utils.weight_init import initialize_weights, count_parameters, print_num_parameters
 
 
 class JEPA(nn.Module):
@@ -17,8 +17,7 @@ class JEPA(nn.Module):
                  action_dim,
                  action_emb_dim,
                  latent_dim,  # Output dim of any encoder
-                 predictor_hidden_dim,
-                 predictor_output_dim,
+                 predictor_hidden_dims,
                  ema_decay=0.996,
                  encoder_type='vit',  # New: 'vit', 'cnn', 'mlp'
                  encoder_params: dict = None,  # New: dict to hold encoder-specific params
@@ -100,27 +99,19 @@ class JEPA(nn.Module):
         self.action_embedding = nn.Linear(action_dim, action_emb_dim)
 
         # Predictor Network (MLP)
-        # Input to predictor: latent_dim (from target_encoder(s_t)) + action_emb_dim
-        predictor_layers = [
-            nn.Linear(latent_dim + action_emb_dim, predictor_hidden_dim),
-            nn.GELU()
-        ]
-        if self.predictor_dropout_rate > 0:
-            predictor_layers.append(nn.Dropout(self.predictor_dropout_rate))
-        predictor_layers.extend([
-            nn.Linear(predictor_hidden_dim, predictor_hidden_dim),
-            nn.GELU()
-        ])
-        if self.predictor_dropout_rate > 0:
-            predictor_layers.append(nn.Dropout(self.predictor_dropout_rate))
-        predictor_layers.append(nn.Linear(predictor_hidden_dim, predictor_output_dim))
-        self.predictor = nn.Sequential(*predictor_layers)
-
-        assert predictor_output_dim == latent_dim, \
-            "Predictor output dimension must match encoder latent dimension for JEPA loss."
+        # JEPA-style predictor MLP (mimicking JEPA.predictor structure)
+        predictor_input_actual_dim = latent_dim + action_emb_dim
+            
+        self.predictor = PredictorMLP(
+            input_dim=predictor_input_actual_dim,
+            hidden_dims=predictor_hidden_dims,  # Two hidden layers
+            activation_fn_str='gelu',  # JEPA uses GELU
+            use_batch_norm=False,  # JEPA does not use batch norm in predictor
+            dropout_rate=predictor_dropout_rate
+        )
 
         self.apply(initialize_weights)
-        print(f"JEPA initialized with {count_parameters(self):,} parameters.")
+        print_num_parameters(self)
 
     def _create_target_encoder(self):
         return copy.deepcopy(self.online_encoder)
