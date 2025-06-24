@@ -5,6 +5,7 @@ from src.models.jepa import JEPA
 from src.models.mlp import RewardPredictorMLP
 from src.models.jepa_state_decoder import JEPAStateDecoder # Added import
 from src.models.encoder_decoder_jepa_style import EncoderDecoderJEPAStyle
+from copy import deepcopy
 
 def initialize_models(config, action_dim, device, image_h_w, input_channels):
     models = {}
@@ -146,15 +147,12 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
     reward_mlp_enc_dec = None
     if enc_dec_mlp_config.get('enabled', False):
         print("Initializing Reward MLP for Encoder-Decoder...")
-        # Ensure image_h_w is treated as a single dimension if it's an int for area calculation
-        img_h = image_h_w[0] if isinstance(image_h_w, tuple) else image_h_w
-        img_w = image_h_w[1] if isinstance(image_h_w, tuple) else image_h_w
         if enc_dec_mlp_config.get('input_type') == "flatten":
-            input_dim_enc_dec = input_channels * img_h * img_w
+            input_dim_enc_dec = shared_latent_dim + action_emb_dim_jepa_style # Flattened input: latent_dim + action_dim
         else:
             print(f"Warning: encoder_decoder_reward_mlp input_type is '{enc_dec_mlp_config.get('input_type')}'. Defaulting to flattened image dim.")
-            input_dim_enc_dec = input_channels * img_h * img_w
-
+            input_dim_enc_dec = shared_latent_dim + action_emb_dim_jepa_style
+        
         reward_mlp_enc_dec = RewardPredictorMLP(
             input_dim=input_dim_enc_dec,
             hidden_dims=enc_dec_mlp_config.get('hidden_dims', [128, 64]),
@@ -167,15 +165,10 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
     reward_mlp_jepa = None
     if jepa_mlp_config.get('enabled', False):
         print("Initializing Reward MLP for JEPA...")
-        input_dim_jepa = shared_latent_dim # JEPA's reward MLP uses latent_dim
-        reward_mlp_jepa = RewardPredictorMLP(
-            input_dim=input_dim_jepa,
-            hidden_dims=jepa_mlp_config.get('hidden_dims', [128, 64]),
-            activation_fn_str=jepa_mlp_config.get('activation', 'relu'),
-            use_batch_norm=jepa_mlp_config.get('use_batch_norm', False),
-            dropout_rate=jepa_mlp_config.get('dropout_rate', 0.0) # Added
-        ).to(device)
-        print(f"JEPA Reward MLP: {reward_mlp_jepa}")
+        # copy the reward predictor for encoder-decoder
+        reward_mlp_jepa = deepcopy(reward_mlp_enc_dec)
+
+    models['reward_mlp_jepa'] = reward_mlp_jepa
 
     # Initialize JEPA State Decoder
     jepa_decoder_config = jepa_config.get('decoder_training', {})
