@@ -26,7 +26,7 @@ model_loading:
 
 # --- General Training Configuration ---
 training:
-  num_epochs: 0
+  num_epochs: 15
   batch_size: 64
   learning_rate: 0.003 # General learning rate, can be overridden by specific model configs
   num_workers: 1 # For DataLoader
@@ -36,7 +36,7 @@ training:
     skip_std_enc_dec_training_if_loaded: false
     skip_jepa_training_if_loaded: false
   early_stopping: # General early stopping settings; specific metrics/paths are per model type if needed
-    patience: 30
+    patience: 3
     delta: 0.001
     # Metric for Encoder/Decoder, e.g., "val_loss_enc_dec" or "val_accuracy_enc_dec"
     metric_enc_dec: "val_loss_enc_dec"
@@ -51,13 +51,13 @@ models:
   shared_patch_size: 8   # Global patch_size: Used by ViT encoder, default for decoder_patch_size
 
   encoder:
-    type: "vit"  # Options: "vit", "cnn", "mlp"
+    type: "cnn"  # Options: "vit", "cnn", "mlp"
     # Specific parameters for the chosen encoder_type.
     # train.py will select the appropriate sub-dictionary based on 'encoder.type'.
     params:
       vit:
         # patch_size for ViT is handled by train.py using models.shared_patch_size
-        depth: 8                # Number of Transformer blocks in ViT
+        depth: 3                # Number of Transformer blocks in ViT
         heads: 4                # Number of attention heads in ViT
         mlp_dim: 512            # Dimension of the MLP within ViT Transformer blocks
         pool: 'cls'             # Type of pooling ('cls' token or 'mean' pooling)
@@ -80,14 +80,14 @@ models:
 
   standard_encoder_decoder:
     variant: "jepa_style"     # Options: "standard", "jepa_style". Determines which encoder-decoder architecture to use.
-    action_emb_dim: 64      # Dimension for embedding actions
+    action_emb_dim: 16      # Dimension for embedding actions
     decoder_dim: 128        # Internal dimension of the Transformer decoder
-    decoder_depth: 4        # Number of layers in the Transformer decoder
+    decoder_depth: 3      # Number of layers in the Transformer decoder
     decoder_heads: 4        # Number of attention heads in the Transformer decoder
     decoder_mlp_dim: 512    # MLP dimension in the Transformer decoder
-    decoder_dropout: 0.2    # Dropout for the decoder
+    decoder_dropout: 0.25    # Dropout for the decoder
     # If models.shared_patch_size is used, ensure your training script handles the defaulting logic.
-    decoder_patch_size: 8   # Patch size for reconstructing output. Defaults to models.shared_patch_size if null/not present.
+    decoder_patch_size: 4   # Patch size for reconstructing output. Defaults to models.shared_patch_size if null/not present.
 
   jepa:
     learning_rate: 0.003    # Specific learning rate for JEPA optimizer
@@ -102,7 +102,7 @@ models:
     # vicreg_cov_coeff: 1.0
     decoder_training: # Configuration for training a standalone JEPA State Decoder (not its architecture for embedding)
       enabled: true # Set to true to enable training this decoder
-      num_epochs: 10
+      num_epochs: 20
       learning_rate: 0.0003
       checkpoint_path: "best_jepa_decoder.pth" # Relative to model_loading.dir
       validation_plot_dir: "validation_plots/"
@@ -142,23 +142,24 @@ models:
       enabled: true
       input_type: "flatten" # Assumes flattened decoded image from StandardEncoderDecoder
       hidden_dims: [128, 64]
-      num_epochs: 1
+      num_epochs: 20
       activation: "relu"
       use_batch_norm: false
       learning_rate: 0.0003
       log_interval: 100
       dropout_rate: 0.2
+      early_stopping_patience: 5
     jepa_reward_mlp:
       enabled: true
       # Input for JEPA's reward MLP typically comes from JEPA's encoder output.
-      num_epochs: 200
+      num_epochs: 20
       hidden_dims: [128, 64]
       activation: "relu"
       use_batch_norm: false
       learning_rate: 0.0003
       log_interval: 100
       dropout_rate: 0.2
-      early_stopping_patience: 15 # Added from problem description, though not in original file
+      early_stopping_patience: 5 # Added from problem description, though not in original file
     larp: # Look-Ahead Reward Predictor configuration
       encoder_decoder_larp:
         enabled: true
@@ -169,7 +170,7 @@ models:
         learning_rate: 0.0003
         log_interval: 100
         dropout_rate: 0.2
-        early_stopping_patience: 15
+        early_stopping_patience: 5
       jepa_larp:
         enabled: true
         hidden_dims: [512, 256, 128]
@@ -179,7 +180,7 @@ models:
         learning_rate: 0.0003
         log_interval: 100
         dropout_rate: 0.2
-        early_stopping_patience: 15
+        early_stopping_patience: 5
 
   auxiliary_loss: # Configuration for auxiliary losses like VICReg, Barlow Twins, DINO
     type: "vicreg"  # Options: "vicreg", "barlow_twins", "dino"
