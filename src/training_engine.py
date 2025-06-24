@@ -84,6 +84,7 @@ def run_training_epochs(
     models_config = config.get('models', {})
     enc_dec_mlp_config = models_config.get('reward_predictors', {}).get('encoder_decoder_reward_mlp', {})
     jepa_mlp_config = models_config.get('reward_predictors', {}).get('jepa_reward_mlp', {})
+    print(f'Jepa reward MLP config: {jepa_mlp_config}')
 
     num_epochs = training_config.get('num_epochs', 10)
     log_interval = training_config.get('log_interval', 50)
