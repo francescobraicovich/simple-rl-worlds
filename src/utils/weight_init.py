@@ -1,6 +1,4 @@
-import torch
 import torch.nn as nn
-import math
 
 def initialize_weights(module):
     """
@@ -44,3 +42,7 @@ def initialize_weights(module):
         # Note: For nn.Parameter tensors that are not part of a standard layer (e.g., ViT's cls_token, pos_embedding),
         # they need to be initialized manually in their respective module's __init__ method,
         # as module.apply() or module.modules() won't directly process them in the same way as nn.Module instances.
+
+def count_parameters(model: nn.Module) -> int:
+    """Counts the number of trainable parameters in a PyTorch model."""
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
