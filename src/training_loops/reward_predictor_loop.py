@@ -93,11 +93,16 @@ def train_reward_mlp_epoch(
             with torch.no_grad():
                 if is_jepa_base_model:
                     # For JEPA, use s_t, a_t, s_t_plus_1 to get predictor embedding
-                    pred_emb_for_reward, _, _, _ = base_model(s_t, a_t_processed, s_t_plus_1)
-                    input_to_reward_mlp = pred_emb_for_reward.detach()
+                    _, _, online_s_t_representation, _ = base_model(s_t, a_t_processed, s_t_plus_1)
+                    action_embedding = base_model.action_embedding(a_t_processed)
                 else: # For StdEncDec
-                    predicted_s_t_plus_1_for_reward = base_model(s_t, a_t_processed)
-                    input_to_reward_mlp = predicted_s_t_plus_1_for_reward.view(predicted_s_t_plus_1_for_reward.size(0), -1).detach()
+                    online_s_t_representation = base_model.encoder(s_t)
+                    action_embedding = base_model.action_embedding(a_t_processed)
+                
+                input_to_reward_mlp = torch.cat((online_s_t_representation, action_embedding), dim=1)
+
+                # detach to avoid gradients flowing back to the base model
+                input_to_reward_mlp = input_to_reward_mlp.detach()
 
             if input_to_reward_mlp is None:
                 print(f"{model_name_log_prefix} Epoch {epoch+1}, Batch {batch_idx+1}: Failed to get input from base model. Skipping batch.")
@@ -144,11 +149,17 @@ def train_reward_mlp_epoch(
 
                     input_to_reward_mlp_val = None
                     if is_jepa_base_model:
-                        pred_emb_for_reward_val, _, _, _ = base_model(s_t_val, a_t_processed_val, s_t_plus_1_val)
-                        input_to_reward_mlp_val = pred_emb_for_reward_val.detach()
+                        # For JEPA, use s_t, a_t, s_t_plus_1 to get predictor embedding
+                        _, _, online_s_t_representation_val, _ = base_model(s_t_val, a_t_processed_val, s_t_plus_1_val)
+                        action_embedding_val = base_model.action_embedding(a_t_processed_val)
                     else: # For StdEncDec
-                        predicted_s_t_plus_1_for_reward_val = base_model(s_t_val, a_t_processed_val)
-                        input_to_reward_mlp_val = predicted_s_t_plus_1_for_reward_val.view(predicted_s_t_plus_1_for_reward_val.size(0), -1).detach()
+                        online_s_t_representation_val = base_model.encoder(s_t_val)
+                        action_embedding_val = base_model.action_embedding(a_t_processed_val)
+
+                    input_to_reward_mlp_val = torch.cat((online_s_t_representation_val, action_embedding_val), dim=1)
+
+                    # detach to avoid gradients flowing back to the base model
+                    input_to_reward_mlp_val = input_to_reward_mlp_val.detach()
 
                     if input_to_reward_mlp_val is None:
                         print(f"{model_name_log_prefix} Epoch {epoch+1}, Val Batch {batch_idx_val+1}: Failed to get input from base model. Skipping batch.")
