@@ -14,7 +14,7 @@ data:
     max_steps_per_episode: 600 # Max steps per episode during data collection
   dataset:
     dir: "datasets/"
-    load_path: ".pkl" # empty string means don't load, otherwise it's a path relative to dataset.dir
+    load_path: "car_racing_v3_action_rep_6.pkl" # empty string means don't load, otherwise it's a path relative to dataset.dir
     filename: "car_racing_v3_action_rep_6.pkl"
   validation_split: 0.2 # Proportion of data to use for validation (moved from early_stopping)
 
@@ -79,6 +79,7 @@ models:
         dropout_rate: 0.1       # Dropout rate for MLP encoder
 
   standard_encoder_decoder:
+    variant: "jepa_style"     # Options: "standard", "jepa_style". Determines which encoder-decoder architecture to use.
     action_emb_dim: 64      # Dimension for embedding actions
     decoder_dim: 128        # Internal dimension of the Transformer decoder
     decoder_depth: 4        # Number of layers in the Transformer decoder
