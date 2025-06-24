@@ -85,19 +85,21 @@ models:
     decoder_heads: 4        # Number of attention heads in the Transformer decoder
     decoder_mlp_dim: 512    # MLP dimension in the Transformer decoder
     decoder_dropout: 0.2    # Dropout for the decoder
-    decoder_patch_size: 8   # Patch size for reconstructing output. If null, defaults to models.shared_patch_size.
+    # If models.shared_patch_size is used, ensure your training script handles the defaulting logic.
+    decoder_patch_size: 8   # Patch size for reconstructing output. Defaults to models.shared_patch_size if null/not present.
 
   jepa:
     learning_rate: 0.003    # Specific learning rate for JEPA optimizer
-    predictor_hidden_dim: 256 # Hidden dimension for the JEPA predictor MLP
-    predictor_dropout_rate: 0.3  # Dropout rate for JEPA predictor MLP layers
+    # predictor_output_dim for JEPA model is models.shared_latent_dim
+    predictor_hidden_dim: 256 # Hidden dimension for the JEPA predictor MLP. Also used by enc_dec_jepa_style.
+    predictor_dropout_rate: 0.3  # Dropout rate for JEPA predictor MLP layers. Also used by enc_dec_jepa_style.
     ema_decay: 0.99              # EMA decay rate for updating the target encoder in JEPA
     target_encoder_mode: "vjepa2" # Options: "default", "vjepa2", "none"
     # For VICRegLoss coefficients used in JEPA's regularization terms (if not using full auxiliary_loss block for this)
     # vicreg_sim_coeff: 25.0 # (Example, often 0 for JEPA's reg_terms use)
     # vicreg_std_coeff: 25.0
     # vicreg_cov_coeff: 1.0
-    decoder_training: # Configuration for the JEPA State Decoder
+    decoder_training: # Configuration for training a standalone JEPA State Decoder (not its architecture for embedding)
       enabled: true # Set to true to enable training this decoder
       num_epochs: 50
       learning_rate: 0.0003
@@ -108,11 +110,31 @@ models:
         delta: 0.001
         metric: "val_loss_jepa_decoder" # Example metric
 
-  enc_dec_jepa_style: # Model for fair JEPA comparison using Encoder-Decoder architecture
-    # Decoder parameters (decoder_dim, decoder_depth, etc.) are shared with models.standard_encoder_decoder
-    predictor_hidden_dim: 256 # Hidden dim for the predictor MLP
-    predictor_output_dim: 128 # Output dim of the predictor (should match decoder input dim)
-    predictor_dropout_rate: 0.3 # Dropout rate for predictor MLP
+  jepa_state_decoder_arch: # Architectural parameters for JEPAStateDecoder instances
+                            # Used by standalone JEPAStateDecoder and the one inside enc_dec_jepa_style.
+    input_latent_dim: 256   # Input latent dim for a standalone JEPAStateDecoder.
+                            # For enc_dec_jepa_style, its predictor_output_dim will be set to this value.
+    decoder_dim: 128
+    decoder_depth: 4
+    decoder_heads: 4
+    decoder_mlp_dim: 512
+    decoder_dropout: 0.2
+    # If models.shared_patch_size is used, ensure your training script handles the defaulting logic.
+    decoder_patch_size: 8   # Defaults to models.shared_patch_size if null/not present.
+    # output_channels and output_image_size for JEPAStateDecoder are typically derived from environment config (e.g. environment.input_channels, environment.image_size) by the training script.
+
+  enc_dec_jepa_style: {} # Empty. This model's parameters are now sourced from other config sections by the training script:
+                         # Encoder: from models.encoder, models.shared_latent_dim
+                         # Action Embedding Dim: from models.standard_encoder_decoder.action_emb_dim (convention)
+                         # Predictor - hidden_dim: from models.jepa.predictor_hidden_dim
+                         # Predictor - dropout_rate: from models.jepa.predictor_dropout_rate
+                         # Predictor - output_dim: from models.jepa_state_decoder_arch.input_latent_dim
+                         # Internal JEPAStateDecoder architecture:
+                         #   input_latent_dim: from models.jepa_state_decoder_arch.input_latent_dim (via predictor_output_dim)
+                         #   decoder_dim, depth, heads, mlp_dim, dropout: from models.jepa_state_decoder_arch
+                         #   output_channels: from environment.input_channels (passed by training script)
+                         #   output_image_size: from environment.image_size (passed by training script)
+                         #   decoder_patch_size: from models.jepa_state_decoder_arch.decoder_patch_size (or models.shared_patch_size as fallback)
 
   reward_predictors:
     encoder_decoder_reward_mlp:

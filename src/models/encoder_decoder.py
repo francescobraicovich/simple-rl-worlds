@@ -7,7 +7,7 @@ from einops.layers.torch import Rearrange  # For use in __init__ as a layer
 from .vit import ViT
 from .cnn import CNNEncoder
 from .mlp import MLPEncoder
-from src.utils.weight_init import initialize_weights
+from src.utils.weight_init import initialize_weights, count_parameters
 
 
 class StandardEncoderDecoder(nn.Module):
@@ -121,7 +121,7 @@ class StandardEncoderDecoder(nn.Module):
             decoder_layer, num_layers=decoder_depth)
 
         self.decoder_query_tokens = nn.Parameter(
-            torch.randn(1, num_output_patches, decoder_dim))
+            torch.randn(1, num_output_patches, decoder_dim) * 0.02) # Standardized init
 
         # Final layer to project decoder output to patch pixel values
         output_patch_dim = self.output_channels * \
@@ -130,12 +130,13 @@ class StandardEncoderDecoder(nn.Module):
 
         # Layer to reconstruct image from patches
         self.patch_to_image = Rearrange(
-            '(b ph pw) (p1 p2 c) -> b c (ph p1) (pw p2)',
+            'b (h w) (p1 p2 c) -> b c (h p1) (w p2)', # Standardized Rearrange
             p1=self.decoder_patch_size, p2=self.decoder_patch_size,
-            ph=self.output_num_patches_h, pw=self.output_num_patches_w,
+            h=self.output_num_patches_h, w=self.output_num_patches_w,
             c=self.output_channels
         )
         self.apply(initialize_weights)
+        print(f"StandardEncoderDecoder initialized with {count_parameters(self):,} parameters.")
 
     def forward(self, current_state_img, action):
         # current_state_img: (b, c, h, w)
@@ -168,10 +169,11 @@ class StandardEncoderDecoder(nn.Module):
         # Output: (b, num_output_patches, output_patch_dim)
 
         # 7. Rearrange patches back into an image
-        predicted_patches_reshaped = rearrange(
-            predicted_patches, 'b (ph pw) d -> (b ph pw) d', ph=self.output_num_patches_h, pw=self.output_num_patches_w)
+        # predicted_patches_reshaped = rearrange(
+        #     predicted_patches, 'b (ph pw) d -> (b ph pw) d', ph=self.output_num_patches_h, pw=self.output_num_patches_w)
+        # predicted_s_t_plus_1 = self.patch_to_image(predicted_patches_reshaped)
 
-        predicted_s_t_plus_1 = self.patch_to_image(predicted_patches_reshaped)
+        predicted_s_t_plus_1 = self.patch_to_image(predicted_patches) # Directly use (b, num_patches, patch_dim)
         # Output: (b, output_channels, output_image_size_h, output_image_size_w)
 
         return predicted_s_t_plus_1

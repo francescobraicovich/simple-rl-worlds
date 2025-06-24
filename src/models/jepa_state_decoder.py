@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from einops.layers.torch import Rearrange
-from src.utils.weight_init import initialize_weights
+from src.utils.weight_init import initialize_weights, count_parameters
 
 class JEPAStateDecoder(nn.Module):
     def __init__(self,
@@ -46,7 +46,7 @@ class JEPAStateDecoder(nn.Module):
         )
 
         # Learnable query tokens for the decoder (one set of queries for all patches)
-        self.decoder_query_tokens = nn.Parameter(torch.randn(1, self.num_output_patches, decoder_dim) * 0.02)
+        self.decoder_query_tokens = nn.Parameter(torch.randn(1, self.num_output_patches, decoder_dim) * 0.02) # Standardized init
 
         # Map decoder output to pixel values for each patch
         self.to_pixels = nn.Linear(decoder_dim, output_patch_dim)
@@ -59,6 +59,7 @@ class JEPAStateDecoder(nn.Module):
             c=output_channels
         )
         self.apply(initialize_weights)
+        print(f"JEPAStateDecoder initialized with {count_parameters(self):,} parameters.")
 
     def forward(self, jepa_predictor_embedding: torch.Tensor) -> torch.Tensor:
         """

@@ -1,59 +1,55 @@
 import torch
 import torch.nn as nn
-from einops.layers.torch import Rearrange
+# Removed: from einops.layers.torch import Rearrange (will be in JEPAStateDecoder)
 from .vit import ViT
 from .cnn import CNNEncoder
 from .mlp import MLPEncoder
-from src.utils.weight_init import initialize_weights
+from .jepa_state_decoder import JEPAStateDecoder # Import JEPAStateDecoder
+from src.utils.weight_init import initialize_weights, count_parameters
 
 class EncoderDecoderJEPAStyle(nn.Module):
     """
-    Encoder-Decoder model with JEPA-style predictor MLP and Transformer decoder.
-    This model is designed for apples-to-apples comparison with JEPA:
-    - Uses the same encoder options (ViT, CNN, MLP).
-    - After encoding the current state, concatenates the action embedding.
-    - Passes the concatenated vector through a JEPA-style predictor MLP.
-    - The predictor's output is fed into a Transformer-based decoder to reconstruct the next state image in pixel space.
-    - All architectural parameters are fully configurable for fair comparison.
+    Encoder-Decoder model that uses a JEPA-style predictor MLP followed by a JEPAStateDecoder.
+    - Encoder processes current state.
+    - Action is embedded.
+    - Concatenated state-action embedding is fed to a predictor MLP (same arch as JEPA.predictor).
+    - The predictor's output is then decoded by an instance of JEPAStateDecoder.
     """
     def __init__(self,
-                 image_size,  # int or tuple (h, w)
-                 patch_size,  # For ViT and decoder's output patch structure
-                 input_channels,
-                 action_dim,
-                 action_emb_dim,
-                 latent_dim,  # Output dim of encoder
-                 predictor_hidden_dim,
-                 predictor_output_dim,  # Should match decoder input dim
-                 predictor_dropout_rate=0.0,
-                 decoder_dim=128,
-                 decoder_depth=3,
-                 decoder_heads=4,
-                 decoder_mlp_dim=256,
-                 output_channels=3,
-                 output_image_size=None,  # int or tuple (h,w)
-                 decoder_dropout=0.0,
-                 encoder_type='vit',
-                 encoder_params: dict = None,
-                 decoder_patch_size: int = None):
+                image_size,  # int or tuple (h, w)
+                patch_size,  # For ViT encoder, and default for jepa_decoder_patch_size
+                input_channels,
+                action_dim,
+                action_emb_dim,
+                latent_dim,  # Output dim of encoder
+
+                # Internal Predictor config (mirrors JEPA's predictor structure)
+                predictor_hidden_dim,
+                predictor_output_dim,  # This is input_latent_dim for the internal JEPAStateDecoder
+                # Config for the internal JEPAStateDecoder instance
+                jepa_decoder_dim,
+                jepa_decoder_depth,
+                jepa_decoder_heads,
+                jepa_decoder_mlp_dim,
+                output_channels,         # For the final output image
+                output_image_size,     # For the final output image (h,w)
+                                 
+                # Encoder config
+                encoder_type='vit',
+                encoder_params: dict = None,
+                jepa_decoder_dropout=0.0,
+                predictor_dropout_rate=0.0,
+
+                jepa_decoder_patch_size=None # If None, defaults to patch_size
+                ):
         super().__init__()
 
         self._image_size_tuple = image_size if isinstance(image_size, tuple) else (image_size, image_size)
-        self._output_image_size_tuple = output_image_size if output_image_size is not None else self._image_size_tuple
-        self.input_channels = input_channels
-        self.output_channels = output_channels
+        # output_image_size is now directly passed and used by JEPAStateDecoder
+        # self.input_channels = input_channels # Stored by encoder if needed
+        # self.output_channels = output_channels # Stored by JEPAStateDecoder
 
-        # Determine decoder_patch_size
-        self.decoder_patch_size = decoder_patch_size if decoder_patch_size is not None else patch_size
-        if self._output_image_size_tuple[0] % self.decoder_patch_size != 0 or \
-           self._output_image_size_tuple[1] % self.decoder_patch_size != 0:
-            raise ValueError(
-                f"Output image dimensions ({self._output_image_size_tuple}) must be divisible by the decoder_patch_size ({self.decoder_patch_size}).")
-        self.output_num_patches_h = self._output_image_size_tuple[0] // self.decoder_patch_size
-        self.output_num_patches_w = self._output_image_size_tuple[1] // self.decoder_patch_size
-        self.num_output_patches = self.output_num_patches_h * self.output_num_patches_w
-
-        # Encoder instantiation (reuse logic from StandardEncoderDecoder)
+        # Encoder instantiation (same as before)
         if encoder_params is None:
             encoder_params = {}
         if encoder_type == 'vit':
@@ -103,9 +99,10 @@ class EncoderDecoderJEPAStyle(nn.Module):
         # Action embedding
         self.action_embedding = nn.Linear(action_dim, action_emb_dim)
 
-        # JEPA-style predictor MLP
+        # JEPA-style predictor MLP (mimicking JEPA.predictor structure)
+        predictor_input_actual_dim = latent_dim + action_emb_dim
         predictor_layers = [
-            nn.Linear(latent_dim + action_emb_dim, predictor_hidden_dim),
+            nn.Linear(predictor_input_actual_dim, predictor_hidden_dim),
             nn.GELU()
         ]
         if predictor_dropout_rate > 0:
@@ -119,28 +116,25 @@ class EncoderDecoderJEPAStyle(nn.Module):
         predictor_layers.append(nn.Linear(predictor_hidden_dim, predictor_output_dim))
         self.predictor = nn.Sequential(*predictor_layers)
 
-        # Transformer Decoder (same as StandardEncoderDecoder/JEPAStateDecoder)
-        decoder_layer = nn.TransformerDecoderLayer(
-            d_model=decoder_dim,
-            nhead=decoder_heads,
-            dim_feedforward=decoder_mlp_dim,
-            dropout=decoder_dropout,
-            batch_first=True
+        # Instantiate JEPAStateDecoder
+        _decoder_patch_size = jepa_decoder_patch_size if jepa_decoder_patch_size is not None else patch_size
+        _output_image_size_tuple = output_image_size if isinstance(output_image_size, tuple) else (output_image_size, output_image_size)
+
+
+        self.decoder = JEPAStateDecoder(
+            input_latent_dim=predictor_output_dim, # Output of self.predictor
+            decoder_dim=jepa_decoder_dim,
+            decoder_depth=jepa_decoder_depth,
+            decoder_heads=jepa_decoder_heads,
+            decoder_mlp_dim=jepa_decoder_mlp_dim,
+            output_channels=output_channels,
+            output_image_size=_output_image_size_tuple,
+            decoder_dropout=jepa_decoder_dropout,
+            decoder_patch_size=_decoder_patch_size
         )
-        self.transformer_decoder = nn.TransformerDecoder(
-            decoder_layer=decoder_layer,
-            num_layers=decoder_depth
-        )
-        self.decoder_query_tokens = nn.Parameter(torch.randn(1, self.num_output_patches, decoder_dim) * 0.02)
-        output_patch_dim = self.output_channels * self.decoder_patch_size * self.decoder_patch_size
-        self.to_pixels = nn.Linear(decoder_dim, output_patch_dim)
-        self.patch_to_image = Rearrange(
-            'b (h w) (p1 p2 c) -> b c (h p1) (w p2)',
-            p1=self.decoder_patch_size, p2=self.decoder_patch_size,
-            h=self.output_num_patches_h, w=self.output_num_patches_w,
-            c=self.output_channels
-        )
+
         self.apply(initialize_weights)
+        print(f"EncoderDecoderJEPAStyle initialized with {count_parameters(self):,} parameters.")
 
     def forward(self, current_state_img, action):
         """
@@ -152,20 +146,18 @@ class EncoderDecoderJEPAStyle(nn.Module):
         """
         # 1. Encode current state
         latent_s_t = self.encoder(current_state_img)  # (b, latent_dim)
+
         # 2. Embed action
         embedded_action = self.action_embedding(action)  # (b, action_emb_dim)
+
         # 3. Concatenate and pass through predictor
-        predictor_input = torch.cat((latent_s_t, embedded_action), dim=-1)  # (b, latent_dim + action_emb_dim)
+        predictor_input = torch.cat((latent_s_t, embedded_action), dim=-1)
+        # (b, latent_dim + action_emb_dim)
         predictor_output = self.predictor(predictor_input)  # (b, predictor_output_dim)
-        # 4. Project predictor output to decoder_dim and unsqueeze for memory
-        decoder_memory = predictor_output.unsqueeze(1)  # (b, 1, decoder_dim) if dims match
-        # 5. Prepare query tokens
-        batch_size = current_state_img.shape[0]
-        query_tokens = self.decoder_query_tokens.repeat(batch_size, 1, 1)  # (b, num_output_patches, decoder_dim)
-        # 6. Pass through Transformer Decoder
-        decoded_representation = self.transformer_decoder(tgt=query_tokens, memory=decoder_memory)
-        # 7. Map to pixel values
-        pixel_patches = self.to_pixels(decoded_representation)
-        # 8. Reshape patches to image
-        predicted_next_state_img = self.patch_to_image(pixel_patches)
-        return predicted_next_state_img 
+
+        # 4. Pass predictor's output to the JEPAStateDecoder instance
+        # predictor_output is (b, input_latent_dim for JEPAStateDecoder)
+        predicted_next_state_img = self.decoder(predictor_output)
+        # Output: (b, output_channels, output_image_h, output_image_w)
+
+        return predicted_next_state_img
