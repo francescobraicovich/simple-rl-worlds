@@ -89,9 +89,8 @@ def run_training_epochs(
     checkpoint_path_jepa = os.path.join(model_dir, early_stopping_config.get('checkpoint_path_jepa', 'best_jepa.pth'))
 
     models_config = config.get('models', {})
-    enc_dec_mlp_config = models_config.get('reward_predictors', {}).get('encoder_decoder_reward_mlp', {})
-    jepa_mlp_config = models_config.get('reward_predictors', {}).get('jepa_reward_mlp', {})
-    print(f'Jepa reward MLP config: {jepa_mlp_config}')
+    enc_dec_mlp_config = models_config.get('reward_predictors').get('reward_mlp')
+    jepa_mlp_config = models_config.get('reward_predictors').get('reward_mlp')
 
     num_epochs = training_config.get('num_epochs', 10)
     log_interval = training_config.get('log_interval', 50)
@@ -339,8 +338,8 @@ def run_training_epochs(
         jepa_model.eval() # Ensure it's in eval mode
 
     larp_main_config = models_config.get('reward_predictors', {}).get('larp', {})
-    enc_dec_larp_specific_config = larp_main_config.get('encoder_decoder_larp', {})
-    jepa_larp_specific_config = larp_main_config.get('jepa_larp', {})
+    enc_dec_larp_specific_config = larp_main_config
+    jepa_larp_specific_config = larp_main_config
 
     # LARP for Encoder-Decoder
     if (larp_enc_dec_model and enc_dec_larp_specific_config.get('enabled', False) and
