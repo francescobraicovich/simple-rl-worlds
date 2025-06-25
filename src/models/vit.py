@@ -17,7 +17,8 @@ def pair(t):
 class PreNorm(nn.Module):
     def __init__(self, dim, fn):
         super().__init__()
-        self.norm = nn.LayerNorm(dim)
+        #self.norm = nn.LayerNorm(dim)
+        self.norm = nn.Identity()
         self.fn = fn
 
     def forward(self, x, **kwargs):
@@ -125,7 +126,7 @@ class ViT(nn.Module):
         # will likely use the output of self.to_latent.
 
         self.mlp_head = nn.Sequential(
-            nn.LayerNorm(dim),
+            #nn.LayerNorm(dim),
             nn.Linear(dim, num_classes)
         ) if num_classes > 0 else nn.Identity()  # Only add mlp_head if num_classes is positive
 
