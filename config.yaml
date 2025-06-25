@@ -61,8 +61,8 @@ models:
         heads: 4                # Number of attention heads in ViT
         mlp_dim: 512            # Dimension of the MLP within ViT Transformer blocks
         pool: 'cls'             # Type of pooling ('cls' token or 'mean' pooling)
-        dropout: 0.3            # Dropout rate in ViT
-        emb_dropout: 0.25       # Embedding dropout rate in ViT
+        dropout: 0              # Dropout rate in ViT
+        emb_dropout: 0          # Embedding dropout rate in ViT
       cnn:
         num_conv_layers: 3      # Number of convolutional layers
         base_filters: 32        # Number of filters in the first convolutional layer
@@ -71,17 +71,17 @@ models:
         padding: 1              # Padding for convolutional layers
         activation_fn_str: 'relu' # Activation function ('relu' or 'gelu')
         fc_hidden_dim: null     # Dimension of an optional fully connected layer before latent output (null for direct)
-        dropout_rate: 0.2       # Dropout rate for CNN encoder
+        dropout_rate: 0       # Dropout rate for CNN encoder
       mlp:
         num_hidden_layers: 2    # Number of hidden layers in the MLP encoder
         hidden_dim: 256         # Dimension of hidden layers in the MLP encoder
         activation_fn_str: 'relu' # Activation function ('relu' or 'gelu')
-        dropout_rate: 0.1       # Dropout rate for MLP encoder
+        dropout_rate: 0       # Dropout rate for MLP encoder
 
   standard_encoder_decoder:
     variant: "jepa_style"     # Options: "standard", "jepa_style". jepa_style uses a predictor MLP before the decoder, which makes it comparable ot JEPA
     action_emb_dim: 16      # Dimension for embedding actions
-    decoder_dim: 128        # Internal dimension of the Transformer decoder
+    decoder_dim: 32        # Internal dimension of the Transformer decoder
     decoder_depth: 4      # Number of layers in the Transformer decoder
     decoder_heads: 4        # Number of attention heads in the Transformer decoder
     decoder_mlp_dim: 512    # MLP dimension in the Transformer decoder
@@ -116,7 +116,7 @@ models:
       enabled: true
       input_type: "flatten" # Assumes flattened decoded image from StandardEncoderDecoder
       hidden_dims: [128, 64]
-      num_epochs: 1
+      num_epochs: 20
       activation: "relu"
       use_batch_norm: false
       learning_rate: 0.0003
@@ -127,7 +127,7 @@ models:
     larp: # Look-Ahead Reward Predictor configuration
       enabled: true
       hidden_dims: [512, 256, 128]
-      num_epochs: 1
+      num_epochs: 20
       activation: "relu"
       use_batch_norm: false
       learning_rate: 0.0003
@@ -139,7 +139,7 @@ models:
     type: "vicreg"  # Options: "vicreg", "barlow_twins", "dino"
     use_for_jepa: true # Whether to use this auxiliary loss for JEPA training
     use_for_enc_dec: true # Whether to use this auxiliary loss for Encoder-Decoder training
-    weight: 3.0     # General weight for the chosen auxiliary loss
+    weight: 3     # General weight for the chosen auxiliary loss
     params:
       vicreg:
         # For JEPA's use of calculate_reg_terms, only std_coeff and cov_coeff are relevant.
@@ -163,7 +163,7 @@ ppo_agent:
   learning_rate: 0.0003
   total_train_timesteps: 30000 # Timesteps to train PPO before data collection
   n_steps: 1024       # PPO n_steps parameter
-  batch_size: 64      # PPO batch_size parameter
+  batch_size: 8      # PPO batch_size parameter
   n_epochs: 5         # PPO n_epochs parameter
   gamma: 0.99         # PPO gamma parameter
   gae_lambda: 0.95    # PPO gae_lambda parameter
