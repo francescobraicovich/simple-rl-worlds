@@ -3,9 +3,8 @@ import torch.nn as nn
 import copy  # For deepcopying encoder for target network
 
 # Import available encoders
-from .vit import ViT
-from .cnn import CNNEncoder
-from .mlp import MLPEncoder, PredictorMLP
+from .encoder import Encoder # Updated import
+from .mlp import PredictorMLP # MLPEncoder is no longer directly needed here
 from src.utils.weight_init import initialize_weights, count_parameters, print_num_parameters
 
 
@@ -33,58 +32,14 @@ class JEPA(nn.Module):
             image_size, tuple) else (image_size, image_size)
 
         # Encoder Instantiation (Online Encoder)
-        if encoder_params is None:
-            encoder_params = {}
-
-        # Common parameters for all encoders that can be passed directly
-        # For ViT, 'channels' is used for input_channels and 'dim' for latent_dim.
-        # For CNN/MLP, 'input_channels' and 'latent_dim' are used directly.
-
-        if encoder_type == 'vit':
-            # ViT has specific parameter names ('channels' for input_channels, 'dim' for latent_dim)
-            vit_constructor_params = {
-                'image_size': self._image_size_tuple,
-                'patch_size': patch_size,
-                'channels': input_channels,  # ViT expects 'channels'
-                'num_classes': 0,           # For feature extraction, not classification
-                'dim': latent_dim,          # ViT expects 'dim' for the latent dimension
-                'depth': encoder_params.get('depth', 6),
-                'heads': encoder_params.get('heads', 8),
-                'mlp_dim': encoder_params.get('mlp_dim', 1024),
-                # Ensures (batch, dim) output
-                'pool': encoder_params.get('pool', 'cls'),
-                'dropout': encoder_params.get('dropout', 0.),
-                'emb_dropout': encoder_params.get('emb_dropout', 0.)
-            }
-            self.online_encoder = ViT(**vit_constructor_params)
-        elif encoder_type == 'cnn':
-            cnn_constructor_params = {
-                'input_channels': input_channels,
-                'image_size': self._image_size_tuple,
-                'latent_dim': latent_dim,
-                'num_conv_layers': encoder_params.get('num_conv_layers', 3),
-                'base_filters': encoder_params.get('base_filters', 32),
-                'kernel_size': encoder_params.get('kernel_size', 3),
-                'stride': encoder_params.get('stride', 2),
-                'padding': encoder_params.get('padding', 1),
-                'activation_fn_str': encoder_params.get('activation_fn_str', 'relu'),
-                'fc_hidden_dim': encoder_params.get('fc_hidden_dim', None),
-                'dropout_rate': encoder_params.get('dropout_rate', 0.0)  # Added
-            }
-            self.online_encoder = CNNEncoder(**cnn_constructor_params)
-        elif encoder_type == 'mlp':
-            mlp_constructor_params = {
-                'input_channels': input_channels,
-                'image_size': self._image_size_tuple,
-                'latent_dim': latent_dim,
-                'num_hidden_layers': encoder_params.get('num_hidden_layers', 2),
-                'hidden_dim': encoder_params.get('hidden_dim', 512),
-                'activation_fn_str': encoder_params.get('activation_fn_str', 'relu'),
-                'dropout_rate': encoder_params.get('dropout_rate', 0.0)  # Added
-            }
-            self.online_encoder = MLPEncoder(**mlp_constructor_params)
-        else:
-            raise ValueError(f"Unsupported encoder_type: {encoder_type}")
+        self.online_encoder = Encoder(
+            encoder_type=encoder_type,
+            image_size=self._image_size_tuple,
+            patch_size=patch_size,
+            input_channels=input_channels,
+            latent_dim=latent_dim,
+            encoder_params=encoder_params
+        )
 
         # Target Encoder - initialized based on target_encoder_mode
         if self.target_encoder_mode == "none":
