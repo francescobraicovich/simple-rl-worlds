@@ -25,6 +25,7 @@ class EncoderDecoderJEPAStyle(nn.Module):
                 # Internal Predictor config (mirrors JEPA's predictor structure)
                 predictor_hidden_dims,
                 predictor_output_dim,  # This is input_latent_dim for the internal JEPAStateDecoder
+                
                 # Config for the internal JEPAStateDecoder instance
                 jepa_decoder_dim,
                 jepa_decoder_depth,
@@ -57,6 +58,8 @@ class EncoderDecoderJEPAStyle(nn.Module):
             latent_dim=latent_dim,
             encoder_params=encoder_params
         )
+
+        print('Latent dimension of the encoder:', latent_dim)
         
         # Action embedding
         self.action_embedding = nn.Linear(action_dim, action_emb_dim)
@@ -67,6 +70,7 @@ class EncoderDecoderJEPAStyle(nn.Module):
         self.predictor = PredictorMLP(
             input_dim=predictor_input_actual_dim,
             hidden_dims=predictor_hidden_dims,  # Two hidden layers
+            latent_dim=predictor_output_dim,  # Output dimension of the predictor
             activation_fn_str='gelu',  # JEPA uses GELU
             use_batch_norm=False,  # JEPA does not use batch norm in predictor
             dropout_rate=predictor_dropout_rate
