@@ -26,7 +26,7 @@ model_loading:
 
 # --- General Training Configuration ---
 training:
-  num_epochs: 10
+  num_epochs: 20
   batch_size: 64
   learning_rate: 0.003 # General learning rate, can be overridden by specific model configs
   num_workers: 1 # For DataLoader
@@ -115,7 +115,7 @@ models:
     reward_mlp:
       enabled: true
       input_type: "flatten" # Assumes flattened decoded image from StandardEncoderDecoder
-      hidden_dims: [128, 64]
+      hidden_dims: [256, 128]
       num_epochs: 20
       activation: "relu"
       use_batch_norm: false
