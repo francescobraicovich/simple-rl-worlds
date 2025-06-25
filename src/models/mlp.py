@@ -98,6 +98,7 @@ class PredictorMLP(nn.Module):
     def __init__(self,
                  input_dim: int,
                  hidden_dims: list[int],
+                 latent_dim: int = None,
                  activation_fn_str: str = 'relu',
                  use_batch_norm: bool = False,
                  dropout_rate: float = 0.0):
@@ -123,7 +124,11 @@ class PredictorMLP(nn.Module):
             if self.dropout_rate > 0:
                 self.layers.append(nn.Dropout(self.dropout_rate))
             current_dim = hidden_dim
-
+        
+        # Output layer
+        if latent_dim is not None:
+            self.layers.append(nn.Linear(current_dim, latent_dim))
+        
         self.apply(initialize_weights)
 
     def forward(self, x):
