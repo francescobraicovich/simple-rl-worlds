@@ -26,7 +26,7 @@ model_loading:
 
 # --- General Training Configuration ---
 training:
-  num_epochs: 15
+  num_epochs: 10
   batch_size: 64
   learning_rate: 0.003 # General learning rate, can be overridden by specific model configs
   num_workers: 1 # For DataLoader
@@ -47,17 +47,17 @@ training:
 
 # --- Models Configuration ---
 models:
-  shared_latent_dim: 256 # Output dimension of encoders, input to predictors/decoders
-  shared_patch_size: 8   # Global patch_size: Used by ViT encoder, default for decoder_patch_size
+  shared_latent_dim: 32 # Output dimension of encoders, input to predictors/decoders
+  shared_patch_size: 4   # Global patch_size: Used by ViT encoder, default for decoder_patch_size
 
   encoder:
-    type: "cnn"  # Options: "vit", "cnn", "mlp"
+    type: "vit"  # Options: "vit", "cnn", "mlp"
     # Specific parameters for the chosen encoder_type.
     # train.py will select the appropriate sub-dictionary based on 'encoder.type'.
     params:
       vit:
         # patch_size for ViT is handled by train.py using models.shared_patch_size
-        depth: 3                # Number of Transformer blocks in ViT
+        depth: 4                # Number of Transformer blocks in ViT
         heads: 4                # Number of attention heads in ViT
         mlp_dim: 512            # Dimension of the MLP within ViT Transformer blocks
         pool: 'cls'             # Type of pooling ('cls' token or 'mean' pooling)
@@ -82,7 +82,7 @@ models:
     variant: "jepa_style"     # Options: "standard", "jepa_style". jepa_style uses a predictor MLP before the decoder, which makes it comparable ot JEPA
     action_emb_dim: 16      # Dimension for embedding actions
     decoder_dim: 128        # Internal dimension of the Transformer decoder
-    decoder_depth: 3      # Number of layers in the Transformer decoder
+    decoder_depth: 4      # Number of layers in the Transformer decoder
     decoder_heads: 4        # Number of attention heads in the Transformer decoder
     decoder_mlp_dim: 512    # MLP dimension in the Transformer decoder
     decoder_dropout: 0.25    # Dropout for the decoder
@@ -116,7 +116,7 @@ models:
       enabled: true
       input_type: "flatten" # Assumes flattened decoded image from StandardEncoderDecoder
       hidden_dims: [128, 64]
-      num_epochs: 20
+      num_epochs: 1
       activation: "relu"
       use_batch_norm: false
       learning_rate: 0.0003
@@ -127,7 +127,7 @@ models:
     larp: # Look-Ahead Reward Predictor configuration
       enabled: true
       hidden_dims: [512, 256, 128]
-      num_epochs: 20
+      num_epochs: 1
       activation: "relu"
       use_batch_norm: false
       learning_rate: 0.0003
