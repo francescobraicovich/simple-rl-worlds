@@ -10,6 +10,29 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from src.rl_agent import create_ppo_agent, train_ppo_agent
 from src.utils.env_wrappers import ActionRepeatWrapper
+try:
+    from scipy import stats
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+    print("Warning: scipy not available. Distribution checks will be limited.")
+
+try:
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    print("Warning: matplotlib not available. Plot generation disabled.")
+
+try:
+    from sklearn.manifold import TSNE
+    from sklearn.decomposition import PCA
+    SKLEARN_AVAILABLE = True
+except ImportError:
+    SKLEARN_AVAILABLE = False
+    print("Warning: sklearn not available. Advanced distribution visualization disabled.")
+
+import warnings
 # import cv2 # For image resizing - Removed as torchvision.transforms is used
 
 
@@ -174,7 +197,6 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
         terminated = False
         truncated = False
         step_count = 0
-        cumulative_reward_episode = 0.0  # Initialize cumulative reward
 
         while not (terminated or truncated) and step_count < max_steps_per_episode:
             recorded_current_state_img = current_state_img
@@ -337,6 +359,19 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
         else:
             print("No new data was collected, so dataset will not be saved.")
 
+    # Perform distribution check on the train/val split
+    if len(train_dataset) > 0 and len(validation_dataset) > 0:
+        print("\n" + "="*50)
+        print("PERFORMING TRAIN/VAL DISTRIBUTION CHECK")
+        print("="*50)
+        check_validation_distribution(
+            train_dataset, 
+            validation_dataset, 
+            config=config,
+            n_samples=min(500, len(train_dataset), len(validation_dataset)),
+            save_plots=config.get('data', {}).get('save_distribution_plots', False),
+            plot_dir=config.get('data', {}).get('distribution_plot_dir', "validation_plots")
+        )
 
     return train_dataset, validation_dataset
 
@@ -373,6 +408,15 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
                 if metadata.get('collection_method') == 'ppo':
                     print(f"Successfully loaded PPO-collected dataset for environment '{loaded_env_name}' with {metadata.get('num_episodes_collected', 'N/A')} episodes from {dataset_path}.")
                     data_loaded_successfully = True
+
+                    check_validation_distribution(
+                        loaded_train_dataset,
+                        loaded_val_dataset,
+                        config=config,
+                        n_samples=min(500, len(loaded_train_dataset), len(loaded_val_dataset)),
+                        save_plots=config.get('data', {}).get('save_distribution_plots', False),
+                        plot_dir=config.get('data', {}).get('distribution_plot_dir', "validation_plots")
+                    )
                     return loaded_train_dataset, loaded_val_dataset
                 else:
                     print(f"Warning: Loaded dataset from {dataset_path} was not collected using PPO (method: {metadata.get('collection_method', 'unknown')}). Proceeding to collect new data with PPO.")
@@ -426,7 +470,7 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
         print(f"Applying ActionRepeatWrapper with k={action_repetition_k}")
         env = ActionRepeatWrapper(env, action_repetition_k)
         frame_skipping = 0 # Disable internal frame skipping if action repetition wrapper is active
-        print(f"Frame skipping disabled due to ActionRepeatWrapper being active.")
+        print("Frame skipping disabled due to ActionRepeatWrapper being active.")
     elif action_repetition_k == 1:
         print("action_repetition_k is 1, no ActionRepeatWrapper will be applied.")
 
@@ -453,7 +497,7 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
             else:
                 print(f"Warning: PPO policy action_dist.log_std_param found but is not a Tensor. Type: {type(ppo_agent.policy.action_dist.log_std_param)}. Skipping noise addition.")
         else:
-            print(f"Warning: PPO policy does not have a 'log_std' Tensor or 'action_dist.log_std_param' Tensor. Skipping noise addition to log_std.")
+            print("Warning: PPO policy does not have a 'log_std' Tensor or 'action_dist.log_std_param' Tensor. Skipping noise addition to log_std.")
 
     # After training, the env used by PPO (which is `env` wrapped in DummyVecEnv) should still be usable
     # as SB3 usually doesn't close the original envs passed to DummyVecEnv unless DummyVecEnv.close() is called,
@@ -640,7 +684,272 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
         else:
             print("No new PPO data was collected, so dataset will not be saved.")
 
+    # Perform distribution check on the train/val split
+    if len(train_dataset) > 0 and len(validation_dataset) > 0:
+        check_validation_distribution(
+            train_dataset, 
+            validation_dataset, 
+            config=config,
+            n_samples=min(500, len(train_dataset), len(validation_dataset)),
+            save_plots=config.get('data', {}).get('save_distribution_plots', False),
+            plot_dir=config.get('data', {}).get('distribution_plot_dir', "validation_plots")
+        )
+
     return train_dataset, validation_dataset
+
+
+def check_validation_distribution(train_dataset, val_dataset, config=None, n_samples=1000, 
+                                save_plots=False, plot_dir="validation_plots"):
+    """
+    Check if validation data is in distribution with respect to training data for image datasets.
+    Uses basic statistical tests and optionally advanced visualization if dependencies available.
+    
+    Args:
+        train_dataset: Training dataset (ExperienceDataset)
+        val_dataset: Validation dataset (ExperienceDataset)
+        config: Configuration dictionary (optional)
+        n_samples: Number of samples to use for distribution check (for efficiency)
+        save_plots: Whether to save distribution plots (requires matplotlib and sklearn)
+        plot_dir: Directory to save plots
+        
+    Returns:
+        dict: Dictionary containing distribution similarity metrics and test results
+    """
+    if len(train_dataset) == 0 or len(val_dataset) == 0:
+        print("Warning: One or both datasets are empty. Cannot perform distribution check.")
+        return {"status": "error", "message": "Empty datasets"}
+    
+    if not SCIPY_AVAILABLE:
+        print("Warning: scipy not available. Using basic statistical comparisons only.")
+    
+    # Sample data for efficiency if datasets are large
+    train_size = min(len(train_dataset), n_samples)
+    val_size = min(len(val_dataset), n_samples)
+    
+    train_indices = random.sample(range(len(train_dataset)), train_size)
+    val_indices = random.sample(range(len(val_dataset)), val_size)
+    
+    print(f"Checking distribution similarity using {train_size} training and {val_size} validation samples...")
+    
+    # Extract features from images
+    train_features = []
+    val_features = []
+    
+    # Extract pixel statistics and basic features
+    for idx in train_indices:
+        state, action, reward, next_state = train_dataset[idx]
+        if isinstance(state, torch.Tensor):
+            state_np = state.cpu().numpy()
+        else:
+            state_np = np.array(state)
+        
+        # Flatten image and compute basic statistics
+        state_flat = state_np.flatten()
+        features = [
+            np.mean(state_flat),
+            np.std(state_flat),
+            np.median(state_flat),
+            np.min(state_flat),
+            np.max(state_flat),
+            np.percentile(state_flat, 25),
+            np.percentile(state_flat, 75),
+            reward.item() if isinstance(reward, torch.Tensor) else reward
+        ]
+        train_features.append(features)
+    
+    for idx in val_indices:
+        state, action, reward, next_state = val_dataset[idx]
+        if isinstance(state, torch.Tensor):
+            state_np = state.cpu().numpy()
+        else:
+            state_np = np.array(state)
+        
+        # Flatten image and compute basic statistics
+        state_flat = state_np.flatten()
+        features = [
+            np.mean(state_flat),
+            np.std(state_flat),
+            np.median(state_flat),
+            np.min(state_flat),
+            np.max(state_flat),
+            np.percentile(state_flat, 25),
+            np.percentile(state_flat, 75),
+            reward.item() if isinstance(reward, torch.Tensor) else reward
+        ]
+        val_features.append(features)
+    
+    train_features = np.array(train_features)
+    val_features = np.array(val_features)
+    
+    # Statistical tests for each feature
+    results = {}
+    feature_names = ['mean_pixel', 'std_pixel', 'median_pixel', 'min_pixel', 'max_pixel', 
+                    'q25_pixel', 'q75_pixel', 'reward']
+    
+    for i, feature_name in enumerate(feature_names):
+        train_feature = train_features[:, i]
+        val_feature = val_features[:, i]
+        
+        # Basic statistical comparisons
+        mean_diff = abs(np.mean(train_feature) - np.mean(val_feature))
+        std_diff = abs(np.std(train_feature) - np.std(val_feature))
+        
+        # Normalized differences (to handle different scales)
+        mean_train = np.mean(train_feature)
+        normalized_mean_diff = mean_diff / (abs(mean_train) + 1e-8)
+        normalized_std_diff = std_diff / (np.std(train_feature) + 1e-8)
+        
+        result = {
+            'train_mean': np.mean(train_feature),
+            'val_mean': np.mean(val_feature),
+            'train_std': np.std(train_feature),
+            'val_std': np.std(val_feature),
+            'mean_diff': mean_diff,
+            'std_diff': std_diff,
+            'normalized_mean_diff': normalized_mean_diff,
+            'normalized_std_diff': normalized_std_diff
+        }
+        
+        # Advanced statistical tests if scipy is available
+        if SCIPY_AVAILABLE:
+            try:
+                # Kolmogorov-Smirnov test
+                ks_stat, ks_p = stats.ks_2samp(train_feature, val_feature)
+                result['ks_statistic'] = ks_stat
+                result['ks_p_value'] = ks_p
+                
+                # Mann-Whitney U test (non-parametric)
+                mw_stat, mw_p = stats.mannwhitneyu(train_feature, val_feature, alternative='two-sided')
+                result['mw_statistic'] = mw_stat
+                result['mw_p_value'] = mw_p
+                
+                # Anderson-Darling test if samples are large enough
+                if len(train_feature) > 25 and len(val_feature) > 25:
+                    try:
+                        # Use Anderson-Darling 2-sample test if available
+                        ad_stat = stats.anderson_ksamp([train_feature, val_feature])
+                        result['ad_statistic'] = ad_stat.statistic
+                        result['ad_p_value'] = getattr(ad_stat, 'significance_level', None)
+                    except Exception as e:
+                        print(f"Anderson-Darling test failed for {feature_name}: {e}")
+                        result['ad_statistic'] = None
+                        result['ad_p_value'] = None
+                else:
+                    result['ad_statistic'] = None
+                    result['ad_p_value'] = None
+                    
+            except Exception as e:
+                print(f"Statistical tests failed for {feature_name}: {e}")
+        
+        results[feature_name] = result
+    
+    # Overall assessment
+    significant_features = []
+    alpha = 0.05  # Significance level
+    
+    for feature_name, test_results in results.items():
+        is_significant = False
+        
+        if SCIPY_AVAILABLE and 'ks_p_value' in test_results and 'mw_p_value' in test_results:
+            # Use statistical tests if available
+            if test_results['ks_p_value'] < alpha or test_results['mw_p_value'] < alpha:
+                is_significant = True
+        else:
+            # Use heuristic thresholds for basic comparisons
+            if (test_results['normalized_mean_diff'] > 0.1 or 
+                test_results['normalized_std_diff'] > 0.2):
+                is_significant = True
+        
+        if is_significant:
+            significant_features.append(feature_name)
+    
+    # Dimensionality reduction for visualization
+    if save_plots and MATPLOTLIB_AVAILABLE and SKLEARN_AVAILABLE:
+        os.makedirs(plot_dir, exist_ok=True)
+        
+        try:
+            # PCA visualization
+            all_features = np.vstack([train_features, val_features])
+            labels = np.concatenate([np.zeros(len(train_features)), np.ones(len(val_features))])
+            
+            if all_features.shape[1] > 2:
+                pca = PCA(n_components=2)
+                features_2d = pca.fit_transform(all_features)
+                
+                plt.figure(figsize=(10, 6))
+                plt.subplot(1, 2, 1)
+                train_mask = labels == 0
+                val_mask = labels == 1
+                plt.scatter(features_2d[train_mask, 0], features_2d[train_mask, 1], 
+                           alpha=0.6, label='Training', s=20)
+                plt.scatter(features_2d[val_mask, 0], features_2d[val_mask, 1], 
+                           alpha=0.6, label='Validation', s=20)
+                plt.xlabel(f'PCA Component 1 (var: {pca.explained_variance_ratio_[0]:.2f})')
+                plt.ylabel(f'PCA Component 2 (var: {pca.explained_variance_ratio_[1]:.2f})')
+                plt.title('PCA: Training vs Validation Distribution')
+                plt.legend()
+                
+                # t-SNE visualization (if not too many samples)
+                if len(all_features) <= 1000:
+                    plt.subplot(1, 2, 2)
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, len(all_features)//4))
+                        features_tsne = tsne.fit_transform(all_features)
+                    
+                    plt.scatter(features_tsne[train_mask, 0], features_tsne[train_mask, 1], 
+                               alpha=0.6, label='Training', s=20)
+                    plt.scatter(features_tsne[val_mask, 0], features_tsne[val_mask, 1], 
+                               alpha=0.6, label='Validation', s=20)
+                    plt.xlabel('t-SNE Component 1')
+                    plt.ylabel('t-SNE Component 2')
+                    plt.title('t-SNE: Training vs Validation Distribution')
+                    plt.legend()
+                
+                plt.tight_layout()
+                plt.savefig(os.path.join(plot_dir, 'distribution_comparison.png'), dpi=150, bbox_inches='tight')
+                plt.close()
+                
+        except Exception as e:
+            print(f"Warning: Could not create distribution plots: {e}")
+    elif save_plots:
+        print("Warning: Plotting disabled due to missing dependencies (matplotlib and/or sklearn)")
+    
+    # Summary
+    in_distribution = len(significant_features) == 0
+    
+    summary = {
+        'in_distribution': in_distribution,
+        'significant_features': significant_features,
+        'num_significant': len(significant_features),
+        'total_features': len(feature_names),
+        'train_samples': train_size,
+        'val_samples': val_size,
+        'feature_tests': results,
+        'dependencies': {
+            'scipy_available': SCIPY_AVAILABLE,
+            'matplotlib_available': MATPLOTLIB_AVAILABLE,
+            'sklearn_available': SKLEARN_AVAILABLE
+        }
+    }
+    
+    # Print summary
+    print("\n=== Validation Distribution Check Results ===")
+    print(f"Training samples analyzed: {train_size}")
+    print(f"Validation samples analyzed: {val_size}")
+    print(f"Features with significant distribution differences: {len(significant_features)}/{len(feature_names)}")
+    
+    if significant_features:
+        print(f"Significantly different features: {', '.join(significant_features)}")
+        print("  WARNING: Validation set may not be representative of training distribution!")
+    else:
+        print(" Validation set appears to be in distribution with training set")
+    
+    if len(significant_features) > len(feature_names) // 2:
+        print(" CRITICAL: More than half of features show significant differences!")
+        print("   Consider re-shuffling or collecting more diverse data.")
+    
+    return summary
 
 
 if __name__ == '__main__':
