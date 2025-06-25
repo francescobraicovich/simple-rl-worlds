@@ -60,6 +60,7 @@ class JEPA(nn.Module):
         self.predictor = PredictorMLP(
             input_dim=predictor_input_actual_dim,
             hidden_dims=predictor_hidden_dims,  # Two hidden layers
+            latent_dim=latent_dim,  # Output dim of predictor
             activation_fn_str='gelu',  # JEPA uses GELU
             use_batch_norm=False,  # JEPA does not use batch norm in predictor
             dropout_rate=predictor_dropout_rate
