@@ -35,8 +35,8 @@ def initialize_optimizers(models_map, config): # Renamed models to models_map fo
         #print(f"JEPA optimizer initialized with LR: {lr_jepa}")
 
     # Optimizer for Encoder-Decoder Reward MLP (if enabled and model exists)
-    reward_pred_config = models_config.get('reward_predictors', {})
-    enc_dec_mlp_config = reward_pred_config.get('encoder_decoder_reward_mlp', {})
+    reward_pred_config = models_config.get('reward_predictors')
+    enc_dec_mlp_config = reward_pred_config.get('reward_mlp')
     reward_mlp_enc_dec_model = models_map.get('reward_mlp_enc_dec')
     if enc_dec_mlp_config.get('enabled', False) and reward_mlp_enc_dec_model:
         lr_enc_dec_reward = enc_dec_mlp_config.get('learning_rate', 0.0003)
@@ -50,7 +50,7 @@ def initialize_optimizers(models_map, config): # Renamed models to models_map fo
         optimizers['reward_mlp_enc_dec'] = None
 
     # Optimizer for JEPA Reward MLP (if enabled and model exists)
-    jepa_mlp_config = reward_pred_config.get('jepa_reward_mlp', {})
+    jepa_mlp_config = reward_pred_config.get('reward_mlp')
     reward_mlp_jepa_model = models_map.get('reward_mlp_jepa')
     if jepa_mlp_config.get('enabled', False) and reward_mlp_jepa_model:
         lr_jepa_reward = jepa_mlp_config.get('learning_rate', 0.0003)
@@ -82,10 +82,10 @@ def initialize_optimizers(models_map, config): # Renamed models to models_map fo
         # No message needed if decoder itself is None, model_setup would have printed it's disabled.
 
     # --- Optimizers for LARP Models ---
-    larp_config_main = reward_pred_config.get('larp', {})
+    larp_config_main = reward_pred_config.get('larp')
 
     # Optimizer for Encoder-Decoder LARP
-    enc_dec_larp_config = larp_config_main.get('encoder_decoder_larp', {})
+    enc_dec_larp_config = larp_config_main
     larp_enc_dec_model = models_map.get('larp_enc_dec')
     if enc_dec_larp_config.get('enabled', False) and larp_enc_dec_model:
         lr_larp_enc_dec = enc_dec_larp_config.get('learning_rate', general_lr) # Default to general_lr
@@ -99,7 +99,7 @@ def initialize_optimizers(models_map, config): # Renamed models to models_map fo
         optimizers['larp_enc_dec'] = None
 
     # Optimizer for JEPA LARP
-    jepa_larp_config = larp_config_main.get('jepa_larp', {})
+    jepa_larp_config = larp_config_main
     larp_jepa_model = models_map.get('larp_jepa')
     if jepa_larp_config.get('enabled', False) and larp_jepa_model:
         lr_larp_jepa = jepa_larp_config.get('learning_rate', general_lr) # Default to general_lr
