@@ -27,8 +27,8 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
     if specific_encoder_params is None:
         specific_encoder_params = {}
 
-    global_patch_size = models_config.get('shared_patch_size', 16)
-    shared_latent_dim = models_config.get('shared_latent_dim', 128)
+    global_patch_size = models_config.get('shared_patch_size')
+    shared_latent_dim = models_config.get('shared_latent_dim')
 
     if encoder_type == 'vit':
         if 'patch_size' not in specific_encoder_params or specific_encoder_params['patch_size'] is None:
