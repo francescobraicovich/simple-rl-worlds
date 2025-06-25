@@ -4,9 +4,7 @@ from einops import rearrange  # For use in forward method
 from einops.layers.torch import Rearrange  # For use in __init__ as a layer
 
 # Import available encoders
-from .vit import ViT
-from .cnn import CNNEncoder
-from .mlp import MLPEncoder
+from .encoder import Encoder # Updated import
 from src.utils.weight_init import initialize_weights, print_num_parameters
 
 
@@ -52,53 +50,14 @@ class StandardEncoderDecoder(nn.Module):
         num_output_patches = self.output_num_patches_h * self.output_num_patches_w
 
         # Encoder Instantiation
-        if encoder_params is None:
-            encoder_params = {}
-
-        if encoder_type == 'vit':
-            vit_params = {
-                'image_size': self._image_size_tuple,
-                'patch_size': patch_size,  # ViT needs its specific patch_size for input processing
-                'channels': input_channels,
-                'num_classes': 0,  # Not used for feature extraction
-                'dim': latent_dim,
-                'depth': encoder_params.get('depth', 6),
-                'heads': encoder_params.get('heads', 8),
-                'mlp_dim': encoder_params.get('mlp_dim', 1024),
-                # Make sure ViT returns (b, dim)
-                'pool': encoder_params.get('pool', 'cls'),
-                'dropout': encoder_params.get('dropout', 0.),
-                'emb_dropout': encoder_params.get('emb_dropout', 0.)
-            }
-            self.encoder = ViT(**vit_params)
-        elif encoder_type == 'cnn':
-            cnn_params = {
-                'input_channels': input_channels,
-                'image_size': self._image_size_tuple,
-                'latent_dim': latent_dim,
-                'num_conv_layers': encoder_params.get('num_conv_layers', 3),
-                'base_filters': encoder_params.get('base_filters', 32),
-                'kernel_size': encoder_params.get('kernel_size', 3),
-                'stride': encoder_params.get('stride', 2),
-                'padding': encoder_params.get('padding', 1),
-                'activation_fn_str': encoder_params.get('activation_fn_str', 'relu'),
-                'fc_hidden_dim': encoder_params.get('fc_hidden_dim', None),
-                'dropout_rate': encoder_params.get('dropout_rate', 0.0)  # Added
-            }
-            self.encoder = CNNEncoder(**cnn_params)
-        elif encoder_type == 'mlp':
-            mlp_params = {
-                'input_channels': input_channels,
-                'image_size': self._image_size_tuple,
-                'latent_dim': latent_dim,
-                'num_hidden_layers': encoder_params.get('num_hidden_layers', 2),
-                'hidden_dim': encoder_params.get('hidden_dim', 512),
-                'activation_fn_str': encoder_params.get('activation_fn_str', 'relu'),
-                'dropout_rate': encoder_params.get('dropout_rate', 0.0)  # Added
-            }
-            self.encoder = MLPEncoder(**mlp_params)
-        else:
-            raise ValueError(f"Unsupported encoder_type: {encoder_type}")
+        self.encoder = Encoder(
+            encoder_type=encoder_type,
+            image_size=self._image_size_tuple,
+            patch_size=patch_size, # This is ViT's patch_size, other encoders might not use it directly
+            input_channels=input_channels,
+            latent_dim=latent_dim,
+            encoder_params=encoder_params
+        )
 
         # Action embedding
         self.action_embedding = nn.Linear(action_dim, action_emb_dim)
