@@ -43,16 +43,20 @@ class VICRegLoss(nn.Module):
     def calculate_reg_terms(self, z):
         z_std = torch.sqrt(z.var(dim=0) + self.eps)  # (D,)
         std_loss_val = torch.mean(F.relu(1 - z_std))  # Hinge loss
+        #print(f"std_loss_val: {std_loss_val}")
 
         z_centered = z - z.mean(dim=0)
+
         cov_z = (z_centered.T @ z_centered) / (z.size(0) - 1)
+        #print(f"cov_z: {cov_z}")
+        #print(f"cov_z shape: {cov_z.shape}")
         cov_loss_val = (cov_z.fill_diagonal_(0).pow_(2).sum()) / z.size(1)
+        #print('cov_loss_val:', cov_loss_val)
 
         weighted_std_loss = self.std_coeff * std_loss_val
         weighted_cov_loss = self.cov_coeff * cov_loss_val
 
         total_reg_loss = weighted_std_loss + weighted_cov_loss
-
         return total_reg_loss, weighted_std_loss, weighted_cov_loss
 
 

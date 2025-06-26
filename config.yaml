@@ -47,7 +47,7 @@ training:
 
 # --- Models Configuration ---
 models:
-  shared_latent_dim: 32 # Output dimension of encoders, input to predictors/decoders
+  shared_latent_dim: 64 # Output dimension of encoders, input to predictors/decoders
   shared_patch_size: 4   # Global patch_size: Used by ViT encoder, default for decoder_patch_size
 
   encoder:
@@ -80,12 +80,12 @@ models:
 
   standard_encoder_decoder:
     variant: "jepa_style"     # Options: "standard", "jepa_style". jepa_style uses a predictor MLP before the decoder, which makes it comparable ot JEPA
-    action_emb_dim: 16      # Dimension for embedding actions
-    decoder_dim: 32        # Internal dimension of the Transformer decoder
-    decoder_depth: 4      # Number of layers in the Transformer decoder
+    action_emb_dim: 32      # Dimension for embedding actions
+    decoder_dim: 64        # Internal dimension of the Transformer decoder
+    decoder_depth: 5      # Number of layers in the Transformer decoder
     decoder_heads: 4        # Number of attention heads in the Transformer decoder
     decoder_mlp_dim: 512    # MLP dimension in the Transformer decoder
-    decoder_dropout: 0.25    # Dropout for the decoder
+    decoder_dropout: 0    # Dropout for the decoder
     # If models.shared_patch_size is used, ensure your training script handles the defaulting logic.
     decoder_patch_size: 4   # Patch size for reconstructing output. Defaults to models.shared_patch_size if null/not present.
 
@@ -93,7 +93,7 @@ models:
     learning_rate: 0.003    # Specific learning rate for JEPA optimizer
     # predictor_output_dim for JEPA model is models.shared_latent_dim
     predictor_hidden_dims: [256, 256] # Hidden dimension for the JEPA predictor MLP. Also used by enc_dec_jepa_style.
-    predictor_dropout_rate: 0.3  # Dropout rate for JEPA predictor MLP layers. Also used by enc_dec_jepa_style.
+    predictor_dropout_rate: 0  # Dropout rate for JEPA predictor MLP layers. Also used by enc_dec_jepa_style.
     ema_decay: 0.99              # EMA decay rate for updating the target encoder in JEPA
     target_encoder_mode: "vjepa2" # Options: "default", "vjepa2", "none"
     # For VICRegLoss coefficients used in JEPA's regularization terms (if not using full auxiliary_loss block for this)
