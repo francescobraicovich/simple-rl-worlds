@@ -184,3 +184,5 @@ cython_debug/
 /wandb
 
 .vscode
+
+/evaluation_plots
