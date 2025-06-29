@@ -260,9 +260,6 @@ class RewardPlotter:
         plt.tight_layout()
         plt.savefig(plot_filename)
         plt.close(fig)
-        
-        print(f"  Saved {self.model_type} scatter plot to {plot_filename}")
-
 
 def create_shared_validation_plotters(config, main_model_dir, random_seed=42):
     """
