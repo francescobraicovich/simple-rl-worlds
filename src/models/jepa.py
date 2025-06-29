@@ -15,19 +15,21 @@ class JEPA(nn.Module):
                  input_channels,
                  action_dim,
                  action_emb_dim,
+                 action_type: str, # New: 'discrete' or 'continuous'
                  latent_dim,  # Output dim of any encoder
                  predictor_hidden_dims,
                  ema_decay=0.996,
                  encoder_type='vit',  # New: 'vit', 'cnn', 'mlp'
                  encoder_params: dict = None,  # New: dict to hold encoder-specific params
-                  target_encoder_mode: str = "default", # Added: "default", "vjepa2", "none"
-                  predictor_dropout_rate: float = 0.0  # Added
+                 target_encoder_mode: str = "default", # Added: "default", "vjepa2", "none"
+                 predictor_dropout_rate: float = 0.0  # Added
                  ):
         super().__init__()
 
         self.ema_decay = ema_decay
         self.target_encoder_mode = target_encoder_mode
         self.predictor_dropout_rate = predictor_dropout_rate  # Stored
+        self.action_type = action_type # Store action_type
         self._image_size_tuple = image_size if isinstance(
             image_size, tuple) else (image_size, image_size)
 
@@ -51,7 +53,14 @@ class JEPA(nn.Module):
                 param.requires_grad = False
 
         # Action embedding
-        self.action_embedding = nn.Linear(action_dim, action_emb_dim)
+        if self.action_type == 'discrete':
+            # action_dim is num_actions for discrete
+            self.action_embedding = nn.Embedding(action_dim, action_emb_dim)
+        elif self.action_type == 'continuous':
+            # action_dim is the dimensionality of the action vector
+            self.action_embedding = nn.Linear(action_dim, action_emb_dim)
+        else:
+            raise ValueError(f"Unsupported action_type: {self.action_type}")
 
         # Predictor Network (MLP)
         # JEPA-style predictor MLP (mimicking JEPA.predictor structure)
@@ -86,10 +95,25 @@ class JEPA(nn.Module):
 
     def forward(self, s_t, action, s_t_plus_1):
         # s_t: current state image (batch, c, h, w)
-        # action: action taken (batch, action_dim)
+        # action: action taken (batch, action_dim) for continuous, or (batch,) or (batch,1) for discrete
         # s_t_plus_1: next state image (batch, c, h, w)
 
-        embedded_action = self.action_embedding(action)  # a_t_emb
+        if self.action_type == 'discrete':
+            # Ensure action is long and squeezed if it's (batch, 1)
+            if action.ndim == 2 and action.shape[1] == 1:
+                action = action.squeeze(1)
+            if action.dtype != torch.long:
+                action = action.long()
+            embedded_action = self.action_embedding(action) # (batch, action_emb_dim)
+        elif self.action_type == 'continuous':
+            # Ensure action is float
+            if action.dtype != torch.float32:
+                action = action.float() # Or match the model's default dtype
+            embedded_action = self.action_embedding(action)  # (batch, action_emb_dim)
+        else:
+            # This case should have been caught in __init__, but as a safeguard:
+            raise ValueError(f"Unsupported action_type in forward pass: {self.action_type}")
+
 
         if self.target_encoder_mode == "default":
             # Generate representations using TARGET encoder (EMA updated, no gradients for these ops)
