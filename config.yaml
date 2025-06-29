@@ -28,9 +28,9 @@ model_loading:
 training:
   num_epochs: 20
   batch_size: 64
-  learning_rate: 0.003 # General learning rate, can be overridden by specific model configs
+  learning_rate: 0.0003 # General learning rate, reduced for stability
   num_workers: 1 # For DataLoader
-  log_interval: 50 # Log training progress every N batches
+  log_interval: 20 # Log training progress every N batches
   frame_skipping: 0 # Number of frames to skip. Note: If using action_repetition_k in PPO, this should ideally be 0.
   options:
     skip_std_enc_dec_training_if_loaded: false
@@ -71,7 +71,7 @@ models:
         padding: 1              # Padding for convolutional layers
         activation_fn_str: 'relu' # Activation function ('relu' or 'gelu')
         fc_hidden_dim: null     # Dimension of an optional fully connected layer before latent output (null for direct)
-        dropout_rate: 0       # Dropout rate for CNN encoder
+        dropout_rate: 0         # Dropout rate for CNN encoder
       mlp:
         num_hidden_layers: 2    # Number of hidden layers in the MLP encoder
         hidden_dim: 256         # Dimension of hidden layers in the MLP encoder
@@ -90,7 +90,7 @@ models:
     decoder_patch_size: 4   # Patch size for reconstructing output. Defaults to models.shared_patch_size if null/not present.
 
   jepa:
-    learning_rate: 0.003    # Specific learning rate for JEPA optimizer
+    learning_rate: 0.0003    # Specific learning rate for JEPA optimizer, reduced for stability
     # predictor_output_dim for JEPA model is models.shared_latent_dim
     predictor_hidden_dims: [256, 256] # Hidden dimension for the JEPA predictor MLP. Also used by enc_dec_jepa_style.
     predictor_dropout_rate: 0  # Dropout rate for JEPA predictor MLP layers. Also used by enc_dec_jepa_style.
@@ -139,14 +139,16 @@ models:
     type: "vicreg"  # Options: "vicreg", "barlow_twins", "dino"
     use_for_jepa: true # Whether to use this auxiliary loss for JEPA training
     use_for_enc_dec: true # Whether to use this auxiliary loss for Encoder-Decoder training
-    weight: 3     # General weight for the chosen auxiliary loss
+    weight: 1     # General weight for the chosen auxiliary loss
     params:
       vicreg:
         # For JEPA's use of calculate_reg_terms, only std_coeff and cov_coeff are relevant.
-        sim_coeff: 0.0  # Default to 0 as per current train.py for reg_terms
-        std_coeff: 1.0
-        cov_coeff: 1.0
+        sim_coeff: 1.0  # Default to 0 as per current train.py for reg_terms
+        std_coeff: 1.0  # Reduced from 25.0 for stability
+        cov_coeff: 0.1  # Reduced from 1.0 for stability
         eps: 0.0001     # Default VICRegLoss epsilon
+        proj_hidden_dim: 256
+        proj_output_dim: 256
       barlow_twins:
         lambda_param: 0.0051
         eps: 0.00001
