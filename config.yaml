@@ -26,7 +26,7 @@ model_loading:
 
 # --- General Training Configuration ---
 training:
-  num_epochs: 20
+  num_epochs: 1
   batch_size: 64
   learning_rate: 0.0003 # General learning rate, reduced for stability
   num_workers: 1 # For DataLoader
@@ -116,7 +116,7 @@ models:
       enabled: true
       input_type: "flatten" # Assumes flattened decoded image from StandardEncoderDecoder
       hidden_dims: [256, 128]
-      num_epochs: 20
+      num_epochs: 1
       activation: "relu"
       use_batch_norm: false
       learning_rate: 0.0003
@@ -127,7 +127,7 @@ models:
     larp: # Look-Ahead Reward Predictor configuration
       enabled: true
       hidden_dims: [512, 256, 128]
-      num_epochs: 20
+      num_epochs: 1
       activation: "relu"
       use_batch_norm: false
       learning_rate: 0.0003
