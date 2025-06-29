@@ -47,7 +47,7 @@ training:
 
 # --- Models Configuration ---
 models:
-  shared_latent_dim: 64 # Output dimension of encoders, input to predictors/decoders
+  shared_latent_dim: 8 # Output dimension of encoders, input to predictors/decoders
   shared_patch_size: 4   # Global patch_size: Used by ViT encoder, default for decoder_patch_size
 
   encoder:
@@ -61,7 +61,7 @@ models:
         heads: 4                # Number of attention heads in ViT
         mlp_dim: 512            # Dimension of the MLP within ViT Transformer blocks
         pool: 'cls'             # Type of pooling ('cls' token or 'mean' pooling)
-        dropout: 0              # Dropout rate in ViT
+        dropout: 0.2              # Dropout rate in ViT
         emb_dropout: 0          # Embedding dropout rate in ViT
       cnn:
         num_conv_layers: 3      # Number of convolutional layers
@@ -85,7 +85,7 @@ models:
     decoder_depth: 5      # Number of layers in the Transformer decoder
     decoder_heads: 4        # Number of attention heads in the Transformer decoder
     decoder_mlp_dim: 512    # MLP dimension in the Transformer decoder
-    decoder_dropout: 0    # Dropout for the decoder
+    decoder_dropout: 0.2    # Dropout for the decoder
     # If models.shared_patch_size is used, ensure your training script handles the defaulting logic.
     decoder_patch_size: 4   # Patch size for reconstructing output. Defaults to models.shared_patch_size if null/not present.
 
@@ -115,25 +115,25 @@ models:
     reward_mlp:
       enabled: true
       input_type: "flatten" # Assumes flattened decoded image from StandardEncoderDecoder
-      hidden_dims: [256, 128]
-      num_epochs: 1
+      hidden_dims: [512, 512, 512]
+      num_epochs: 20
       activation: "relu"
       use_batch_norm: false
       learning_rate: 0.0003
       log_interval: 100
       dropout_rate: 0.2
-      early_stopping_patience: 5
+      early_stopping_patience: 3
     
     larp: # Look-Ahead Reward Predictor configuration
       enabled: true
-      hidden_dims: [512, 256, 128]
-      num_epochs: 1
+      hidden_dims: [512, 512, 512]
+      num_epochs: 20
       activation: "relu"
       use_batch_norm: false
       learning_rate: 0.0003
       log_interval: 100
       dropout_rate: 0.2
-      early_stopping_patience: 5
+      early_stopping_patience: 3
 
   auxiliary_loss: # Configuration for auxiliary losses like VICReg, Barlow Twins, DINO
     type: "vicreg"  # Options: "vicreg", "barlow_twins", "dino"
