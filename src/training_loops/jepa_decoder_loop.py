@@ -1,10 +1,7 @@
 import torch
 import torch.nn.functional as F # For F.one_hot
 import os # For os.path.exists in early stopping save/load
-import matplotlib.pyplot as plt
-import numpy as np
 # import time # Not used in this specific function directly
-import wandb # For wandb.Image
 
 """Handles the training loop for the JEPA state decoder model."""
 
@@ -15,7 +12,8 @@ def train_jepa_state_decoder(
     decoder_training_config, # This is jepa_decoder_training_config from the main function
     main_model_dir, # This is model_dir from the main function, for paths
     general_log_interval, # Fallback log interval
-    wandb_run # New argument for wandb
+    wandb_run, # New argument for wandb
+    validation_plotter=None # New argument for shared validation plotting
 ):
     """
     Handles the training and validation process for the JEPA (Joint Embedding
@@ -48,6 +46,8 @@ def train_jepa_state_decoder(
         general_log_interval (int): Fallback log interval if not specified in
                                     `decoder_training_config`.
         wandb_run (wandb.sdk.wandb_run.Run, optional): Active Weights & Biases run object.
+        validation_plotter (ValidationPlotter, optional): Shared validation plotter for 
+                                                          consistent plotting across models.
 
     Returns:
         str or None: The path to the best saved model checkpoint if early stopping
@@ -75,10 +75,6 @@ def train_jepa_state_decoder(
     decoder_cp_name = decoder_training_config.get('checkpoint_path', 'best_jepa_decoder.pth')
     # Construct full checkpoint path using main_model_dir
     checkpoint_path_decoder = os.path.join(main_model_dir, decoder_cp_name)
-
-    # Plotting directory from config
-    validation_plot_dir_config = decoder_training_config.get('validation_plot_dir', "validation_plots/decoder")
-    validation_plot_dir_full = validation_plot_dir_config
 
     early_stopping_state_decoder = {
         'best_val_loss': float('inf'),
@@ -166,12 +162,23 @@ def train_jepa_state_decoder(
         # Validation Phase
         if val_dataloader:
             jepa_decoder_model.eval()
-            if jepa_model: jepa_model.eval()
+            if jepa_model:
+                jepa_model.eval()
+
+            # Set random state for consistent validation plotting across models
+            if validation_plotter:
+                validation_plotter.set_epoch_random_state(epoch)
+                # Select random batch and samples for plotting
+                plot_batch_data, plot_sample_indices = validation_plotter.select_random_batch_and_samples(
+                    val_dataloader, device
+                )
 
             epoch_loss_val = 0
             epoch_loss_mse_reconstruction_val = 0
             epoch_loss_mse_diff_val = 0
             num_batches_val = len(val_dataloader)
+            
+            # Store predictions for plotting if needed
             with torch.no_grad():
                 for val_batch_idx, (s_t_val, a_t_val, _, s_t_plus_1_val) in enumerate(val_dataloader):
                     s_t_val, s_t_plus_1_val = s_t_val.to(device), s_t_plus_1_val.to(device)
@@ -184,7 +191,8 @@ def train_jepa_state_decoder(
 
                     if not jepa_model:
                          print("Error: Main JEPA model is None during JEPA decoder validation.")
-                         early_stopping_state_decoder['early_stop_flag'] = True; break
+                         early_stopping_state_decoder['early_stop_flag'] = True
+                         break
                     pred_emb_val, _, _, _ = jepa_model(s_t_val, a_t_val_processed, s_t_plus_1_val)
                     jepa_predictor_output_val = pred_emb_val.detach()
                     reconstructed_s_t_plus_1_val = jepa_decoder_model(jepa_predictor_output_val)
@@ -198,39 +206,22 @@ def train_jepa_state_decoder(
                     epoch_loss_mse_reconstruction_val += loss_mse_reconstruction_val.item()
                     epoch_loss_mse_diff_val += loss_mse_diff_val.item()
 
-                    # Plotting logic
-                    if val_batch_idx == 10 and decoder_training_config.get('enable_validation_plot', True):
-                        os.makedirs(validation_plot_dir_full, exist_ok=True)
-                        num_plot_samples = min(4, s_t_val.shape[0])
-                        random_indices = np.random.choice(s_t_val.shape[0], num_plot_samples, replace=False) if s_t_val.shape[0] > num_plot_samples else range(s_t_val.shape[0])
-                        for i in random_indices:
-                            curr_img_np = s_t_val[i].cpu().numpy()
-                            true_img_np = s_t_plus_1_val[i].cpu().numpy()
-                            pred_img_np = reconstructed_s_t_plus_1_val[i].cpu().numpy()
+                    # Check if this is the batch selected for plotting
+                    if (plot_batch_data is not None and 
+                        torch.equal(s_t_val, plot_batch_data[0]) and
+                        torch.equal(s_t_plus_1_val, plot_batch_data[3])):
+                        # Store predictions for the selected samples
+                        plot_predictions = reconstructed_s_t_plus_1_val[plot_sample_indices]
 
-                            # Process all three images consistently
-                            processed_images = []
-                            for img_np in [curr_img_np, true_img_np, pred_img_np]:
-                                if img_np.shape[0] == 1 or img_np.shape[0] == 3: # C, H, W
-                                    img_np = np.transpose(img_np, (1, 2, 0))
-                                if img_np.shape[-1] == 1: # Grayscale, squeeze channel
-                                    img_np = img_np.squeeze(axis=2)
-                                if img_np.dtype == np.float32 or img_np.dtype == np.float64: # Clip if float
-                                    img_np = np.clip(img_np, 0, 1)
-                                processed_images.append(img_np)
-
-                            curr_img_processed, true_img_processed, pred_img_processed = processed_images
-
-                            fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-                            axes[0].imshow(curr_img_processed); axes[0].set_title("Current State (s_t)"); axes[0].axis('off')
-                            axes[1].imshow(true_img_processed); axes[1].set_title("True Next State (s_{t+1})"); axes[1].axis('off')
-                            axes[2].imshow(pred_img_processed); axes[2].set_title("Predicted Next State (s'_{t+1})"); axes[2].axis('off')
-
-                            plot_filename = os.path.join(validation_plot_dir_full, f"epoch_{epoch+1}_sample_{i}_comparison.png")
-                            plt.savefig(plot_filename)
-                            plt.close(fig)
-
-                        print(f"  Saved {num_plot_samples} validation image samples to {validation_plot_dir_full}")
+                # Handle plotting after validation loop
+                if validation_plotter and plot_batch_data is not None and plot_predictions is not None:
+                    validation_plotter.plot_validation_samples(
+                        batch_data=plot_batch_data,
+                        selected_indices=plot_sample_indices,
+                        predictions=plot_predictions,
+                        epoch=epoch + 1,
+                        model_name="JEPA Decoder"
+                    )
                 if early_stopping_state_decoder['early_stop_flag']: break
 
                 avg_val_loss = epoch_loss_val / num_batches_val if num_batches_val > 0 else float('inf')
