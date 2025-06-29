@@ -12,6 +12,7 @@ def initialize_loss_functions(config, device, jepa_model_latent_dim=None):
 
     # Auxiliary Loss Setup
     aux_loss_config = config.get('models', {}).get('auxiliary_loss', {})
+    latent_dim = config.get('models', {}).get('shared_latent_dim')
     aux_loss_type = aux_loss_config.get('type', 'vicreg').lower()
     aux_loss_weight = aux_loss_config.get('weight', 1.0) # Weight is used in training loop
     aux_loss_params_all = aux_loss_config.get('params', {})
@@ -24,9 +25,12 @@ def initialize_loss_functions(config, device, jepa_model_latent_dim=None):
     if aux_loss_type == 'vicreg':
         vicreg_params = aux_loss_params_all.get('vicreg', {})
         aux_fn = VICRegLoss(
-            sim_coeff=vicreg_params.get('sim_coeff', 0.0), # Adjusted from 25.0, common default is 0 or 1
-            std_coeff=vicreg_params.get('std_coeff', 25.0), # Adjusted from 25.0
-            cov_coeff=vicreg_params.get('cov_coeff', 1.0),
+            sim_coeff=vicreg_params.get('sim_coeff'), # Adjusted from 25.0, common default is 0 or 1
+            std_coeff=vicreg_params.get('std_coeff'), # Adjusted from 25.0
+            cov_coeff=vicreg_params.get('cov_coeff'),
+            proj_hidden_dim=vicreg_params.get('proj_hidden_dim'),
+            proj_output_dim=vicreg_params.get('proj_output_dim'),
+            representation_dim=latent_dim,
             eps=vicreg_params.get('eps', 1e-4)
         ).to(device)
         aux_name = "VICReg"
