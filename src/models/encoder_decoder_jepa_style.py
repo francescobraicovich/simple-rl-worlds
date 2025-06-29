@@ -20,6 +20,7 @@ class EncoderDecoderJEPAStyle(nn.Module):
                 input_channels,
                 action_dim,
                 action_emb_dim,
+                action_type: str, # New: 'discrete' or 'continuous'
                 latent_dim,  # Output dim of encoder
 
                 # Internal Predictor config (mirrors JEPA's predictor structure)
@@ -45,6 +46,7 @@ class EncoderDecoderJEPAStyle(nn.Module):
         super().__init__()
 
         self._image_size_tuple = image_size if isinstance(image_size, tuple) else (image_size, image_size)
+        self.action_type = action_type # Store action_type
         # output_image_size is now directly passed and used by JEPAStateDecoder
         # self.input_channels = input_channels # Stored by encoder if needed
         # self.output_channels = output_channels # Stored by JEPAStateDecoder
@@ -60,9 +62,16 @@ class EncoderDecoderJEPAStyle(nn.Module):
         )
 
         print('Latent dimension of the encoder:', latent_dim)
-        
+
         # Action embedding
-        self.action_embedding = nn.Linear(action_dim, action_emb_dim)
+        if self.action_type == 'discrete':
+            # action_dim is num_actions for discrete
+            self.action_embedding = nn.Embedding(action_dim, action_emb_dim)
+        elif self.action_type == 'continuous':
+            # action_dim is the dimensionality of the action vector
+            self.action_embedding = nn.Linear(action_dim, action_emb_dim)
+        else:
+            raise ValueError(f"Unsupported action_type: {self.action_type}")
 
         # JEPA-style predictor MLP (mimicking JEPA.predictor structure)
         predictor_input_actual_dim = latent_dim + action_emb_dim
@@ -101,7 +110,7 @@ class EncoderDecoderJEPAStyle(nn.Module):
         """
         Args:
             current_state_img: (batch, channels, height, width)
-            action: (batch, action_dim)
+            action: (batch, action_dim) for continuous, or (batch,) or (batch,1) for discrete
         Returns:
             predicted_next_state_img: (batch, output_channels, output_image_h, output_image_w)
         """
@@ -109,7 +118,21 @@ class EncoderDecoderJEPAStyle(nn.Module):
         latent_s_t = self.encoder(current_state_img)  # (b, latent_dim)
 
         # 2. Embed action
-        embedded_action = self.action_embedding(action)  # (b, action_emb_dim)
+        if self.action_type == 'discrete':
+            # Ensure action is long and squeezed if it's (batch, 1)
+            if action.ndim == 2 and action.shape[1] == 1:
+                action = action.squeeze(1)
+            if action.dtype != torch.long:
+                action = action.long()
+            embedded_action = self.action_embedding(action)  # (b, action_emb_dim)
+        elif self.action_type == 'continuous':
+            # Ensure action is float
+            if action.dtype != torch.float32: # Or match the model's default dtype
+                action = action.float()
+            embedded_action = self.action_embedding(action)  # (b, action_emb_dim)
+        else:
+            # This case should have been caught in __init__, but as a safeguard:
+            raise ValueError(f"Unsupported action_type in forward pass: {self.action_type}")
 
         # 3. Concatenate and pass through predictor
         predictor_input = torch.cat((latent_s_t, embedded_action), dim=-1)
