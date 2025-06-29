@@ -17,7 +17,10 @@ def initialize_optimizers(models_map, config): # Renamed models to models_map fo
     if std_enc_dec_model:
         optimizer_std_enc_dec = optim.AdamW(
             std_enc_dec_model.parameters(),
-            lr=general_lr
+            lr=general_lr,
+            weight_decay=1e-5,  # Small weight decay for regularization
+            eps=1e-8,  # Numerical stability
+            betas=(0.9, 0.999)  # Conservative beta values
         )
         optimizers['std_enc_dec'] = optimizer_std_enc_dec
         #print(f"Standard Encoder-Decoder optimizer initialized with LR: {general_lr}")
@@ -29,7 +32,10 @@ def initialize_optimizers(models_map, config): # Renamed models to models_map fo
         lr_jepa = jepa_config.get('learning_rate', general_lr)
         optimizer_jepa = optim.AdamW(
             jepa_model.parameters(),
-            lr=lr_jepa
+            lr=lr_jepa,
+            weight_decay=1e-5,  # Small weight decay for regularization
+            eps=1e-8,  # Numerical stability
+            betas=(0.9, 0.999)  # Conservative beta values
         )
         optimizers['jepa'] = optimizer_jepa
         #print(f"JEPA optimizer initialized with LR: {lr_jepa}")
