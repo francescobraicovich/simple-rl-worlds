@@ -79,7 +79,8 @@ def main():
     image_h_w = env_config.get('image_size') # Updated
     input_channels = env_config.get('input_channels', 3) # Updated
     # initialize_models will also need to be updated to use the new config structure.
-    models_map = initialize_models(config, action_dim, device, image_h_w, input_channels)
+    # Pass action_type to initialize_models
+    models_map = initialize_models(config, action_dim, action_type, device, image_h_w, input_channels)
     print("--" * 40)
     print('')
 
