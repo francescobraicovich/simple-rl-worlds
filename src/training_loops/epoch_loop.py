@@ -149,9 +149,6 @@ def train_validate_model_epoch(
             optimizer.zero_grad()
             continue
             
-        if grad_norm > 10 * max_grad_norm:
-            print(f"WARNING: Very large gradient norm: {grad_norm:.2f}, clipped to {max_grad_norm}")
-            
         optimizer.step()
         
         if update_target_fn:
