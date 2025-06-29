@@ -1,7 +1,6 @@
 import torch
 import torch.nn.functional as F
 import wandb
-import time
 
 def train_larp_epoch(
     larp_model,
@@ -19,7 +18,8 @@ def train_larp_epoch(
     early_stopping_patience,
     is_jepa_base_model,
     wandb_run,
-    current_epoch_main_training
+    current_epoch_main_training,
+    larp_plotter=None  # New parameter for LARP plotting
 ):
     """
     Training loop for Look-Ahead Reward Predictor (LARP).
@@ -96,12 +96,18 @@ def train_larp_epoch(
         larp_model.eval()
         val_loss_sum = 0.0
         num_val_batches = 0
+        
+        # Collect predictions and true values for plotting
+        all_true_rewards = []
+        all_pred_rewards = []
+        
         with torch.no_grad():
             for s_t, a_t, r_t, s_t_plus_1 in val_dataloader:
                 s_t, a_t, r_t, s_t_plus_1 = s_t.to(device), a_t.to(device), r_t.to(device), s_t_plus_1.to(device)
 
                 if action_type == 'discrete':
-                    if a_t.ndim == 1: a_t = a_t.unsqueeze(1)
+                    if a_t.ndim == 1:
+                        a_t = a_t.unsqueeze(1)
                     a_t_processed = F.one_hot(a_t.long().view(-1), num_classes=action_dim).float().to(device)
                 else:
                     a_t_processed = a_t.float().to(device)
@@ -124,8 +130,25 @@ def train_larp_epoch(
                 val_loss = loss_fn(pred_reward, r_t.unsqueeze(1).float())
                 val_loss_sum += val_loss.item()
                 num_val_batches += 1
+                
+                # Collect predictions and true rewards for plotting
+                all_true_rewards.append(r_t.unsqueeze(1).float().cpu())
+                all_pred_rewards.append(pred_reward.cpu())
 
         avg_val_loss = val_loss_sum / num_val_batches if num_val_batches > 0 else 0
+        
+        # Create LARP scatter plot if plotter is provided
+        if larp_plotter and all_true_rewards and all_pred_rewards:
+            true_rewards_tensor = torch.cat(all_true_rewards, dim=0)
+            pred_rewards_tensor = torch.cat(all_pred_rewards, dim=0)
+            
+            model_type = "JEPA" if is_jepa_base_model else "Encoder-Decoder"
+            larp_plotter.plot_reward_scatter(
+                true_rewards=true_rewards_tensor,
+                predicted_rewards=pred_rewards_tensor,
+                epoch=current_epoch_main_training * num_epochs_larp + epoch + 1,
+                model_name=model_type
+            )
 
         print(f"{model_name_log_prefix} - Epoch {epoch+1}/{num_epochs_larp}: Avg Train Loss: {avg_train_loss:.4f}, Avg Val Loss: {avg_val_loss:.4f}")
 
