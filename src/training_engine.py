@@ -19,14 +19,13 @@ This `training_engine` module is responsible for:
 - Defining and logging metrics to Weights & Biases (wandb).
 """
 import torch
-import torch.nn.functional as F # For F.one_hot
 import os # For os.path.exists in early stopping save/load
-import wandb # For wandb.Image
 
 from .training_loops.epoch_loop import train_validate_model_epoch
 from .training_loops.reward_predictor_loop import train_reward_mlp_epoch
 from .training_loops.jepa_decoder_loop import train_jepa_state_decoder
 from .training_loops.larp_training_loop import train_larp_epoch # Added for LARP
+from .utils.validation_plotting import create_shared_validation_plotters, create_reward_plotters
 
 # Note: Loss functions (mse_loss_fn, aux_loss_fn, aux_loss_name, aux_loss_weight)
 # will be passed in via the 'losses_map' dictionary.
@@ -205,6 +204,14 @@ def run_training_epochs(
         early_stopping_state_jepa['early_stop_flag'] = True
         print("JEPA model training will be skipped as a pre-trained model was loaded and skip option is enabled.")
 
+    # Create shared validation plotters for consistent plotting across models
+    enc_dec_plotter, jepa_decoder_plotter = create_shared_validation_plotters(
+        config=config, main_model_dir=model_dir, random_seed=42
+    )
+    
+    # Create reward plotters for reward MLP and LARP validation plotting
+    reward_plotters = create_reward_plotters(config)
+
     for epoch in range(num_epochs):
         current_main_epoch_for_larp = epoch + 1 # Update current main epoch
         print(f"\n--- Starting Epoch {epoch+1}/{num_epochs} ---")
@@ -223,7 +230,7 @@ def run_training_epochs(
                 device=device, epoch_num=epoch + 1, log_interval=log_interval,
                 action_dim=action_dim, action_type=action_type, early_stopping_state=early_stopping_state_enc_dec,
                 checkpoint_path=early_stopping_state_enc_dec['checkpoint_path'], model_name_log_prefix="StdEncDec",
-                wandb_run=wandb_run
+                wandb_run=wandb_run, validation_plotter=enc_dec_plotter
             )
         elif not std_enc_dec:
              if not early_stopping_state_enc_dec['early_stop_flag']: print(f"StdEncDec model not provided, skipping epoch {epoch+1}.")
@@ -294,7 +301,8 @@ def run_training_epochs(
             log_interval_reward_mlp=enc_dec_mlp_config.get('log_interval', log_interval), # Use specific or general log_interval
             early_stopping_patience=early_stopping_patience_enc_dec_reward_mlp, # Added
             is_jepa_base_model=False,
-            wandb_run=wandb_run
+            wandb_run=wandb_run,
+            reward_plotter=reward_plotters.get('reward_enc_dec')
         )
     elif enc_dec_mlp_config.get('enabled', False):
         print("Reward MLP (Enc-Dec) training skipped due to missing components (model, optimizer, base_model, or dataloader).")
@@ -317,7 +325,8 @@ def run_training_epochs(
             log_interval_reward_mlp=jepa_mlp_config.get('log_interval', log_interval),
             early_stopping_patience=early_stopping_patience_jepa_reward_mlp, # Added
             is_jepa_base_model=True,
-            wandb_run=wandb_run
+            wandb_run=wandb_run,
+            reward_plotter=reward_plotters.get('reward_jepa')
         )
     elif jepa_mlp_config.get('enabled', False):
         print("Reward MLP (JEPA) training skipped due to missing components (model, optimizer, base_model, or dataloader).")
@@ -361,7 +370,8 @@ def run_training_epochs(
             early_stopping_patience=enc_dec_larp_specific_config.get('early_stopping_patience', 15),
             is_jepa_base_model=False, # Base model is Encoder-Decoder type
             wandb_run=wandb_run,
-            current_epoch_main_training=current_main_epoch_for_larp # Or a fixed value like num_epochs if LARP trains once after all main epochs
+            current_epoch_main_training=current_main_epoch_for_larp, # Or a fixed value like num_epochs if LARP trains once after all main epochs
+            larp_plotter=reward_plotters.get('larp_enc_dec')
         )
     elif enc_dec_larp_specific_config.get('enabled', False):
         print("LARP (Enc-Dec) training skipped due to missing components (model, optimizer, base_model, or dataloader).")
@@ -386,7 +396,8 @@ def run_training_epochs(
             early_stopping_patience=jepa_larp_specific_config.get('early_stopping_patience', 15),
             is_jepa_base_model=True, # Base model is JEPA type
             wandb_run=wandb_run,
-            current_epoch_main_training=current_main_epoch_for_larp # Or a fixed value
+            current_epoch_main_training=current_main_epoch_for_larp, # Or a fixed value
+            larp_plotter=reward_plotters.get('larp_jepa')
         )
     elif jepa_larp_specific_config.get('enabled', False):
         print("LARP (JEPA) training skipped due to missing components (model, optimizer, base_model, or dataloader).")
@@ -415,7 +426,8 @@ def run_training_epochs(
             decoder_training_config=jepa_decoder_training_config,
             main_model_dir=model_dir, # Pass the main model directory for path construction
             general_log_interval=log_interval, # Pass general log interval as fallback
-            wandb_run=wandb_run
+            wandb_run=wandb_run,
+            validation_plotter=jepa_decoder_plotter
         )
     elif jepa_decoder_training_config.get('enabled', False):
         print("JEPA State Decoder training skipped due to missing components (decoder model, its optimizer, main JEPA model, or dataloader).")
