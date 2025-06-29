@@ -10,7 +10,7 @@ from src.models.larp_mlp import LookAheadRewardPredictorMLP # Added for LARP
 from src.utils.larp_utils import calculate_larp_input_dim_enc_dec, calculate_larp_input_dim_jepa # Added for LARP
 from src.utils.weight_init import print_num_parameters
 
-def initialize_models(config, action_dim, device, image_h_w, input_channels):
+def initialize_models(config, action_dim, action_type, device, image_h_w, input_channels): # Added action_type
     models = {}
 
     # Load Reward Predictor Configurations
@@ -88,6 +88,7 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
             input_channels=input_channels,
             action_dim=action_dim,
             action_emb_dim=action_emb_dim_jepa_style,
+            action_type=action_type, # Added action_type
             latent_dim=shared_latent_dim, # Encoder output latent dim
 
             predictor_hidden_dims=predictor_hidden_dims_jepa_style,
@@ -116,6 +117,9 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
             patch_size=global_patch_size, # For ViT encoder and default for decoder patch size
             input_channels=input_channels,
             action_dim=action_dim,
+            # StandardEncoderDecoder might also need action_type if it uses actions.
+            # Assuming it does for now, or this will be unused but harmless.
+            action_type=action_type, # Added action_type
             action_emb_dim=std_enc_dec_config.get('action_emb_dim', shared_latent_dim),
             latent_dim=shared_latent_dim,
             decoder_dim=std_enc_dec_config.get('decoder_dim', 128),
@@ -142,7 +146,8 @@ def initialize_models(config, action_dim, device, image_h_w, input_channels):
         patch_size=global_patch_size,
         input_channels=input_channels,
         action_dim=action_dim,
-        action_emb_dim=std_enc_dec_config.get('action_emb_dim', shared_latent_dim),
+        action_emb_dim=std_enc_dec_config.get('action_emb_dim', shared_latent_dim), # Or jepa_config's action_emb_dim if different
+        action_type=action_type, # Added action_type
         latent_dim=shared_latent_dim,
         predictor_hidden_dims=jepa_config.get('predictor_hidden_dims'),
         ema_decay=jepa_config.get('ema_decay', 0.996),
