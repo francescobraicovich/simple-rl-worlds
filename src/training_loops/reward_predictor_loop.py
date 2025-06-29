@@ -4,7 +4,6 @@ import torch.nn.functional as F # For F.one_hot
 # import matplotlib.pyplot as plt # Not used in this specific function directly
 # import numpy as np # Not used in this specific function directly
 # import time # Not used in this specific function directly
-import wandb # For wandb.Image
 
 """Handles the training loop for the reward predictor model."""
 
@@ -15,7 +14,8 @@ def train_reward_mlp_epoch(
     model_name_log_prefix, num_epochs_reward_mlp, log_interval_reward_mlp,
     early_stopping_patience,  # Added
     is_jepa_base_model, # Boolean to differentiate input processing
-    wandb_run
+    wandb_run,
+    reward_plotter=None  # New parameter for reward plotting
 ):
     """
     Handles the training process for a reward MLP (Multi-Layer Perceptron) model
@@ -48,6 +48,8 @@ def train_reward_mlp_epoch(
         is_jepa_base_model (bool): Flag indicating if the base_model is a JEPA model.
                                    This affects how input features are derived.
         wandb_run (wandb.sdk.wandb_run.Run, optional): Active Weights & Biases run object.
+        reward_plotter (RewardPlotter, optional): Plotter for creating reward scatter plots
+                                                  during validation.
 
     Note:
         This function doesn't return any value but modifies the `reward_mlp_model`
@@ -134,6 +136,10 @@ def train_reward_mlp_epoch(
         epoch_loss_reward_mlp_val = 0
         avg_epoch_loss_val = 0 # Default to 0 if no validation
         val_loss_display = "N/A"
+        
+        # Collect predictions and true values for plotting
+        all_true_rewards = []
+        all_pred_rewards = []
 
         if val_dataloader and len(val_dataloader) > 0:
             num_val_batches = len(val_dataloader)
@@ -142,7 +148,8 @@ def train_reward_mlp_epoch(
                     s_t_val, r_t_val, s_t_plus_1_val = s_t_val.to(device), r_t_val.to(device).float().unsqueeze(1), s_t_plus_1_val.to(device)
 
                     if action_type == 'discrete':
-                        if a_t_val.ndim == 1: a_t_val = a_t_val.unsqueeze(1)
+                        if a_t_val.ndim == 1:
+                            a_t_val = a_t_val.unsqueeze(1)
                         a_t_processed_val = F.one_hot(a_t_val.long().view(-1), num_classes=action_dim).float().to(device)
                     else:
                         a_t_processed_val = a_t_val.float().to(device)
@@ -168,9 +175,26 @@ def train_reward_mlp_epoch(
                     pred_reward_val = reward_mlp_model(input_to_reward_mlp_val)
                     loss_reward_val = loss_fn(pred_reward_val, r_t_val)
                     epoch_loss_reward_mlp_val += loss_reward_val.item()
+                    
+                    # Collect predictions and true rewards for plotting
+                    all_true_rewards.append(r_t_val.cpu())
+                    all_pred_rewards.append(pred_reward_val.cpu())
 
             avg_epoch_loss_val = epoch_loss_reward_mlp_val / num_val_batches if num_val_batches > 0 else 0
             val_loss_display = f"{avg_epoch_loss_val:.4f}"
+            
+            # Create reward scatter plot if plotter is provided
+            if reward_plotter and all_true_rewards and all_pred_rewards:
+                true_rewards_tensor = torch.cat(all_true_rewards, dim=0)
+                pred_rewards_tensor = torch.cat(all_pred_rewards, dim=0)
+                
+                model_type = "JEPA" if is_jepa_base_model else "Encoder-Decoder"
+                reward_plotter.plot_reward_scatter(
+                    true_rewards=true_rewards_tensor,
+                    predicted_rewards=pred_rewards_tensor,
+                    epoch=epoch + 1,
+                    model_name=model_type
+                )
 
         # Consolidated print statement for epoch losses
         print(f"  Epoch {epoch+1}/{num_epochs_reward_mlp} Avg Train Loss: {avg_epoch_loss_reward_mlp:.4f}, Avg Val Loss: {val_loss_display}")
