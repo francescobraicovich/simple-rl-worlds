@@ -5,7 +5,6 @@ import os # For os.path.exists in early stopping save/load
 # import matplotlib.pyplot as plt # Not used in this specific function directly
 # import numpy as np # Not used in this specific function directly
 # import time # Not used in this specific function directly
-import wandb # For wandb.Image
 
 # Note: Loss functions (mse_loss_fn, aux_loss_fn, aux_loss_name, aux_loss_weight)
 # will be passed in via the 'losses_map' dictionary.
@@ -22,7 +21,8 @@ def train_validate_model_epoch(
     early_stopping_state, checkpoint_path, model_name_log_prefix,
     wandb_run,
     update_target_fn=None,
-    max_grad_norm: float = 1.0
+    max_grad_norm: float = 1.0,
+    validation_plotter=None  # New parameter for validation plotting
 ):
     """
     Handles the training and validation process for a single epoch of a given model.
@@ -59,6 +59,8 @@ def train_validate_model_epoch(
         wandb_run (wandb.sdk.wandb_run.Run, optional): The active Weights & Biases run object.
         update_target_fn (callable, optional): Function to update a target network (e.g., for EMA in JEPA).
         max_grad_norm (float, optional): The maximum norm for gradient clipping. Defaults to 1.0.
+        validation_plotter (ValidationPlotter, optional): Shared validation plotter for 
+                                                          consistent plotting across models.
 
     Returns:
         tuple: A tuple containing:
@@ -217,9 +219,22 @@ def train_validate_model_epoch(
         if aux_loss_fn and hasattr(aux_loss_fn, 'eval'):
             aux_loss_fn.eval()
 
+        # Set random state for consistent validation plotting across models  
+        if validation_plotter and model_name_log_prefix == "StdEncDec":
+            validation_plotter.set_epoch_random_state(epoch_num - 1)  # epoch_num is 1-indexed
+            # Select random batch and samples for plotting
+            plot_batch_data, plot_sample_indices = validation_plotter.select_random_batch_and_samples(
+                val_dataloader, device
+            )
+        else:
+            plot_batch_data, plot_sample_indices = None, None
+
         epoch_val_loss_primary, epoch_val_loss_aux = 0, 0
         epoch_val_loss_std, epoch_val_loss_cov = 0, 0
         num_val_batches = len(val_dataloader)
+        
+        # Store predictions for plotting if needed
+        plot_predictions = None
 
         with torch.no_grad():
             for s_t_val, a_t_val, r_t_val, s_t_plus_1_val in val_dataloader:
@@ -252,12 +267,29 @@ def train_validate_model_epoch(
                     output_val = model(s_t_val, a_t_val_processed)
                     predicted_s_t_plus_1_val = output_val[0] if isinstance(output_val, tuple) else output_val
                     val_loss_primary = loss_fn(predicted_s_t_plus_1_val, s_t_plus_1_val)  # For Encoder-Decoder, primary loss is reconstruction loss
-                    val_loss_primary = loss_fn(predicted_s_t_plus_1_val, s_t_plus_1_val)
+                    
+                    # Check if this is the batch selected for plotting
+                    if (plot_batch_data is not None and 
+                        torch.equal(s_t_val, plot_batch_data[0]) and
+                        torch.equal(s_t_plus_1_val, plot_batch_data[3])):
+                        # Store predictions for the selected samples
+                        plot_predictions = predicted_s_t_plus_1_val[plot_sample_indices]
 
                 epoch_val_loss_primary += val_loss_primary.item()
                 epoch_val_loss_aux += val_loss_aux_item
                 epoch_val_loss_std += std_loss_val.item()
                 epoch_val_loss_cov += cov_loss_val.item()
+
+        # Handle plotting after validation loop for encoder-decoder
+        if (validation_plotter and model_name_log_prefix == "StdEncDec" and 
+            plot_batch_data is not None and plot_predictions is not None):
+            validation_plotter.plot_validation_samples(
+                batch_data=plot_batch_data,
+                selected_indices=plot_sample_indices,
+                predictions=plot_predictions,
+                epoch=epoch_num,
+                model_name="Encoder-Decoder"
+            )
 
         avg_val_loss_primary = epoch_val_loss_primary / num_val_batches if num_val_batches > 0 else float('inf')
         avg_val_loss_aux_raw = epoch_val_loss_aux / num_val_batches if num_val_batches > 0 else 0
