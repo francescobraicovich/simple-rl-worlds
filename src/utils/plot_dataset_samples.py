@@ -7,26 +7,89 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torchvision.transforms import ToPILImage
 
+def load_config():
+    """Load configuration from config.yaml."""
+    try:
+        with open("config.yaml", "r") as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        print("Error: config.yaml not found.")
+        return None
+    except yaml.YAMLError:
+        print("Error: Could not parse config.yaml.")
+        return None
+
+def get_frame_structure_info(config):
+    """
+    Get frame structure information from config.
+    
+    Returns:
+        tuple: (frame_stack_size, channels_per_frame, is_grayscale)
+    """
+    env_config = config.get('environment', {})
+    
+    input_channels_per_frame = env_config.get('input_channels_per_frame', 3)
+    frame_stack_size = env_config.get('frame_stack_size', 1)
+    grayscale_conversion = env_config.get('grayscale_conversion', False)
+    
+    # Determine channels per frame after grayscale conversion
+    if grayscale_conversion and input_channels_per_frame > 1:
+        channels_per_frame = 1
+        is_grayscale = True
+    else:
+        channels_per_frame = input_channels_per_frame
+        is_grayscale = (input_channels_per_frame == 1)
+    
+    return frame_stack_size, channels_per_frame, is_grayscale
+
+def separate_stacked_frames(stacked_tensor, frame_stack_size, channels_per_frame):
+    """
+    Separate a stacked frame tensor into individual frames.
+    
+    Args:
+        stacked_tensor: Tensor of shape (C*frame_stack_size, H, W)
+        frame_stack_size: Number of stacked frames
+        channels_per_frame: Channels per individual frame
+        
+    Returns:
+        list: List of individual frame tensors, each of shape (channels_per_frame, H, W)
+    """
+    total_channels, H, W = stacked_tensor.shape
+    expected_channels = frame_stack_size * channels_per_frame
+    
+    if total_channels != expected_channels:
+        raise ValueError(f"Expected {expected_channels} channels but got {total_channels}")
+    
+    frames = []
+    for i in range(frame_stack_size):
+        start_channel = i * channels_per_frame
+        end_channel = start_channel + channels_per_frame
+        frame = stacked_tensor[start_channel:end_channel, :, :]
+        frames.append(frame)
+    
+    return frames
+
 def load_training_dataset():
     """
     Loads the training dataset from the path specified in config.yaml.
 
     Returns:
-        A tuple containing the training dataset object and the dataset directory path,
-        or (None, None) if an error occurs.
+        A tuple containing the training dataset object, the dataset directory path, and config,
+        or (None, None, None) if an error occurs.
     """
+    config = load_config()
+    if config is None:
+        return None, None, None
+        
     dataset_dir_from_config = "datasets" # Default
     try:
-        with open("config.yaml", "r") as f:
-            config = yaml.safe_load(f)
-
         dataset_dir_from_config = config.get("data", {}).get("dataset", {}).get("dir", "datasets")
         dataset_filename = config.get("data", {}).get("dataset", {}).get("filename", "car_racing_v3_v2.pkl")
         dataset_path = os.path.join(dataset_dir_from_config, dataset_filename)
 
         if not os.path.exists(dataset_path):
             print(f"Error: Dataset file not found at {dataset_path}")
-            return None, None
+            return None, None, None
 
         with open(dataset_path, "rb") as f:
             data = pickle.load(f)
@@ -34,23 +97,17 @@ def load_training_dataset():
         train_dataset = data.get("train_dataset")
         if train_dataset is None:
             print("Error: 'train_dataset' not found in the dataset file.")
-            return None, None
+            return None, None, None
 
-        return train_dataset, dataset_dir_from_config
+        return train_dataset, dataset_dir_from_config, config
 
-    except FileNotFoundError:
-        print("Error: config.yaml not found.")
-        return None, None
-    except yaml.YAMLError:
-        print("Error: Could not parse config.yaml.")
-        return None, None
     except pickle.UnpicklingError:
-        full_path_attempted = os.path.join(dataset_dir_from_config, config.get("data", {}).get("dataset", {}).get("filename", "unknown.pkl") if 'config' in locals() else "unknown.pkl")
+        full_path_attempted = os.path.join(dataset_dir_from_config, config.get("data", {}).get("dataset", {}).get("filename", "unknown.pkl"))
         print(f"Error: Could not unpickle dataset file at {full_path_attempted}.")
-        return None, None
+        return None, None, None
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
-        return None, None
+        return None, None, None
 
 def sample_data_points(dataset, num_samples=50):
     """
@@ -92,6 +149,12 @@ def process_image_for_plotting(img_data):
 
     if torch.is_tensor(img_data):
         img_tensor = img_data.detach().cpu()
+        
+        # Handle the case where we get more channels than expected
+        if img_tensor.ndim == 3 and img_tensor.shape[0] > 3:
+            print(f"Warning: Got {img_tensor.shape[0]} channels in image, using first 3 channels")
+            img_tensor = img_tensor[:3, :, :]
+        
         # Ensure CHW for ToPILImage if it's H,W (e.g. grayscale)
         if img_tensor.ndim == 2: # H, W
             img_tensor = img_tensor.unsqueeze(0) # Add channel dim: 1, H, W
@@ -99,6 +162,11 @@ def process_image_for_plotting(img_data):
         pil_img = to_pil(img_tensor)
         return np.array(pil_img)
     elif isinstance(img_data, np.ndarray):
+        # Handle the case where we get more channels than expected
+        if img_data.ndim == 3 and img_data.shape[0] > 3:
+            print(f"Warning: Got {img_data.shape[0]} channels in image, using first 3 channels")
+            img_data = img_data[:3, :, :]
+        
         # If it's H,W (grayscale), it's fine for imshow.
         # If it's C,H,W, convert to H,W,C for imshow.
         if img_data.ndim == 3 and img_data.shape[0] in [1, 3, 4]: # C, H, W
@@ -113,7 +181,7 @@ def process_image_for_plotting(img_data):
         raise TypeError(f"Unsupported image data type: {type(img_data)}")
 
 
-def generate_and_save_plots(sampled_points, plot_dir_path):
+def generate_and_save_plots(sampled_points, plot_dir_path, config):
     """
     Generates and saves plots for the sampled state-next_state pairs.
     """
@@ -121,32 +189,59 @@ def generate_and_save_plots(sampled_points, plot_dir_path):
         print("No sampled points to plot.")
         return
 
+    # Get frame structure information
+    frame_stack_size, channels_per_frame, is_grayscale = get_frame_structure_info(config)
+    
     total_samples_to_plot = len(sampled_points)
     print(f"Starting to generate {total_samples_to_plot} plots...")
+    print(f"Frame structure: {frame_stack_size} frames stacked, {channels_per_frame} channels per frame, grayscale: {is_grayscale}")
 
     for idx, sample in enumerate(sampled_points):
         state, action, reward, next_state = sample
 
         try:
-            np_state_img = process_image_for_plotting(state)
+            # Process current state (potentially stacked frames)
+            if frame_stack_size == 1:
+                # Single frame - plot as before
+                np_state_img = process_image_for_plotting(state)
+                fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+                
+                axes[0].imshow(np_state_img, cmap='gray' if is_grayscale else None)
+                axes[0].set_title("Current State")
+                axes[0].axis('off')
+            else:
+                # Multiple frames - separate and plot side by side
+                frames = separate_stacked_frames(state, frame_stack_size, channels_per_frame)
+                fig, axes = plt.subplots(1, frame_stack_size + 1, figsize=(4 * (frame_stack_size + 1), 5))
+                
+                # Plot each frame in the stack
+                for frame_idx, frame in enumerate(frames):
+                    np_frame_img = process_image_for_plotting(frame)
+                    axes[frame_idx].imshow(np_frame_img, cmap='gray' if is_grayscale else None)
+                    axes[frame_idx].set_title(f"Frame {frame_idx + 1}")
+                    axes[frame_idx].axis('off')
+
+            # Process and plot next state (always single frame)
             np_next_state_img = process_image_for_plotting(next_state)
+            
+            # Determine which axis to use for next state
+            next_state_axis_idx = frame_stack_size if frame_stack_size > 1 else 1
+            if frame_stack_size == 1:
+                axes[next_state_axis_idx].imshow(np_next_state_img, cmap='gray' if is_grayscale else None)
+            else:
+                axes[next_state_axis_idx].imshow(np_next_state_img, cmap='gray' if is_grayscale else None)
+            
+            axes[next_state_axis_idx].set_title("Next State")
+            axes[next_state_axis_idx].axis('off')
 
-            fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-
-            axes[0].imshow(np_state_img)
-            axes[0].set_title("Current State")
-            axes[0].axis('off')
-
-            axes[1].imshow(np_next_state_img)
-            axes[1].set_title("Next State")
-            axes[1].axis('off')
-
+            # Add action and reward information
             action_str = str(action.item()) if torch.is_tensor(action) and action.numel() == 1 else str(action)
             reward_val = reward.item() if torch.is_tensor(reward) and reward.numel() == 1 else float(reward)
 
             fig.suptitle(f"Action: {action_str}, Reward: {reward_val:.4f}", fontsize=14)
 
             save_path = os.path.join(plot_dir_path, f"sample_{idx+1}.png")
+            plt.tight_layout()
             plt.savefig(save_path)
             plt.close(fig)
 
@@ -161,9 +256,9 @@ def generate_and_save_plots(sampled_points, plot_dir_path):
 
 if __name__ == "__main__":
     print("Loading training dataset...")
-    dataset, dataset_dir = load_training_dataset()
+    dataset, dataset_dir, config = load_training_dataset()
 
-    if dataset is not None and dataset_dir is not None:
+    if dataset is not None and dataset_dir is not None and config is not None:
         plot_subdir_name = "state_next_state_plots"
         plot_dir_path = os.path.join(dataset_dir, plot_subdir_name)
         os.makedirs(plot_dir_path, exist_ok=True)
@@ -176,9 +271,9 @@ if __name__ == "__main__":
             sampled_points = sample_data_points(dataset, num_samples=50) # Use the actual variable name
             print(f"Selected {len(sampled_points)} samples for analysis/plotting.")
 
-            # Call generate_and_save_plots
+            # Call generate_and_save_plots with config
             if sampled_points:
-                 generate_and_save_plots(sampled_points, plot_dir_path) # Use the actual variable name
+                 generate_and_save_plots(sampled_points, plot_dir_path, config) # Pass config
                  print(f"\nAll processing finished. Plots saved to {plot_dir_path}")
             else:
                 print("No samples were selected, so no plots generated.")
@@ -198,4 +293,4 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"An unexpected error occurred in the main block: {e}")
     else:
-        print("Failed to load dataset or dataset_dir not found.")
+        print("Failed to load dataset, dataset_dir, or config.")
