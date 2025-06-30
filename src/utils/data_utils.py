@@ -218,6 +218,7 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
         terminated = False
         truncated = False
         step_count = 0
+        cumulative_reward_episode = 0.0  # Initialize cumulative reward
 
         while not (terminated or truncated) and step_count < max_steps_per_episode:
             # Record the current stacked state before taking action
@@ -299,6 +300,7 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
             frame_buffer.add_frame(next_frame)
             next_stacked_state = frame_buffer.get_stacked_frames()
 
+            cumulative_reward_episode += accumulated_reward  # Add accumulated reward to cumulative reward for the episode
             
             # Record transition: stacked current state -> action -> single next frame
             episode_transitions.append(
@@ -313,7 +315,7 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
 
         if episode_transitions:
             all_episodes_raw_data.append(episode_transitions)
-        print(f"Episode {episode_idx+1}/{num_episodes} finished after {step_count} steps. Collected {len(episode_transitions)} transitions.")
+        print(f"Episode {episode_idx+1}/{num_episodes} finished after {step_count} steps. Cumulative Reward: {cumulative_reward_episode:.2f}. Collected {len(episode_transitions)} transitions.")
 
     env.close()
 
