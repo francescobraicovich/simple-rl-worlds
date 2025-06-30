@@ -40,9 +40,8 @@ def train_larp_epoch(
         for batch_idx, (s_t, a_t, r_t, s_t_plus_1) in enumerate(train_dataloader):
             s_t, a_t, r_t, s_t_plus_1 = s_t.to(device), a_t.to(device), r_t.to(device), s_t_plus_1.to(device)
 
-            if action_type == 'discrete':
-                if a_t.ndim == 1: a_t = a_t.unsqueeze(1)
-                a_t_processed = F.one_hot(a_t.long().view(-1), num_classes=action_dim).float().to(device)
+            if action_type == 'discrete':      
+                a_t_processed = a_t.long().to(device)
             else:
                 a_t_processed = a_t.float().to(device)
 
@@ -105,10 +104,8 @@ def train_larp_epoch(
             for s_t, a_t, r_t, s_t_plus_1 in val_dataloader:
                 s_t, a_t, r_t, s_t_plus_1 = s_t.to(device), a_t.to(device), r_t.to(device), s_t_plus_1.to(device)
 
-                if action_type == 'discrete':
-                    if a_t.ndim == 1:
-                        a_t = a_t.unsqueeze(1)
-                    a_t_processed = F.one_hot(a_t.long().view(-1), num_classes=action_dim).float().to(device)
+                if action_type == 'discrete':      
+                    a_t_processed = a_t.long().to(device)
                 else:
                     a_t_processed = a_t.float().to(device)
 
