@@ -1,5 +1,5 @@
 import torch.nn as nn
-from .vit import ViT
+from .vit import ViTVideo
 from .cnn import CNNEncoder
 from .mlp import MLPEncoder
 
@@ -13,16 +13,17 @@ class Encoder(nn.Module):
                  encoder_params: dict = None):
         super().__init__()
 
-        self._image_size_tuple = image_size if isinstance(image_size, tuple) else (image_size, image_size)
+        self._image_size_tuple = image_size
 
         if encoder_params is None:
             encoder_params = {}
-
+        
         if encoder_type == 'vit':
             vit_params = {
                 'image_size': self._image_size_tuple,
                 'patch_size': patch_size,
                 'channels': input_channels,
+                'num_frames': encoder_params.get('num_frames'),
                 'num_classes': 0,  # Not used for feature extraction
                 'dim': latent_dim,
                 'depth': encoder_params.get('depth', 6),
@@ -32,7 +33,7 @@ class Encoder(nn.Module):
                 'dropout': encoder_params.get('dropout', 0.),
                 'emb_dropout': encoder_params.get('emb_dropout', 0.)
             }
-            self.encoder_model = ViT(**vit_params)
+            self.encoder_model = ViTVideo(**vit_params)
         elif encoder_type == 'cnn':
             cnn_params = {
                 'input_channels': input_channels,
