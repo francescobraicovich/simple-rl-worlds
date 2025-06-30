@@ -2,13 +2,9 @@
 import torch
 from torch.utils.data import DataLoader
 from src.utils.data_utils import collect_random_episodes, collect_ppo_episodes # Absolute import from src
-from src.utils.config_utils import get_effective_input_channels, validate_environment_config
 
 def prepare_dataloaders(config, validation_split): # validation_split is from config['data']['validation_split'] passed from main.py
     print("Starting data collection...")
-
-    # Validate environment configuration and show effective parameters
-    validate_environment_config(config)
 
     # Accessing nested configuration parameters
     env_config = config.get('environment', {})
