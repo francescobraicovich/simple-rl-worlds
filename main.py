@@ -76,8 +76,19 @@ def main():
 
 
     # 5. Initialize Models
-    image_h_w = env_config.get('image_size') # Updated
-    input_channels = env_config.get('input_channels', 3) # Updated
+    image_h = env_config.get('image_height')
+    image_w = env_config.get('image_width')
+    image_h_w = (image_h, image_w)
+    
+    # Use the new function to get effective input channels after processing
+    from src.utils.config_utils import get_effective_input_channels, validate_environment_config
+
+
+    validate_environment_config(config)  # This will print the configuration summary
+    input_channels = config.get('environment', {}).get('input_channels_per_frame', 3) # Default to 3 for RGB
+    if config.get('environment', {}).get('grayscale_conversion', False):
+        input_channels = 1
+    
     # initialize_models will also need to be updated to use the new config structure.
     # Pass action_type to initialize_models
     models_map = initialize_models(config, action_dim, action_type, device, image_h_w, input_channels)
