@@ -61,8 +61,6 @@ class EncoderDecoderJEPAStyle(nn.Module):
             encoder_params=encoder_params
         )
 
-        print('Latent dimension of the encoder:', latent_dim)
-
         # Action embedding
         if self.action_type == 'discrete':
             # action_dim is num_actions for discrete
@@ -88,6 +86,7 @@ class EncoderDecoderJEPAStyle(nn.Module):
         # Instantiate JEPAStateDecoder
         _decoder_patch_size = jepa_decoder_patch_size if jepa_decoder_patch_size is not None else patch_size
         _output_image_size_tuple = output_image_size if isinstance(output_image_size, tuple) else (output_image_size, output_image_size)
+
 
 
         self.decoder = StateDecoder(
