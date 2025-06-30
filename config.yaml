@@ -22,7 +22,7 @@ environment:
 # --- Data Collection & Dataset Management ---
 data:
   collection:
-    num_episodes: 2 # Number of episodes to collect for the dataset
+    num_episodes: 50 # Number of episodes to collect for the dataset
     max_steps_per_episode: 600 # Max steps per episode during data collection
   dataset:
     dir: "datasets/"
@@ -41,7 +41,7 @@ training:
   num_epochs: 20
   batch_size: 32
   learning_rate: 0.0003 # General learning rate, reduced for stability
-  num_workers: 1 # For DataLoader
+  num_workers: 0 # For DataLoader
   log_interval: 20 # Log training progress every N batches
   frame_skipping: 0 # Number of frames to skip. Note: If using action_repetition_k in PPO, this should ideally be 0.
   options:
@@ -172,7 +172,7 @@ models:
 
 # --- PPO Agent Configuration for Data Collection ---
 ppo_agent:
-  enabled: true # Master switch for using PPO for data collection
+  enabled: false # Master switch for using PPO for data collection
   n_envs: 8 # Number of parallel environments for PPO training (default: CPU count)
   action_repetition_k: 6
   learning_rate: 0.0003
