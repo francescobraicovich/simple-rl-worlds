@@ -69,7 +69,6 @@ def train_validate_model_epoch(
             - float: The average VICReg training loss for the epoch (0 if not applicable).
     """
     # === Training Phase ===
-    t0 = time.time()
     model.train()
     if aux_loss_fn and hasattr(aux_loss_fn, 'train'):
         aux_loss_fn.train()
@@ -81,13 +80,8 @@ def train_validate_model_epoch(
     if num_train_batches == 0:
         print(f"{model_name_log_prefix} Epoch {epoch_num}: No training data. Skipping.")
         return early_stopping_state, 0, 0
-    t1 = time.time()
-    print(f'Time to prepare training data: {t1 - t0:.2f} seconds')
-    t0 = time.time()
+
     for batch_idx, (s_t, a_t, r_t, s_t_plus_1) in enumerate(train_dataloader):
-        t1 = time.time()
-        print(f"Processing batch {batch_idx + 1}/{num_train_batches} (Time taken: {t1 - t0:.2f} seconds)")
-        t0 = time.time()
         s_t, s_t_plus_1 = s_t.to(device), s_t_plus_1.to(device)
         s_t_plus_1_encoder_decoder = s_t_plus_1[:, -1, :, :, :]  # Use the last frame for encoder input
         if action_type == 'discrete':
@@ -255,7 +249,7 @@ def train_validate_model_epoch(
                 s_t_val, s_t_plus_1_val = s_t_val.to(device), s_t_plus_1_val.to(device)
                 s_t_plus_1_val_encoder_decoder = s_t_plus_1_val[:, -1, :, :, :]  # Use the last frame for encoder input
                 if action_type == 'discrete':      
-                    a_t_val = a_t_val.to(device)
+                    a_t_val_processed = a_t_val.to(device)
                 else:
                     a_t_val_processed = a_t_val.float().to(device)
 
