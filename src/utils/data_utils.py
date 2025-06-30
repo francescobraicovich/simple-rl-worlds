@@ -225,6 +225,7 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
             accumulated_reward = 0.0
 
             action = env.action_space.sample() # Primary action
+            print('Action sampled:', action)
 
             # First step
             next_state_img, reward, terminated, truncated, info = env.step(action)
@@ -571,9 +572,9 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
     single_frame_shape = (single_frame_channels, image_size[0], image_size[1])
 
     if action_repetition_k > 1:
-        print(f"Note: Action repetition is active with k={action_repetition_k}.\
-              Even though max_steps_per_episode is set to {max_steps_per_episode},\
-              the actual number of steps per episode may be higher due to action repetition.\
+        print(f"Note: Action repetition is active with k={action_repetition_k}.\n\
+              Even though max_steps_per_episode is set to {max_steps_per_episode},\n\
+              the actual number of steps per episode may be higher due to action repetition.\n\
               For car_racing_v3, the max_steps_per_episode is typically 1000, but with action repetition it will be {1000 // action_repetition_k} effective steps.\n")
 
     for episode_idx in range(num_episodes):
@@ -619,6 +620,7 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
             # Note: PPO agent expects raw image, but we need to adapt for stacked frames
             # For now, use the current raw image for action prediction
             original_action, _ = ppo_agent.predict(current_state_img, deterministic=True)
+            print(f'PPO Action sampled: {original_action}')
 
             # First step
             next_state_img, reward, terminated, truncated, info = env.step(original_action)

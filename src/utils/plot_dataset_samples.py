@@ -46,27 +46,42 @@ def separate_stacked_frames(stacked_tensor, frame_stack_size, channels_per_frame
     Separate a stacked frame tensor into individual frames.
     
     Args:
-        stacked_tensor: Tensor of shape (C*frame_stack_size, H, W)
+        stacked_tensor: Tensor of shape (Frames, Channels, H, W) or (C*frame_stack_size, H, W) for backward compatibility
         frame_stack_size: Number of stacked frames
         channels_per_frame: Channels per individual frame
         
     Returns:
         list: List of individual frame tensors, each of shape (channels_per_frame, H, W)
     """
-    total_channels, H, W = stacked_tensor.shape
-    expected_channels = frame_stack_size * channels_per_frame
+    # Handle new format: (Frames, Channels, H, W)
+    if len(stacked_tensor.shape) == 4 and stacked_tensor.shape[0] == frame_stack_size:
+        frames = []
+        for i in range(frame_stack_size):
+            frame = stacked_tensor[i]  # Shape: (Channels, H, W)
+            if frame.shape[0] != channels_per_frame:
+                raise ValueError(f"Expected {channels_per_frame} channels per frame but got {frame.shape[0]}")
+            frames.append(frame)
+        return frames
     
-    if total_channels != expected_channels:
-        raise ValueError(f"Expected {expected_channels} channels but got {total_channels}")
+    # Handle old format: (C*frame_stack_size, H, W) for backward compatibility
+    elif len(stacked_tensor.shape) == 3:
+        total_channels, H, W = stacked_tensor.shape
+        expected_channels = frame_stack_size * channels_per_frame
+        
+        if total_channels != expected_channels:
+            raise ValueError(f"Expected {expected_channels} channels but got {total_channels}")
+        
+        frames = []
+        for i in range(frame_stack_size):
+            start_channel = i * channels_per_frame
+            end_channel = start_channel + channels_per_frame
+            frame = stacked_tensor[start_channel:end_channel, :, :]
+            frames.append(frame)
+        
+        return frames
     
-    frames = []
-    for i in range(frame_stack_size):
-        start_channel = i * channels_per_frame
-        end_channel = start_channel + channels_per_frame
-        frame = stacked_tensor[start_channel:end_channel, :, :]
-        frames.append(frame)
-    
-    return frames
+    else:
+        raise ValueError(f"Unexpected tensor shape: {stacked_tensor.shape}. Expected (Frames, Channels, H, W) or (C*frame_stack_size, H, W)")
 
 def load_training_dataset():
     """
@@ -198,38 +213,52 @@ def generate_and_save_plots(sampled_points, plot_dir_path, config):
         state, action, reward, next_state = sample
 
         try:
-            # Process current state (potentially stacked frames)
-            if frame_stack_size == 1:
-                # Single frame - plot as before
-                np_state_img = process_image_for_plotting(state)
-                fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-                
-                axes[0].imshow(np_state_img, cmap='gray' if is_grayscale else None)
-                axes[0].set_title("Current State")
-                axes[0].axis('off')
-            else:
-                # Multiple frames - separate and plot side by side
+            # Handle new format where both current and next states may have frame dimension
+            # Extract the actual next state frame from next_state
+            if len(next_state.shape) == 4:  # New format: (Frames, Channels, H, W)
+                actual_next_state = next_state[-1]  # Last frame
+            else:  # Old format: single frame (Channels, H, W)
+                actual_next_state = next_state
+            
+            # Multi-frame layout: all current frames + next state
+            total_plots = frame_stack_size + 1
+            fig, axes = plt.subplots(1, total_plots, figsize=(4 * total_plots, 4))
+            
+            # Ensure axes is always a list for consistent indexing
+            if total_plots == 1:
+                axes = [axes]
+            
+            # Plot each frame in the current state stack
+            try:
                 frames = separate_stacked_frames(state, frame_stack_size, channels_per_frame)
-                fig, axes = plt.subplots(1, frame_stack_size + 1, figsize=(4 * (frame_stack_size + 1), 5))
-                
-                # Plot each frame in the stack
                 for frame_idx, frame in enumerate(frames):
-                    np_frame_img = process_image_for_plotting(frame)
-                    axes[frame_idx].imshow(np_frame_img, cmap='gray' if is_grayscale else None)
-                    axes[frame_idx].set_title(f"Frame {frame_idx + 1}")
+                    frame_img = process_image_for_plotting(frame)
+                    axes[frame_idx].imshow(frame_img, cmap='gray' if is_grayscale else None)
+                    axes[frame_idx].set_title(f"Current Frame {frame_idx + 1}")
                     axes[frame_idx].axis('off')
-
-            # Process and plot next state (always single frame)
-            np_next_state_img = process_image_for_plotting(next_state)
+            except Exception as e:
+                print(f"Warning: Could not separate stacked frames for sample {idx+1}: {e}. Using fallback display.")
+                # Fallback: try to display current state directly
+                if len(state.shape) == 4:
+                    # New format: use first frame as fallback
+                    curr_img = process_image_for_plotting(state[0])
+                else:
+                    # Old format: use as is
+                    curr_img = process_image_for_plotting(state)
+                axes[0].imshow(curr_img, cmap='gray' if is_grayscale else None)
+                axes[0].set_title("Current State (s_t)")
+                axes[0].axis('off')
+                # Hide unused frame axes
+                for i in range(1, frame_stack_size):
+                    if i < len(axes) - 1:  # Make sure we don't hide next state axis
+                        axes[i].axis('off')
+                        axes[i].set_title("")
             
-            # Determine which axis to use for next state
-            next_state_axis_idx = frame_stack_size if frame_stack_size > 1 else 1
-            if frame_stack_size == 1:
-                axes[next_state_axis_idx].imshow(np_next_state_img, cmap='gray' if is_grayscale else None)
-            else:
-                axes[next_state_axis_idx].imshow(np_next_state_img, cmap='gray' if is_grayscale else None)
-            
-            axes[next_state_axis_idx].set_title("Next State")
+            # Process and plot next state (last frame from next state stack or single frame)
+            next_img = process_image_for_plotting(actual_next_state)
+            next_state_axis_idx = frame_stack_size
+            axes[next_state_axis_idx].imshow(next_img, cmap='gray' if is_grayscale else None)
+            axes[next_state_axis_idx].set_title("Next State (s_{t+1})")
             axes[next_state_axis_idx].axis('off')
 
             # Add action and reward information
