@@ -178,12 +178,6 @@ def validate_environment_config(config):
     
     effective_channels = get_effective_input_channels(config)
     single_channels = get_single_frame_channels(config)
-    print("Environment configuration:")
-    print(f"  Input channels per frame: {input_channels_per_frame}")
-    print(f"  Frame stack size: {frame_stack_size}")
-    print(f"  Grayscale conversion: {grayscale_conversion}")
-    print(f"  Effective input channels (current state): {effective_channels}")
-    print(f"  Single frame channels (next state): {single_channels}")
     
     # Additional helpful info
     if grayscale_conversion and input_channels_per_frame == 3:
