@@ -26,7 +26,7 @@ data:
     max_steps_per_episode: 600 # Max steps per episode during data collection
   dataset:
     dir: "datasets/"
-    load_path: "" # empty string means don't load, otherwise it's a path relative to dataset.dir
+    load_path: "ale_pong_rep_2.pth" # empty string means don't load, otherwise it's a path relative to dataset.dir
     filename: "ale_pong_rep_2.pth"
   validation_split: 0.2 # Proportion of data to use for validation (moved from early_stopping)
 
