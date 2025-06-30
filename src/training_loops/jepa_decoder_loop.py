@@ -104,9 +104,7 @@ def train_jepa_state_decoder(
             for batch_idx, (s_t, a_t, _, s_t_plus_1) in enumerate(train_dataloader):
                 s_t, s_t_plus_1 = s_t.to(device), s_t_plus_1.to(device)
                 if action_type == 'discrete':
-                    a_t_processed = F.one_hot(a_t.long().view(-1), num_classes=action_dim).float().to(device) if a_t.ndim == 1 else F.one_hot(a_t.long(), num_classes=action_dim).float().to(device)
-                    if a_t_processed.shape[0] != s_t.shape[0]:
-                         a_t_processed = F.one_hot(a_t.long().view(-1), num_classes=action_dim).float().to(device)
+                    a_t_processed = a_t.to(device)
                 else:
                     a_t_processed = a_t.float().to(device)
 
@@ -182,10 +180,8 @@ def train_jepa_state_decoder(
             with torch.no_grad():
                 for val_batch_idx, (s_t_val, a_t_val, _, s_t_plus_1_val) in enumerate(val_dataloader):
                     s_t_val, s_t_plus_1_val = s_t_val.to(device), s_t_plus_1_val.to(device)
-                    if action_type == 'discrete':
-                        a_t_val_processed = F.one_hot(a_t_val.long().view(-1), num_classes=action_dim).float().to(device) if a_t_val.ndim == 1 else F.one_hot(a_t_val.long(), num_classes=action_dim).float().to(device)
-                        if a_t_val_processed.shape[0] != s_t_val.shape[0]:
-                           a_t_val_processed = F.one_hot(a_t_val.long().view(-1), num_classes=action_dim).float().to(device)
+                    if action_type == 'discrete':      
+                        a_t_val_processed = a_t_val.to(device)
                     else:
                         a_t_val_processed = a_t_val.float().to(device)
 
