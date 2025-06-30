@@ -5,11 +5,11 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms as T
 import random  # Added for shuffling episodes
 import os
-import pickle
-from stable_baselines3.common.vec_env import DummyVecEnv
+import multiprocessing
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 from src.rl_agent import create_ppo_agent, train_ppo_agent
 from src.utils.env_wrappers import ActionRepeatWrapper
-from src.utils.config_utils import create_image_preprocessing_transforms, FrameStackBuffer, get_effective_input_channels, get_single_frame_channels
+from src.utils.config_utils import create_image_preprocessing_transforms, FrameStackBuffer, get_single_frame_channels
 try:
     from scipy import stats
     SCIPY_AVAILABLE = True
@@ -113,8 +113,7 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
         if os.path.exists(dataset_path):
             print(f"Loading dataset from {dataset_path}...")
             try:
-                with open(dataset_path, 'rb') as f:
-                    data = pickle.load(f)
+                data = torch.load(dataset_path, weights_only=False)
 
                 loaded_train_dataset = data['train_dataset']
                 loaded_val_dataset = data['val_dataset']
@@ -391,8 +390,7 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
             }
 
             try:
-                with open(save_path, 'wb') as f:
-                    pickle.dump(data_to_save, f)
+                torch.save(data_to_save, save_path)
                 print(f"Dataset saved to {save_path}")
             except Exception as e:
                 print(f"Error saving dataset to {save_path}: {e}")
@@ -432,8 +430,7 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
         if os.path.exists(dataset_path):
             print(f"Loading dataset from {dataset_path}...")
             try:
-                with open(dataset_path, 'rb') as f:
-                    data = pickle.load(f)
+                data = torch.load(dataset_path, weights_only=False)
                 loaded_train_dataset = data['train_dataset']
                 loaded_val_dataset = data['val_dataset']
                 metadata = data['metadata']
@@ -469,17 +466,21 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
 
 
     print(f"Collecting data from environment: {env_name} using PPO agent.")
+    env_render_mode = None  # Track the successful render mode for parallel envs
     try:
         env = gym.make(env_name, render_mode='rgb_array')
+        env_render_mode = 'rgb_array'
         print(f"Successfully created env '{env_name}' with render_mode='rgb_array' for PPO collection.")
     except Exception as e_rgb:
         print(f"Failed to create env '{env_name}' with render_mode='rgb_array': {e_rgb}. Trying with render_mode=None...")
         try:
             env = gym.make(env_name, render_mode=None)
+            env_render_mode = None
             print(f"Successfully created env '{env_name}' with render_mode=None for PPO collection.")
         except Exception as e_none:
             print(f"Failed to create env '{env_name}' with render_mode=None: {e_none}. Trying without render_mode arg...")
             env = gym.make(env_name)
+            env_render_mode = 'default'
             print(f"Successfully created env '{env_name}' with default render_mode ('{env.render_mode if hasattr(env, 'render_mode') else 'unknown'}') for PPO collection.")
 
     # PPO Agent Setup
@@ -502,7 +503,7 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
     # Create a temporary env for PPO training if needed, or use the main `env`
     # It's better to pass the same env instance to ensure compatibility of obs/action spaces
 
-    # Action Repetition Wrapper
+    # Action Repetition Wrapper applied to single env for data collection later
     action_repetition_k = ppo_specific_config.get('action_repetition_k', 0)
     original_frame_skipping = frame_skipping # Store original frame_skipping
 
@@ -514,8 +515,22 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
     elif action_repetition_k == 1:
         print("action_repetition_k is 1, no ActionRepeatWrapper will be applied.")
 
-    # Create VecEnv for PPO agent
-    vec_env = DummyVecEnv([lambda: env])
+    # Create parallel VecEnv for PPO agent training
+    # Get number of parallel environments from config (default to CPU count)
+    n_envs = ppo_specific_config.get('n_envs', multiprocessing.cpu_count())
+    n_envs = max(1, min(n_envs, multiprocessing.cpu_count()))  # Ensure valid range
+    
+    print(f"Creating {n_envs} parallel environments for PPO training (CPU cores: {multiprocessing.cpu_count()})")
+    
+    if n_envs == 1:
+        # Use DummyVecEnv for single environment (no multiprocessing overhead)
+        vec_env = DummyVecEnv([lambda: env])
+        print("Using DummyVecEnv (single environment)")
+    else:
+        # Use SubprocVecEnv for parallel environments
+        env_fns = [create_env_for_ppo(env_name, action_repetition_k, env_render_mode) for _ in range(n_envs)]
+        vec_env = SubprocVecEnv(env_fns)
+        print(f"Using SubprocVecEnv with {n_envs} parallel environments")
 
     ppo_agent = create_ppo_agent(vec_env, ppo_specific_config, device=device) # Pass vec_env
     train_ppo_agent(ppo_agent, ppo_specific_config, task_name="Initial PPO Training for Data Collection") # Uses the vec_env
@@ -539,8 +554,8 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
         else:
             print("Warning: PPO policy does not have a 'log_std' Tensor or 'action_dist.log_std_param' Tensor. Skipping noise addition to log_std.")
 
-    # After training, the env used by PPO (which is `env` wrapped in DummyVecEnv) should still be usable
-    # as SB3 usually doesn't close the original envs passed to DummyVecEnv unless DummyVecEnv.close() is called,
+    # After training, the env used by PPO (which is `env` wrapped in VecEnv) should still be usable
+    # as SB3 usually doesn't close the original envs passed to VecEnv unless vec_env.close() is called,
     # which happens if ppo_agent.env.close() is called. `learn()` does not close it.
 
     all_episodes_raw_data = []
@@ -751,8 +766,7 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
                 'metadata': metadata_to_save
             }
             try:
-                with open(save_path, 'wb') as f:
-                    pickle.dump(data_to_save, f)
+                torch.save(data_to_save, save_path)
                 print(f"PPO collected dataset saved to {save_path}")
             except Exception as e:
                 print(f"Error saving PPO dataset to {save_path}: {e}")
@@ -1027,6 +1041,49 @@ def check_validation_distribution(train_dataset, val_dataset, config=None, n_sam
     return summary
 
 
+def create_env_for_ppo(env_name, action_repetition_k=0, original_render_mode=None):
+    """
+    Factory function to create environment instances for parallel PPO training.
+    This is needed for SubprocVecEnv which requires a callable that returns an environment.
+    
+    Args:
+        env_name: Name of the gymnasium environment
+        action_repetition_k: Action repetition factor (0 or 1 means no repetition)
+        original_render_mode: The render mode to use for environment creation
+    
+    Returns:
+        Callable that returns a gymnasium environment
+    """
+    def _make_env():
+        # Try to create environment with specified render mode
+        if original_render_mode == 'rgb_array':
+            try:
+                env = gym.make(env_name, render_mode='rgb_array')
+            except Exception:
+                try:
+                    env = gym.make(env_name, render_mode=None)
+                except Exception:
+                    env = gym.make(env_name)
+        elif original_render_mode is None:
+            try:
+                env = gym.make(env_name, render_mode=None)
+            except Exception:
+                env = gym.make(env_name)
+        else:
+            try:
+                env = gym.make(env_name)
+            except Exception:
+                env = gym.make(env_name, render_mode=None)
+        
+        # Apply action repetition wrapper if needed
+        if action_repetition_k > 1:
+            env = ActionRepeatWrapper(env, action_repetition_k)
+        
+        return env
+    
+    return _make_env
+
+
 if __name__ == '__main__':
     # Example usage:
     # Ensure you have a display server if using environments like CarRacing-v2 locally without headless mode.
@@ -1074,7 +1131,7 @@ if __name__ == '__main__':
                     'dataset': {
                         'dir': "datasets/random_test",
                         'load_path': "", # Don't load, force collection
-                        'filename': "random_collected_data.pkl"
+                        'filename': "random_collected_data.pth"
                     }
                 }
             }
@@ -1120,7 +1177,7 @@ if __name__ == '__main__':
                     'dataset': {
                         'dir': dummy_config_random['data']['dataset']['dir'],
                         'load_path': dummy_config_random['data']['dataset']['filename'], # What test case 1 saved
-                        'filename': "random_collected_data_new_save.pkl" # In case this run also saves
+                        'filename': "random_collected_data_new_save.pth" # In case this run also saves
                     }
                 }
             }
