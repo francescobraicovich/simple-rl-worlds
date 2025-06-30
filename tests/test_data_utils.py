@@ -25,7 +25,7 @@ from src.utils.data_utils import collect_random_episodes, ExperienceDataset
 from src.utils import data_utils # To allow patching attributes like pickle directly in data_utils
 
 # Minimal config for tests
-def get_dummy_config(load_path="", save_name="test_dataset.pkl", num_episodes=1):
+def get_dummy_config(load_path="", save_name="test_dataset.pth", num_episodes=1):
     return {
         'environment_name': 'TestEnv-v0',
         'num_episodes_data_collection': num_episodes,
@@ -256,7 +256,7 @@ class TestFrameSkipping(unittest.TestCase):
         mock_gym_make.return_value = mock_env
 
         test_frame_skipping_value = 3
-        config = get_dummy_config(save_name="metadata_test.pkl")
+        config = get_dummy_config(save_name="metadata_test.pth")
 
         collect_random_episodes(
             config, max_steps_per_episode=5, image_size=(1,1),
