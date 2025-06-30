@@ -2,7 +2,7 @@
 
 # --- Environment Configuration ---
 environment:
-  name: "CarRacing-v3" # Example, choose a relevant Gym environment (e.g., "CarRacing-v3", "ALE/Pong-v5")
+  name: "ALE/Pong-v5" # Example, choose a relevant Gym environment (e.g., "CarRacing-v3", "ALE/Pong-v5")
   
   # Image preprocessing parameters
   input_channels_per_frame: 3 # Number of channels from environment (3=RGB, 1=grayscale, 4=RGBA)
@@ -22,12 +22,12 @@ environment:
 # --- Data Collection & Dataset Management ---
 data:
   collection:
-    num_episodes: 50 # Number of episodes to collect for the dataset
+    num_episodes: 150 # Number of episodes to collect for the dataset
     max_steps_per_episode: 600 # Max steps per episode during data collection
   dataset:
     dir: "datasets/"
-    load_path: "car_racing_v3_action_rep_6.pth" # empty string means don't load, otherwise it's a path relative to dataset.dir
-    filename: "car_racing_v3_action_rep_6.pth"
+    load_path: "" # empty string means don't load, otherwise it's a path relative to dataset.dir
+    filename: "ale_pong_rep_2.pth"
   validation_split: 0.2 # Proportion of data to use for validation (moved from early_stopping)
 
 # --- Model Loading Configuration ---
@@ -172,13 +172,13 @@ models:
 
 # --- PPO Agent Configuration for Data Collection ---
 ppo_agent:
-  enabled: false # Master switch for using PPO for data collection
+  enabled: true # Master switch for using PPO for data collection
   n_envs: 8 # Number of parallel environments for PPO training (default: CPU count)
-  action_repetition_k: 6
+  action_repetition_k: 2
   learning_rate: 0.0003
-  total_train_timesteps: 500 # Timesteps to train PPO before data collection
-  n_steps: 256       # PPO n_steps parameter
-  batch_size: 64      # PPO batch_size parameter
+  total_train_timesteps: 500000 # Timesteps to train PPO before data collection
+  n_steps: 1024       # PPO n_steps parameter
+  batch_size: 32      # PPO batch_size parameter
   n_epochs: 5         # PPO n_epochs parameter
   gamma: 0.99         # PPO gamma parameter
   gae_lambda: 0.95    # PPO gae_lambda parameter
