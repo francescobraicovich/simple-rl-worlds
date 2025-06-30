@@ -92,6 +92,25 @@ def main():
     # initialize_models will also need to be updated to use the new config structure.
     # Pass action_type to initialize_models
     models_map = initialize_models(config, action_dim, action_type, device, image_h_w, input_channels)
+
+    # clean the evaluation_plots subdirectories
+    # delete contents of evaulation_plots/decoder_plots/encoder_decoder and vaulation_plots/decoder_plots/jepa
+    dirs_to_clean = [
+        os.path.join('evaluation_plots', 'decoder_plots', 'encoder_decoder'),
+        os.path.join('evaluation_plots', 'decoder_plots', 'jepa_decoder'),
+        os.path.join('evaluation_plots', 'reward_plots', 'encoder_decoder'),
+        os.path.join('evaluation_plots', 'reward_plots', 'jepa_decoder'),
+        os.path.join('evaluation_plots', 'larp_plots', 'encoder_decoder'),
+        os.path.join('evaluation_plots', 'larp_plots', 'jepa_decoder'),
+    ]
+    for dir_path in dirs_to_clean:
+        for filename in os.listdir(dir_path):
+            file_path = os.path.join(dir_path, filename)
+            try:
+                if os.path.isfile(file_path) or os.path.islink(file_path):
+                    os.unlink(file_path)
+            except Exception as e:
+                print(f"Failed to delete {file_path}. Reason: {e}")
     print("--" * 40)
     print('')
 

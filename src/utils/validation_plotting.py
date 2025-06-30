@@ -34,27 +34,42 @@ def separate_stacked_frames(stacked_tensor, frame_stack_size, channels_per_frame
     Separate a stacked frame tensor into individual frames.
     
     Args:
-        stacked_tensor: Tensor of shape (C*frame_stack_size, H, W)
+        stacked_tensor: Tensor of shape (Frames, Channels, H, W) or (C*frame_stack_size, H, W) for backward compatibility
         frame_stack_size: Number of stacked frames
         channels_per_frame: Channels per individual frame
         
     Returns:
         list: List of individual frame tensors, each of shape (channels_per_frame, H, W)
     """
-    total_channels, H, W = stacked_tensor.shape
-    expected_channels = frame_stack_size * channels_per_frame
+    # Handle new format: (Frames, Channels, H, W)
+    if len(stacked_tensor.shape) == 4 and stacked_tensor.shape[0] == frame_stack_size:
+        frames = []
+        for i in range(frame_stack_size):
+            frame = stacked_tensor[i]  # Shape: (Channels, H, W)
+            if frame.shape[0] != channels_per_frame:
+                raise ValueError(f"Expected {channels_per_frame} channels per frame but got {frame.shape[0]}")
+            frames.append(frame)
+        return frames
     
-    if total_channels != expected_channels:
-        raise ValueError(f"Expected {expected_channels} channels but got {total_channels}")
+    # Handle old format: (C*frame_stack_size, H, W) for backward compatibility
+    elif len(stacked_tensor.shape) == 3:
+        total_channels, H, W = stacked_tensor.shape
+        expected_channels = frame_stack_size * channels_per_frame
+        
+        if total_channels != expected_channels:
+            raise ValueError(f"Expected {expected_channels} channels but got {total_channels}")
+        
+        frames = []
+        for i in range(frame_stack_size):
+            start_channel = i * channels_per_frame
+            end_channel = start_channel + channels_per_frame
+            frame = stacked_tensor[start_channel:end_channel, :, :]
+            frames.append(frame)
+        
+        return frames
     
-    frames = []
-    for i in range(frame_stack_size):
-        start_channel = i * channels_per_frame
-        end_channel = start_channel + channels_per_frame
-        frame = stacked_tensor[start_channel:end_channel, :, :]
-        frames.append(frame)
-    
-    return frames
+    else:
+        raise ValueError(f"Unexpected tensor shape: {stacked_tensor.shape}. Expected (Frames, Channels, H, W) or (C*frame_stack_size, H, W)")
 
 def load_config():
     """Load configuration from config.yaml."""
@@ -202,60 +217,65 @@ class ValidationPlotter:
         Save a comparison plot of current state, true next state, and predicted next state.
         
         Args:
-            current_state: Current state tensor (potentially frame-stacked)
-            true_next_state: True next state tensor (single frame)
-            predicted_next_state: Predicted next state tensor (single frame)
+            current_state: Current state tensor (shape: Frames x Channels x H x W for new format, 
+                          or C*frame_stack_size x H x W for backward compatibility)
+            true_next_state: True next state tensor (shape: Frames x Channels x H x W for new format,
+                           or single frame for old format)
+            predicted_next_state: Predicted next state tensor (single frame: Channels x H x W)
             epoch: Current epoch number
             sample_num: Sample number (1-indexed)
             model_name: Name to include in plot title
         """
         if not self.enable_plotting:
             return
+        
+        # Handle new format where both current and next states have frame dimension
+        # Extract the last frame from true_next_state as the actual next state
+        if len(true_next_state.shape) == 4:  # New format: (Frames, Channels, H, W)
+            actual_next_state = true_next_state[-1]  # Last frame
+        else:  # Old format: single frame (Channels, H, W)
+            actual_next_state = true_next_state
             
-        # Determine layout based on frame stack size
-        if self.frame_stack_size == 1:
-            # Single frame layout: current, true next, predicted next
-            fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-            
-            curr_img = self.process_image_for_plotting(current_state)
+        # Multi-frame layout: all current frames + true next + predicted next
+        total_plots = self.frame_stack_size + 2
+        fig, axes = plt.subplots(1, total_plots, figsize=(4 * total_plots, 4))
+        
+        # Plot each frame in the current state stack
+        try:
+            frames = separate_stacked_frames(current_state, self.frame_stack_size, self.channels_per_frame)
+            for frame_idx, frame in enumerate(frames):
+                frame_img = self.process_image_for_plotting(frame)
+                axes[frame_idx].imshow(frame_img, cmap='gray' if self.is_grayscale else None)
+                axes[frame_idx].set_title(f"Current Frame {frame_idx + 1}")
+                axes[frame_idx].axis('off')
+        except Exception as e:
+            print(f"Warning: Could not separate stacked frames: {e}. Using fallback display.")
+            # Fallback: try to display current_state directly
+            if len(current_state.shape) == 4:
+                # New format: use first frame as fallback
+                curr_img = self.process_image_for_plotting(current_state[0])
+            else:
+                # Old format: use as is
+                curr_img = self.process_image_for_plotting(current_state)
             axes[0].imshow(curr_img, cmap='gray' if self.is_grayscale else None)
             axes[0].set_title("Current State (s_t)")
             axes[0].axis('off')
-            
-        else:
-            # Multi-frame layout: stacked frames + true next + predicted next
-            total_plots = self.frame_stack_size + 2
-            fig, axes = plt.subplots(1, total_plots, figsize=(4 * total_plots, 4))
-            
-            # Plot each frame in the stack
-            try:
-                frames = separate_stacked_frames(current_state, self.frame_stack_size, self.channels_per_frame)
-                for frame_idx, frame in enumerate(frames):
-                    frame_img = self.process_image_for_plotting(frame)
-                    axes[frame_idx].imshow(frame_img, cmap='gray' if self.is_grayscale else None)
-                    axes[frame_idx].set_title(f"Frame {frame_idx + 1}")
-                    axes[frame_idx].axis('off')
-            except Exception as e:
-                print(f"Warning: Could not separate stacked frames: {e}. Using full tensor.")
-                curr_img = self.process_image_for_plotting(current_state)
-                axes[0].imshow(curr_img, cmap='gray' if self.is_grayscale else None)
-                axes[0].set_title("Current State (s_t)")
-                axes[0].axis('off')
-                # Hide unused frame axes
-                for i in range(1, self.frame_stack_size):
+            # Hide unused frame axes
+            for i in range(1, self.frame_stack_size):
+                if i < len(axes) - 2:  # Make sure we don't hide next state axes
                     axes[i].axis('off')
                     axes[i].set_title("")
         
-        # Process and plot true next state
-        true_img = self.process_image_for_plotting(true_next_state)
-        true_next_axis_idx = self.frame_stack_size if self.frame_stack_size > 1 else 1
+        # Process and plot true next state (last frame from next state stack)
+        true_img = self.process_image_for_plotting(actual_next_state)
+        true_next_axis_idx = self.frame_stack_size
         axes[true_next_axis_idx].imshow(true_img, cmap='gray' if self.is_grayscale else None)
         axes[true_next_axis_idx].set_title("True Next State (s_{t+1})")
         axes[true_next_axis_idx].axis('off')
         
         # Process and plot predicted next state
         pred_img = self.process_image_for_plotting(predicted_next_state)
-        pred_next_axis_idx = self.frame_stack_size + 1 if self.frame_stack_size > 1 else 2
+        pred_next_axis_idx = self.frame_stack_size + 1
         axes[pred_next_axis_idx].imshow(pred_img, cmap='gray' if self.is_grayscale else None)
         title = "Predicted Next State"
         if model_name:
@@ -276,8 +296,10 @@ class ValidationPlotter:
         
         Args:
             batch_data: Tuple of (s_t, a_t, r_t, s_t_plus_1)
+                       s_t shape: (Batch, Frames, Channels, H, W) for new format
+                       s_t_plus_1 shape: (Batch, Frames, Channels, H, W) for new format
             selected_indices: Indices of samples to plot
-            predictions: Predicted next states for the selected samples only
+            predictions: Predicted next states for the selected samples only (single frame each)
             epoch: Current epoch number
             model_name: Name of the model for titles
         """
@@ -289,9 +311,9 @@ class ValidationPlotter:
         for i, batch_idx in enumerate(selected_indices):
             sample_num = i + 1  # 1-indexed sample numbers
             self.save_comparison_plot(
-                current_state=s_t[batch_idx],
-                true_next_state=s_t_plus_1[batch_idx],
-                predicted_next_state=predictions[i],  # Use i (0-4) not batch_idx
+                current_state=s_t[batch_idx],     # Shape: (Frames, Channels, H, W)
+                true_next_state=s_t_plus_1[batch_idx],  # Shape: (Frames, Channels, H, W)
+                predicted_next_state=predictions[i],  # Shape: (Channels, H, W) - single frame
                 epoch=epoch,
                 sample_num=sample_num,
                 model_name=model_name
