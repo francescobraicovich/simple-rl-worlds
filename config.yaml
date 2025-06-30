@@ -3,19 +3,31 @@
 # --- Environment Configuration ---
 environment:
   name: "CarRacing-v3" # Example, choose a relevant Gym environment (e.g., "CarRacing-v3", "ALE/Pong-v5")
-  # For image-based environments like CarRacing or Atari, ensure appropriate wrappers are used if needed by the env.
-  input_channels: 3 # Number of channels in the input image (e.g., 3 for RGB, 1 for grayscale, 4 if using FrameStack)
-  image_size: 64    # Target size (height and width) for processed images
+  
+  # Image preprocessing parameters
+  input_channels_per_frame: 3 # Number of channels from environment (3=RGB, 1=grayscale, 4=RGBA)
+  frame_stack_size: 4         # Number of frames to stack (1 = no stacking, 4 = stack 4 frames)
+  grayscale_conversion: true # Convert RGB to grayscale during preprocessing (only applies if input_channels_per_frame=3)
+  image_height: 64            # Target height for image preprocessing
+  image_width: 64             # Target width for image preprocessing
+  
+  # Note: Dataset structure with frame stacking:
+  # - Current states: (grayscale_conversion ? 1 : input_channels_per_frame) * frame_stack_size channels
+  # - Next states: (grayscale_conversion ? 1 : input_channels_per_frame) channels (single frame)
+  # Examples:
+  # - RGB env, no conversion, 4-frame stack: current=(3*4=12 channels), next=(3 channels)
+  # - RGB env, convert to grayscale, 4-frame stack: current=(1*4=4 channels), next=(1 channel)
+  # - Grayscale env, 4-frame stack: current=(1*4=4 channels), next=(1 channel)
 
 # --- Data Collection & Dataset Management ---
 data:
   collection:
-    num_episodes: 150 # Number of episodes to collect for the dataset
+    num_episodes: 2 # Number of episodes to collect for the dataset
     max_steps_per_episode: 600 # Max steps per episode during data collection
   dataset:
     dir: "datasets/"
-    load_path: "car_racing_v3_action_rep_6.pkl" # empty string means don't load, otherwise it's a path relative to dataset.dir
-    filename: "car_racing_v3_action_rep_6.pkl"
+    load_path: "car_racing_v3_action_rep_6.pth" # empty string means don't load, otherwise it's a path relative to dataset.dir
+    filename: "car_racing_v3_action_rep_6.pth"
   validation_split: 0.2 # Proportion of data to use for validation (moved from early_stopping)
 
 # --- Model Loading Configuration ---
@@ -26,8 +38,8 @@ model_loading:
 
 # --- General Training Configuration ---
 training:
-  num_epochs: 1
-  batch_size: 64
+  num_epochs: 20
+  batch_size: 32
   learning_rate: 0.0003 # General learning rate, reduced for stability
   num_workers: 1 # For DataLoader
   log_interval: 20 # Log training progress every N batches
@@ -47,7 +59,7 @@ training:
 
 # --- Models Configuration ---
 models:
-  shared_latent_dim: 8 # Output dimension of encoders, input to predictors/decoders
+  shared_latent_dim: 64 # Output dimension of encoders, input to predictors/decoders
   shared_patch_size: 4   # Global patch_size: Used by ViT encoder, default for decoder_patch_size
 
   encoder:
@@ -161,11 +173,12 @@ models:
 # --- PPO Agent Configuration for Data Collection ---
 ppo_agent:
   enabled: true # Master switch for using PPO for data collection
+  n_envs: 8 # Number of parallel environments for PPO training (default: CPU count)
   action_repetition_k: 6
   learning_rate: 0.0003
-  total_train_timesteps: 30000 # Timesteps to train PPO before data collection
-  n_steps: 1024       # PPO n_steps parameter
-  batch_size: 8      # PPO batch_size parameter
+  total_train_timesteps: 500 # Timesteps to train PPO before data collection
+  n_steps: 256       # PPO n_steps parameter
+  batch_size: 64      # PPO batch_size parameter
   n_epochs: 5         # PPO n_epochs parameter
   gamma: 0.99         # PPO gamma parameter
   gae_lambda: 0.95    # PPO gae_lambda parameter
