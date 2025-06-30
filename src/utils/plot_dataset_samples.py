@@ -1,5 +1,4 @@
 import os
-import pickle
 import yaml
 import torch
 import random
@@ -84,15 +83,14 @@ def load_training_dataset():
     dataset_dir_from_config = "datasets" # Default
     try:
         dataset_dir_from_config = config.get("data", {}).get("dataset", {}).get("dir", "datasets")
-        dataset_filename = config.get("data", {}).get("dataset", {}).get("filename", "car_racing_v3_v2.pkl")
+        dataset_filename = config.get("data", {}).get("dataset", {}).get("filename", "car_racing_v3_v2.pth")
         dataset_path = os.path.join(dataset_dir_from_config, dataset_filename)
 
         if not os.path.exists(dataset_path):
             print(f"Error: Dataset file not found at {dataset_path}")
             return None, None, None
 
-        with open(dataset_path, "rb") as f:
-            data = pickle.load(f)
+        data = torch.load(dataset_path, weights_only=False)
 
         train_dataset = data.get("train_dataset")
         if train_dataset is None:
@@ -101,9 +99,9 @@ def load_training_dataset():
 
         return train_dataset, dataset_dir_from_config, config
 
-    except pickle.UnpicklingError:
-        full_path_attempted = os.path.join(dataset_dir_from_config, config.get("data", {}).get("dataset", {}).get("filename", "unknown.pkl"))
-        print(f"Error: Could not unpickle dataset file at {full_path_attempted}.")
+    except Exception:
+        full_path_attempted = os.path.join(dataset_dir_from_config, config.get("data", {}).get("dataset", {}).get("filename", "unknown.pth"))
+        print(f"Error: Could not load dataset file at {full_path_attempted}.")
         return None, None, None
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
