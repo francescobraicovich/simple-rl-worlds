@@ -1,5 +1,4 @@
 # Contents for src/model_setup.py
-import torch
 from src.models.encoder_decoder import StandardEncoderDecoder
 from src.models.jepa import JEPA
 from src.models.mlp import RewardPredictorMLP
@@ -9,18 +8,25 @@ from copy import deepcopy
 from src.models.larp_mlp import LookAheadRewardPredictorMLP # Added for LARP
 from src.utils.larp_utils import calculate_larp_input_dim_enc_dec, calculate_larp_input_dim_jepa # Added for LARP
 from src.utils.weight_init import print_num_parameters
+from src.utils.config_utils import get_single_frame_channels
 
 def initialize_models(config, action_dim, action_type, device, image_h_w, input_channels): # Added action_type
     models = {}
+
+    # Calculate output channels for single frame (next state)
+    output_channels = input_channels
+    print(f"Model initialization: input_channels={input_channels} (stacked frames), output_channels={output_channels} (single frame)")
 
     # Load Reward Predictor Configurations
     reward_pred_config = config.get('models', {}).get('reward_predictors', {})
     enc_dec_mlp_config = reward_pred_config.get('reward_mlp', {})
     jepa_mlp_config = reward_pred_config.get('reward_mlp', {})
+    num_frames = config.get('environment', {}).get('frame_stack_size')  # Default to 1 if not set
 
     # Encoder configuration
     models_config = config.get('models', {})
     encoder_config = models_config.get('encoder', {})
+
     encoder_type = encoder_config.get('type')
     all_encoder_params_from_config = encoder_config.get('params', {})
     specific_encoder_params = all_encoder_params_from_config.get(encoder_type, {})
@@ -37,9 +43,10 @@ def initialize_models(config, action_dim, action_type, device, image_h_w, input_
         specific_encoder_params.setdefault('depth', specific_encoder_params.get('depth', 6))
         specific_encoder_params.setdefault('heads', specific_encoder_params.get('heads', 8))
         specific_encoder_params.setdefault('mlp_dim', specific_encoder_params.get('mlp_dim', 1024))
-        specific_encoder_params.setdefault('pool', specific_encoder_params.get('pool', 'cls'))
+        #specific_encoder_params.setdefault('pool', specific_encoder_params.get('pool', 'cls'))
         specific_encoder_params.setdefault('dropout', specific_encoder_params.get('dropout', 0.0))
         specific_encoder_params.setdefault('emb_dropout', specific_encoder_params.get('emb_dropout', 0.0))
+        specific_encoder_params.setdefault('num_frames', num_frames)  # Ensure frames is set for ViT
 
     print(f"Initializing Standard Encoder-Decoder Model with {encoder_type.upper()} encoder...")
     std_enc_dec_config = models_config.get('standard_encoder_decoder', {})
@@ -82,6 +89,8 @@ def initialize_models(config, action_dim, action_type, device, image_h_w, input_
         # output_channels_internal = input_channels (function arg)
         # output_image_size_internal = image_h_w (function arg)
 
+        print('image height and width:', image_h_w)
+
         std_enc_dec = EncoderDecoderJEPAStyle(
             image_size=image_h_w,
             patch_size=global_patch_size, # For ViT encoder and default for decoder patch size
@@ -103,8 +112,8 @@ def initialize_models(config, action_dim, action_type, device, image_h_w, input_
             jepa_decoder_dropout=jepa_decoder_dropout_internal,
             jepa_decoder_patch_size=jepa_decoder_patch_size_internal,
 
-            output_channels=input_channels, # Final output channels
-            output_image_size=image_h_w if isinstance(image_h_w, tuple) else (image_h_w, image_h_w), # Final output image size
+            output_channels=output_channels, # Final output channels (single frame)
+            output_image_size=image_h_w,
 
             encoder_type=encoder_type,
             encoder_params=specific_encoder_params
@@ -126,8 +135,8 @@ def initialize_models(config, action_dim, action_type, device, image_h_w, input_
             decoder_depth=std_enc_dec_config.get('decoder_depth', 3),
             decoder_heads=std_enc_dec_config.get('decoder_heads', 6),
             decoder_mlp_dim=std_enc_dec_config.get('decoder_mlp_dim', 256),
-            output_channels=input_channels,
-            output_image_size=image_h_w if isinstance(image_h_w, tuple) else (image_h_w, image_h_w),
+            output_channels=output_channels,
+            output_image_size=image_h_w,
             decoder_dropout=std_enc_dec_config.get('decoder_dropout', 0.0),
             encoder_type=encoder_type,
             encoder_params=specific_encoder_params,
@@ -243,7 +252,7 @@ def initialize_models(config, action_dim, action_type, device, image_h_w, input_
         print("\nInitializing JEPA State Decoder...")
 
         # Ensure image_h_w is a tuple for JEPAStateDecoder
-        current_image_h_w = image_h_w if isinstance(image_h_w, tuple) else (image_h_w, image_h_w)
+        current_image_h_w = image_h_w
 
         jepa_decoder = StateDecoder(
             input_latent_dim=shared_latent_dim, # JEPA's predictor output dim
@@ -251,7 +260,7 @@ def initialize_models(config, action_dim, action_type, device, image_h_w, input_
             decoder_depth=std_enc_dec_config.get('decoder_depth', 3),
             decoder_heads=std_enc_dec_config.get('decoder_heads', 4),
             decoder_mlp_dim=std_enc_dec_config.get('decoder_mlp_dim', 256),
-            output_channels=input_channels,
+            output_channels=output_channels,
             output_image_size=current_image_h_w,
             decoder_dropout=std_enc_dec_config.get('decoder_dropout', 0.0),
             decoder_patch_size=std_enc_dec_config.get('decoder_patch_size', global_patch_size) # Default to global patch_size if specific not found
