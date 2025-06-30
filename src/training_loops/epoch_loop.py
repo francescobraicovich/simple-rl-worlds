@@ -84,6 +84,7 @@ def train_validate_model_epoch(
 
     for batch_idx, (s_t, a_t, r_t, s_t_plus_1) in enumerate(train_dataloader):
         s_t, s_t_plus_1 = s_t.to(device), s_t_plus_1.to(device)
+        s_t_plus_1_encoder_decoder = s_t_plus_1[:, -1, :, :, :]  # Use the last frame for encoder input
         if action_type == 'discrete':
             if a_t.ndim == 1:
                 a_t = a_t.unsqueeze(1)
@@ -119,7 +120,21 @@ def train_validate_model_epoch(
             output = model(s_t, a_t_processed)
             predicted_s_t_plus_1 = output[0] if isinstance(output, tuple) else output
             
-            loss_primary = loss_fn(predicted_s_t_plus_1, s_t_plus_1)  # For Encoder-Decoder, primary loss is reconstruction loss
+            # Check for shape mismatch between predicted and target
+            if predicted_s_t_plus_1.shape != s_t_plus_1_encoder_decoder.shape:
+                print("WARNING: Model output shape mismatch!")
+                print(f"  Predicted shape: {predicted_s_t_plus_1.shape}")
+                print(f"  Target shape: {s_t_plus_1_encoder_decoder.shape}")
+                print("  This suggests the model was trained with wrong output channels.")
+                print("  Consider retraining the model with current config.")
+                
+                # Temporary fix: use only the first channels to match target
+                expected_channels = s_t_plus_1_encoder_decoder.shape[1]
+                if predicted_s_t_plus_1.shape[1] > expected_channels:
+                    print(f"  Temporarily using first {expected_channels} channels of prediction")
+                    predicted_s_t_plus_1 = predicted_s_t_plus_1[:, :expected_channels, :, :]
+
+            loss_primary = loss_fn(predicted_s_t_plus_1, s_t_plus_1_encoder_decoder)  # For Encoder-Decoder, primary loss is reconstruction loss
             total_loss = loss_primary
 
         current_loss_primary_item = loss_primary.item()
@@ -236,6 +251,7 @@ def train_validate_model_epoch(
         with torch.no_grad():
             for s_t_val, a_t_val, r_t_val, s_t_plus_1_val in val_dataloader:
                 s_t_val, s_t_plus_1_val = s_t_val.to(device), s_t_plus_1_val.to(device)
+                s_t_plus_1_val_encoder_decoder = s_t_plus_1_val[:, -1, :, :, :]  # Use the last frame for encoder input
                 if action_type == 'discrete':
                     if a_t_val.ndim == 1:
                         a_t_val = a_t_val.unsqueeze(1)
@@ -263,13 +279,26 @@ def train_validate_model_epoch(
                 else:  # Standard Encoder-Decoder or EncDecJEPAStyle - No auxiliary loss
                     output_val = model(s_t_val, a_t_val_processed)
                     predicted_s_t_plus_1_val = output_val[0] if isinstance(output_val, tuple) else output_val
-                    val_loss_primary = loss_fn(predicted_s_t_plus_1_val, s_t_plus_1_val)  # For Encoder-Decoder, primary loss is reconstruction loss
+                    
+                    # Check for shape mismatch between predicted and target (validation)
+                    if predicted_s_t_plus_1_val.shape != s_t_plus_1_val_encoder_decoder.shape:
+                        print("WARNING: Model output shape mismatch in validation!")
+                        print(f"  Predicted shape: {predicted_s_t_plus_1_val.shape}")
+                        print(f"  Target shape: {s_t_plus_1_val_encoder_decoder.shape}")
+
+                        # Temporary fix: use only the first channels to match target
+                        expected_channels = s_t_plus_1_val_encoder_decoder.shape[1]
+                        if predicted_s_t_plus_1_val.shape[1] > expected_channels:
+                            print(f"  Temporarily using first {expected_channels} channels of prediction")
+                            predicted_s_t_plus_1_val = predicted_s_t_plus_1_val[:, :expected_channels, :, :]
+
+                    val_loss_primary = loss_fn(predicted_s_t_plus_1_val, s_t_plus_1_val_encoder_decoder)  # For Encoder-Decoder, primary loss is reconstruction loss
                     
                     # Check if this is the batch selected for plotting
                     if (plot_batch_data is not None and 
                         torch.equal(s_t_val, plot_batch_data[0]) and
                         torch.equal(s_t_plus_1_val, plot_batch_data[3])):
-                        # Store predictions for the selected samples
+                        # Store predictions for the selected samples (after shape correction)
                         plot_predictions = predicted_s_t_plus_1_val[plot_sample_indices]
 
                 epoch_val_loss_primary += val_loss_primary.item()
@@ -278,15 +307,15 @@ def train_validate_model_epoch(
                 epoch_val_loss_cov += cov_loss_val.item()
 
         # Handle plotting after validation loop for encoder-decoder
-        if (validation_plotter and model_name_log_prefix == "StdEncDec" and 
-            plot_batch_data is not None and plot_predictions is not None):
-            validation_plotter.plot_validation_samples(
-                batch_data=plot_batch_data,
-                selected_indices=plot_sample_indices,
-                predictions=plot_predictions,
-                epoch=epoch_num,
-                model_name="Encoder-Decoder"
-            )
+        #if (validation_plotter and model_name_log_prefix == "StdEncDec" and 
+        #    plot_batch_data is not None and plot_predictions is not None):
+        #    validation_plotter.plot_validation_samples(
+        #        batch_data=plot_batch_data,
+        #        selected_indices=plot_sample_indices,
+        #        predictions=plot_predictions,
+        #        epoch=epoch_num,
+        #        model_name="Encoder-Decoder"
+        #    )
 
         avg_val_loss_primary = epoch_val_loss_primary / num_val_batches if num_val_batches > 0 else float('inf')
         avg_val_loss_aux_raw = epoch_val_loss_aux / num_val_batches if num_val_batches > 0 else 0
