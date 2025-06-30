@@ -6,10 +6,10 @@ from torchvision import transforms as T
 import random  # Added for shuffling episodes
 import os
 import pickle
-from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from src.rl_agent import create_ppo_agent, train_ppo_agent
 from src.utils.env_wrappers import ActionRepeatWrapper
+from src.utils.config_utils import create_image_preprocessing_transforms, FrameStackBuffer, get_effective_input_channels, get_single_frame_channels
 try:
     from scipy import stats
     SCIPY_AVAILABLE = True
@@ -64,20 +64,26 @@ class ExperienceDataset(Dataset):
             next_state = self.transform(next_state)
 
         if self.config:
-            expected_input_channels = self.config['environment']['input_channels']
-            # image_size in config is an int (e.g., 64)
-            expected_image_height = self.config['environment']['image_size']
-            expected_image_width = self.config['environment']['image_size']
-            expected_shape = (expected_input_channels, expected_image_height, expected_image_width)
+            # Get configuration for shape validation
+            image_height = self.config['environment']['image_height']
+            image_width = self.config['environment']['image_width']
 
-            if state.shape != expected_shape:
-                error_msg = f"State shape {state.shape} does not match target {expected_shape} for idx {idx}."
-                # print(f"STATE (raw an transformed): {self.states[idx]} --> {state}") # for debugging
+            num_channels = self.config['environment'].get('input_channels_per_frame')  # Default to 1 if not set
+            if self.config['environment'].get('grayscale_conversion'):
+                num_channels = 1
+
+            num_frames = self.config['environment'].get('frame_stack_size')  # Default to 1 if not set
+            
+            expected_stacked_shape = (num_frames, num_channels, image_height, image_width)
+
+            # Validate current state (should be stacked)
+            if state.shape != expected_stacked_shape:
+                error_msg = f"State shape {state.shape} does not match expected stacked shape {expected_stacked_shape} for idx {idx}."
                 raise ValueError(error_msg)
 
-            if next_state.shape != expected_shape:
-                error_msg = f"Next state shape {next_state.shape} does not match target {expected_shape} for idx {idx}."
-                # print(f"NEXT_STATE (raw an transformed): {self.next_states[idx]} --> {next_state}") # for debugging
+            # Validate next state (should be single frame)
+            if next_state.shape != expected_stacked_shape:
+                error_msg = f"Next state shape {next_state.shape} does not match expected stacked frame shape {expected_stacked_shape} for idx {idx}."
                 raise ValueError(error_msg)
 
         # Convert action to tensor, ensure it's float for potential nn.Linear embedding
@@ -157,11 +163,16 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
 
     all_episodes_raw_data = []  # Stores list of lists of (s,a,r,s') tuples
 
-    preprocess = T.Compose([
-        T.ToPILImage(),
-        T.Resize(image_size),
-        T.ToTensor()
-    ])
+    # Create preprocessing transforms using the new config-based approach
+    preprocess = create_image_preprocessing_transforms(config, image_size)
+    
+    # Get frame stacking configuration
+    env_config = config.get('environment', {})
+    frame_stack_size = env_config.get('frame_stack_size', 1)
+    
+    # Determine single frame shape after preprocessing
+    single_frame_channels = get_single_frame_channels(config)
+    single_frame_shape = (single_frame_channels, image_size[0], image_size[1])
 
     for episode_idx in range(num_episodes):
         current_state_img, info = env.reset()
@@ -193,13 +204,24 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
                 f"Skipping episode {episode_idx+1} due to unsuitable initial state after potential render. State: {current_state_img}")
             continue
 
+        # Initialize frame stacking buffer for this episode
+        frame_buffer = FrameStackBuffer(frame_stack_size, single_frame_shape)
+        
+        # Process the initial frame and add to buffer
+        initial_frame = preprocess(current_state_img)
+        frame_buffer.add_frame(initial_frame)
+        
+        # Get the initial stacked state
+        current_stacked_state = frame_buffer.get_stacked_frames()
+
         episode_transitions = []
         terminated = False
         truncated = False
         step_count = 0
 
         while not (terminated or truncated) and step_count < max_steps_per_episode:
-            recorded_current_state_img = current_state_img
+            # Record the current stacked state before taking action
+            recorded_current_stacked_state = current_stacked_state
             accumulated_reward = 0.0
 
             action = env.action_space.sample() # Primary action
@@ -270,10 +292,23 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
                     # Try next step with the (potentially problematic) next_state_img as current
                     continue
 
-            # The transition uses recorded_current_state_img, the original action, accumulated_reward, and the final next_state_img after skipping
+            # Process the next state frame
+            next_frame = preprocess(next_state_img)
+
+            # Add the next frame to buffer
+            frame_buffer.add_frame(next_frame)
+            next_stacked_state = frame_buffer.get_stacked_frames()
+
+            
+            # Record transition: stacked current state -> action -> single next frame
             episode_transitions.append(
-                (recorded_current_state_img, action, accumulated_reward, next_state_img))
-            current_state_img = next_state_img # Update current state for the next iteration of the main while loop
+                (recorded_current_stacked_state, action, accumulated_reward, next_stacked_state))
+            
+            # update current state for next iteration
+            current_stacked_state = next_stacked_state
+
+            # Update current state for next iteration
+            current_state_img = next_state_img
             step_count += 1 # Increment step_count for the primary transition that was just recorded
 
         if episode_transitions:
@@ -302,18 +337,20 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
         f"Splitting into {len(train_episodes_list)} training episodes and {len(val_episodes_list)} validation episodes.")
 
     # Modified to accept and pass config
+    # Note: transform_fn is not used since frames are already preprocessed and stacked
     def create_dataset_from_episode_list(episode_list, transform_fn, dataset_config):
         flat_states, flat_actions, flat_rewards, flat_next_states = [], [], [], []
         for episode_data in episode_list:
             for s, a, r, ns in episode_data:
+                # s and ns are already preprocessed tensors (stacked frames)
                 flat_states.append(s)
                 flat_actions.append(a)
                 flat_rewards.append(r)
                 flat_next_states.append(ns)
 
-        # If flat_states is empty, ExperienceDataset will handle it (or should)
+        # Pass None for transform since data is already preprocessed
         # Pass dataset_config to ExperienceDataset constructor
-        return ExperienceDataset(flat_states, flat_actions, flat_rewards, flat_next_states, transform=transform_fn, config=dataset_config)
+        return ExperienceDataset(flat_states, flat_actions, flat_rewards, flat_next_states, transform=None, config=dataset_config)
 
     # Pass config to create_dataset_from_episode_list
     train_dataset = create_dataset_from_episode_list(
@@ -335,7 +372,8 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
             metadata_to_save = {
                 'environment_name': env_name,
                 'num_episodes_collected': num_episodes_collected,
-                'image_size': image_size,
+                'image_height': image_size[0],  # Extract height from tuple
+                'image_width': image_size[1],   # Extract width from tuple
                 'max_steps_per_episode': max_steps_per_episode,
                 'validation_split_ratio': validation_split_ratio,
                 'num_train_transitions': len(train_dataset),
@@ -450,7 +488,7 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
         # Pass config to ExperienceDataset constructor
         empty_dataset = ExperienceDataset(
             [], [], [], [],
-            transform=T.Compose([T.ToPILImage(),T.Resize(image_size),T.ToTensor()]),
+            transform=T.Compose([T.ToPILImage(),T.Resize(image_size),T.ToTensor()]),  # image_size is tuple (height, width)
             config=config
         )
         return empty_dataset, empty_dataset
@@ -504,11 +542,16 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
     # which happens if ppo_agent.env.close() is called. `learn()` does not close it.
 
     all_episodes_raw_data = []
-    preprocess = T.Compose([
-        T.ToPILImage(),
-        T.Resize(image_size),
-        T.ToTensor()
-    ])
+    # Create preprocessing transforms using the new config-based approach
+    preprocess = create_image_preprocessing_transforms(config, image_size)
+    
+    # Get frame stacking configuration
+    env_config = config.get('environment', {})
+    frame_stack_size = env_config.get('frame_stack_size', 1)
+    
+    # Determine single frame shape after preprocessing
+    single_frame_channels = get_single_frame_channels(config)
+    single_frame_shape = (single_frame_channels, image_size[0], image_size[1])
 
     if action_repetition_k > 1:
         print(f"Note: Action repetition is active with k={action_repetition_k}.\
@@ -534,6 +577,16 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
             print(f"Skipping PPO episode {episode_idx+1} due to unsuitable initial state. State: {current_state_img}")
             continue
 
+        # Initialize frame stacking buffer for this episode
+        frame_buffer = FrameStackBuffer(frame_stack_size, single_frame_shape)
+        
+        # Process the initial frame and add to buffer
+        initial_frame = preprocess(current_state_img)
+        frame_buffer.add_frame(initial_frame)
+        
+        # Get the initial stacked state
+        current_stacked_state = frame_buffer.get_stacked_frames()
+
         episode_transitions = []
         terminated = False
         truncated = False
@@ -541,11 +594,14 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
         cumulative_reward_episode = 0.0  # Initialize cumulative reward
 
         while not (terminated or truncated) and step_count < max_steps_per_episode:
-            recorded_current_state_img = current_state_img
+            # Record the current stacked state before taking action
+            recorded_current_stacked_state = current_stacked_state
             accumulated_reward = 0.0
 
             # Action selection by PPO agent for the primary action
-            original_action, _ = ppo_agent.predict(recorded_current_state_img, deterministic=True)
+            # Note: PPO agent expects raw image, but we need to adapt for stacked frames
+            # For now, use the current raw image for action prediction
+            original_action, _ = ppo_agent.predict(current_state_img, deterministic=True)
 
             # First step
             next_state_img, reward, terminated, truncated, info = env.step(original_action)
@@ -603,10 +659,23 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
                 else:
                     continue
 
-            # The transition uses recorded_current_state_img, the original_action, accumulated_reward, and the final next_state_img
+            # Process the next state frame
+            next_frame = preprocess(next_state_img)
+
+            # Add the next frame to buffer for the next iteration's current state
+            frame_buffer.add_frame(next_frame)
+            next_stacked_state = frame_buffer.get_stacked_frames()
+            
+            # Record transition: stacked current state -> action -> single next frame
             processed_action = original_action.item() if isinstance(original_action, np.ndarray) and env.action_space.shape == () else original_action
-            episode_transitions.append((recorded_current_state_img, processed_action, accumulated_reward, next_state_img))
-            current_state_img = next_state_img # Update current state for the next iteration
+            
+            episode_transitions.append((recorded_current_stacked_state, processed_action, accumulated_reward, next_stacked_state))
+            
+            # update current stacked state for next iteration
+            current_stacked_state = next_stacked_state
+            
+            # Update current state for next iteration
+            current_state_img = next_state_img
             step_count += 1 # Increment step_count for the primary transition
 
         if episode_transitions:
@@ -618,7 +687,7 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
     if not all_episodes_raw_data:
         print("No data collected with PPO. Returning empty datasets.")
         # Pass config to ExperienceDataset constructor
-        empty_dataset = ExperienceDataset([], [], [], [], transform=preprocess, config=config)
+        empty_dataset = ExperienceDataset([], [], [], [], transform=None, config=config)
         return empty_dataset, empty_dataset
 
     random.shuffle(all_episodes_raw_data)
@@ -635,16 +704,19 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
     # or named differently if specific. Assuming it's intended to be the same.
     # It already has been modified in the previous hunk for collect_random_episodes if this diff is applied sequentially.
     # For safety, ensuring the change here if it wasn't.
+    # Note: transform_fn is not used since frames are already preprocessed and stacked
     def create_dataset_from_episode_list(episode_list, transform_fn, dataset_config): # Added dataset_config
         flat_states, flat_actions, flat_rewards, flat_next_states = [], [], [], []
         for episode_data in episode_list:
             for s, a, r, ns in episode_data:
+                # s and ns are already preprocessed tensors (stacked frames)
                 flat_states.append(s)
                 flat_actions.append(a)
                 flat_rewards.append(r)
                 flat_next_states.append(ns)
+        # Pass None for transform since data is already preprocessed
         # Pass dataset_config to ExperienceDataset constructor
-        return ExperienceDataset(flat_states, flat_actions, flat_rewards, flat_next_states, transform=transform_fn, config=dataset_config)
+        return ExperienceDataset(flat_states, flat_actions, flat_rewards, flat_next_states, transform=None, config=dataset_config)
 
     # Pass config to create_dataset_from_episode_list
     train_dataset = create_dataset_from_episode_list(train_episodes_list, preprocess, config)
@@ -660,7 +732,8 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
             metadata_to_save = {
                 'environment_name': env_name,
                 'num_episodes_collected': num_episodes_collected,
-                'image_size': image_size,
+                'image_height': image_size[0],  # Extract height from tuple
+                'image_width': image_size[1],   # Extract width from tuple
                 'max_steps_per_episode': max_steps_per_episode,
                 'validation_split_ratio': validation_split_ratio,
                 'num_train_transitions': len(train_dataset),
@@ -989,7 +1062,8 @@ if __name__ == '__main__':
                 'environment': {
                     'name': test_env_name,
                     'input_channels': 3, # Assuming RGB for test environments like Pong, CartPole gives 3 channels after render
-                    'image_size': 32      # Must match image_size below for T.Resize and validation
+                    'image_height': 32,   # Must match image_size below for T.Resize and validation
+                    'image_width': 32     # Must match image_size below for T.Resize and validation
                 },
                 'data': {
                     'collection': {
@@ -1034,7 +1108,8 @@ if __name__ == '__main__':
                 'environment': {
                     'name': test_env_name,
                     'input_channels': 3, # Must match for validation when loading
-                    'image_size': 32      # Must match for validation when loading
+                    'image_height': 32,   # Must match for validation when loading
+                    'image_width': 32     # Must match for validation when loading
                 },
                 'data': {
                     'collection': {
