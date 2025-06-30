@@ -176,22 +176,6 @@ def validate_environment_config(config):
     if grayscale_conversion and input_channels_per_frame not in [3, 4]:
         print(f"Warning: grayscale_conversion is enabled but input_channels_per_frame is {input_channels_per_frame}. Grayscale conversion typically applies to RGB (3) or RGBA (4) inputs.")
     
-    effective_channels = get_effective_input_channels(config)
-    single_channels = get_single_frame_channels(config)
-    
-    # Additional helpful info
-    if grayscale_conversion and input_channels_per_frame == 3:
-        print(f"  → Converting RGB to grayscale: {input_channels_per_frame} → 1 channel per frame")
-    elif input_channels_per_frame == 1:
-        print("  → Environment already provides grayscale images")
-    elif input_channels_per_frame == 3:
-        print("  → Using RGB images as-is")
-    
-    # Explain dataset structure
-    print("\\nDataset structure:")
-    print(f"  Current states: ({effective_channels}, {env_config.get('image_height', 'H')}, {env_config.get('image_width', 'W')}) - stacked frames for temporal context")
-    print(f"  Next states: ({single_channels}, {env_config.get('image_height', 'H')}, {env_config.get('image_width', 'W')}) - single frame immediate observation")
-
 
 def get_single_frame_channels(config):
     """
