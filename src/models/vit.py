@@ -88,6 +88,10 @@ class Transformer(nn.Module):
         return x
 
 
+# Utility to pair ints
+pair = lambda x: (x, x) if isinstance(x, int) else x
+
+# Base Vision Transformer Class
 class ViT(nn.Module):
     def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls', channels=3, dim_head=64, dropout=0., emb_dropout=0.):
         super().__init__()
@@ -96,15 +100,12 @@ class ViT(nn.Module):
 
         assert image_height % patch_height == 0 and image_width % patch_width == 0, 'Image dimensions must be divisible by the patch size.'
 
-        num_patches = (image_height // patch_height) * \
-            (image_width // patch_width)
+        num_patches = (image_height // patch_height) * (image_width // patch_width)
         patch_dim = channels * patch_height * patch_width
-        assert pool in {
-            'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
+        assert pool in {'cls', 'mean'}, 'pool type must be either cls (cls token) or mean (mean pooling)'
 
         self.to_patch_embedding = nn.Sequential(
-            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)',
-                      p1=patch_height, p2=patch_width),
+            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1=patch_height, p2=patch_width),
             nn.Linear(patch_dim, dim),
         )
 
@@ -112,22 +113,15 @@ class ViT(nn.Module):
         self.cls_token = nn.Parameter(torch.randn(1, 1, dim) * 0.01)
         self.dropout = nn.Dropout(emb_dropout)
 
-        self.transformer = Transformer(
-            dim, depth, heads, dim_head, mlp_dim, dropout)
+        self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
 
         self.pool = pool
         self.to_latent = nn.Identity()
 
-        # The 'num_classes' argument suggests a classification head, which we might not need directly for representation.
-        # We want the ViT to output the latent representation (either CLS token or mean pooled patch embeddings).
-        # If 'num_classes' is for a final linear layer for classification, we can make it optional or remove it
-        # if the primary use is feature extraction. For now, let's keep it as is, but our models
-        # will likely use the output of self.to_latent.
-
         self.mlp_head = nn.Sequential(
             nn.LayerNorm(dim),
             nn.Linear(dim, num_classes)
-        ) if num_classes > 0 else nn.Identity()  # Only add mlp_head if num_classes is positive
+        ) if num_classes > 0 else nn.Identity()
 
         self.apply(initialize_weights)
 
@@ -142,41 +136,129 @@ class ViT(nn.Module):
 
         x = self.transformer(x)
 
-        # Decide how to pool features
+        # Pool the output of the transformer
         if self.pool == 'mean':
             x = x.mean(dim=1)
-        else:  # 'cls'
-            x = x[:, 0]  # Take the CLS token
+        else: # 'cls'
+            x = x[:, 0] # Select the CLS token
 
         latent_representation = self.to_latent(x)
-
-        # If an mlp_head is defined (e.g. for supervised pre-training or if ViT is used for classification)
-        # return self.mlp_head(latent_representation)
-        # For our purposes, we usually need the latent_representation itself.
-        # The calling model can decide if it wants to add more layers.
-        # We will return the latent_representation directly.
-        # If num_classes was specified > 0, the user might expect a classification output.
-        # For JEPA and Encoder-Decoder, we need the latent vector.
-        # Let's make it so that if num_classes=0, it returns the representation, else it passes through mlp_head.
-        if self.mlp_head is nn.Identity():
-            return latent_representation
-        else:
-            return self.mlp_head(latent_representation)
-
-# Need to add 'repeat' for the cls_token. It's often part of einops.
-# If it's not directly in the main einops, it might be in einops.layers or a separate import.
-# Let's assume 'repeat' is available from einops for now.
-# from einops import repeat # This should be at the top if not already there.
-# It appears 'repeat' is not automatically imported with 'from einops import rearrange'.
-# Let's ensure it's imported.
+        
+        # If mlp_head is Identity (num_classes=0), return latent representation
+        # Otherwise, return classification logits
+        return self.mlp_head(latent_representation)
 
 
-# Correcting imports for 'repeat'
+# Refactored Video Vision Transformer using ViT for spatial processing
+class ViTVideo(nn.Module):
+    def __init__(
+        self,
+        *,
+        image_size,
+        patch_size,
+        num_frames,
+        num_classes,
+        dim,
+        # Spatial ViT parameters
+        depth,
+        heads,
+        mlp_dim,
+        # Temporal Transformer parameters
+        temporal_depth = 2,
+        temporal_heads = 8,
+        temporal_mlp_dim = 256,
+        # Common parameters
+        pool='cls',
+        channels=3,
+        dim_head=64,
+        dropout=0.,
+        emb_dropout=0.,
+        temporal_dropout=0.1
+    ):
+        super().__init__()
 
-# Final check on ViT class structure:
-# The ViT class should take image_size, patch_size, dim (output latent dim), depth, heads, mlp_dim.
-# The 'num_classes' can be set to the latent_dim if we want the mlp_head to project to that,
-# or 0 if we want the raw pooled output.
-# For our case, we often want the raw latent vector, so perhaps 'num_classes=0' is a good default for that.
-# The current implementation has `mlp_head` which would be an identity if `num_classes=0`.
-# This means it will return `latent_representation` as desired when `num_classes=0`.
+        # --- SPATIAL TRANSFORMER ---
+        # Instantiate the ViT class to handle per-frame feature extraction.
+        # We set num_classes=0 to ensure it returns the latent CLS token representation
+        # for each frame, not classification logits.
+        self.spatial_transformer = ViT(
+            image_size=image_size,
+            patch_size=patch_size,
+            num_classes=0, # Critical: ensures output is latent rep
+            dim=dim,
+            depth=depth,
+            heads=heads,
+            mlp_dim=mlp_dim,
+            pool=pool,
+            channels=channels,
+            dim_head=dim_head,
+            dropout=dropout,
+            emb_dropout=emb_dropout
+        )
+
+        # --- TEMPORAL TRANSFORMER ---
+        # video-CLS token + temporal positional embeddings
+        self.video_cls = nn.Parameter(torch.randn(1, 1, dim) * 0.01)
+        self.temporal_pos = nn.Parameter(torch.randn(1, num_frames + 1, dim) * 0.01)
+
+        # Small transformer over [video_cls + per-frame CLS tokens]
+        self.temporal_transformer = Transformer(
+            dim=dim,
+            depth=temporal_depth,
+            heads=temporal_heads,
+            dim_head=dim_head,
+            mlp_dim=temporal_mlp_dim,
+            dropout=temporal_dropout
+        )
+
+        # --- FINAL CLASSIFICATION HEAD ---
+        self.to_latent = nn.Identity()
+        self.mlp_head = (
+            nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, num_classes))
+            if num_classes > 0
+            else nn.Identity()
+        )
+        
+        self.apply(initialize_weights)
+
+    def forward(self, video):
+        """
+        video: Tensor of shape [B, F, C, H, W]
+        B: Batch size
+        F: Number of frames
+        C: Channels
+        H: Height
+        W: Width
+        """
+        B, F, C, H, W = video.shape
+
+        # === 1) SPATIAL PROCESSING: Apply ViT to each frame ===
+        # Reshape video into a batch of frames
+        frames = video.view(B * F, C, H, W)
+
+        # Get the CLS token representation for each frame
+        # Output shape: [B*F, dim]
+        frame_cls_tokens = self.spatial_transformer(frames)
+
+        # Reshape back to separate batch and frame dimensions
+        # Output shape: [B, F, dim]
+        frame_cls_tokens = frame_cls_tokens.view(B, F, -1)
+
+        # === 2) TEMPORAL PROCESSING: Apply Transformer over frame tokens ===
+        # Prepend the video-level CLS token
+        video_cls = repeat(self.video_cls, '() n d -> b n d', b=B)
+        temporal_input = torch.cat((video_cls, frame_cls_tokens), dim=1) # Shape: [B, F+1, dim]
+
+        # Add temporal positional embedding
+        temporal_input += self.temporal_pos
+
+        # Apply temporal attention
+        temporal_output = self.temporal_transformer(temporal_input) # Shape: [B, F+1, dim]
+
+        # === 3) FINAL PROJECTION ===
+        # Extract the video-level CLS token for the final representation
+        video_representation = temporal_output[:, 0]
+
+        # Apply final classification head
+        latent_rep = self.to_latent(video_representation)
+        return self.mlp_head(latent_rep)
