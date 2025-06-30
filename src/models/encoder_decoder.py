@@ -14,7 +14,7 @@ class StandardEncoderDecoder(nn.Module):
                  patch_size,  # Primarily for ViT and decoder's output patch structure
                  input_channels,
                  action_dim,
-                 action_emb_dim,
+                 action_type, # Added action_type
                  latent_dim,  # This is the output dim of any encoder
                  decoder_dim,
                  decoder_depth,
@@ -28,10 +28,8 @@ class StandardEncoderDecoder(nn.Module):
                  decoder_patch_size: int = None):  # New: explicit patch size for decoder output
         super().__init__()
 
-        self._image_size_tuple = image_size if isinstance(
-            image_size, tuple) else (image_size, image_size)
-        self._output_image_size_tuple = output_image_size if isinstance(
-            output_image_size, tuple) else (output_image_size, output_image_size)
+        self._image_size_tuple = image_size
+        self._output_image_size_tuple = output_image_size
 
         self.input_channels = input_channels
         self.output_channels = output_channels
