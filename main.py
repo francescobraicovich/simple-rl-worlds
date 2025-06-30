@@ -105,6 +105,10 @@ def main():
     ]
     for dir_path in dirs_to_clean:
         for filename in os.listdir(dir_path):
+            # don’t delete the .gitkeep placeholder
+            if filename == '.gitkeep':
+                continue
+
             file_path = os.path.join(dir_path, filename)
             try:
                 if os.path.isfile(file_path) or os.path.islink(file_path):
