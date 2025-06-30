@@ -25,7 +25,7 @@ def calculate_larp_input_dim_enc_dec(config, encoder_decoder_variant, image_h_w,
     # The decoder in StandardEncoderDecoder outputs images of shape (output_channels, output_height, output_width).
     # For simplicity, we'll use input_channels and image_h_w as proxies for output shape.
     # A more robust solution might involve getting these from decoder_config if available.
-    output_height, output_width = (image_h_w, image_h_w) if isinstance(image_h_w, int) else image_h_w
+    output_height, output_width = image_h_w
     # The problem description implies predicted s_{t+1} is an image.
     # Let's assume its channels are the same as input_channels for now.
     # If the world model's decoder outputs a different number of channels, this needs adjustment.
