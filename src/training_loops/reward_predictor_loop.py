@@ -83,9 +83,8 @@ def train_reward_mlp_epoch(
         for batch_idx, (s_t, a_t, r_t, s_t_plus_1) in enumerate(train_dataloader):
             s_t, r_t, s_t_plus_1 = s_t.to(device), r_t.to(device).float().unsqueeze(1), s_t_plus_1.to(device)
 
-            if action_type == 'discrete':
-                if a_t.ndim == 1: a_t = a_t.unsqueeze(1)
-                a_t_processed = F.one_hot(a_t.long().view(-1), num_classes=action_dim).float().to(device)
+            if action_type == 'discrete':      
+                a_t_processed = a_t.long().to(device)
             else:
                 a_t_processed = a_t.float().to(device)
 
@@ -147,10 +146,8 @@ def train_reward_mlp_epoch(
                 for batch_idx_val, (s_t_val, a_t_val, r_t_val, s_t_plus_1_val) in enumerate(val_dataloader):
                     s_t_val, r_t_val, s_t_plus_1_val = s_t_val.to(device), r_t_val.to(device).float().unsqueeze(1), s_t_plus_1_val.to(device)
 
-                    if action_type == 'discrete':
-                        if a_t_val.ndim == 1:
-                            a_t_val = a_t_val.unsqueeze(1)
-                        a_t_processed_val = F.one_hot(a_t_val.long().view(-1), num_classes=action_dim).float().to(device)
+                    if action_type == 'discrete':      
+                        a_t_processed_val = a_t_val.long().to(device)
                     else:
                         a_t_processed_val = a_t_val.float().to(device)
 
