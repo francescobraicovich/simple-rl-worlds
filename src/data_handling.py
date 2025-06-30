@@ -2,9 +2,13 @@
 import torch
 from torch.utils.data import DataLoader
 from src.utils.data_utils import collect_random_episodes, collect_ppo_episodes # Absolute import from src
+from src.utils.config_utils import get_effective_input_channels, validate_environment_config
 
 def prepare_dataloaders(config, validation_split): # validation_split is from config['data']['validation_split'] passed from main.py
     print("Starting data collection...")
+
+    # Validate environment configuration and show effective parameters
+    validate_environment_config(config)
 
     # Accessing nested configuration parameters
     env_config = config.get('environment', {})
@@ -12,10 +16,11 @@ def prepare_dataloaders(config, validation_split): # validation_split is from co
     data_collection_config = config.get('data', {}).get('collection', {})
     ppo_agent_config = config.get('ppo_agent', {})
 
-    image_h_w = env_config.get('image_size')
-    if image_h_w is None:
-        raise ValueError("Configuration error: 'environment.image_size' is not set.")
-    img_size_tuple = (image_h_w, image_h_w)
+    image_h = env_config.get('image_height')
+    image_w = env_config.get('image_width')
+    if image_h is None or image_w is None:
+        raise ValueError("Configuration error: 'environment.image_height' or 'environment.image_width' is not set.")
+    img_size_tuple = (image_h, image_w)
 
     frame_skipping = training_config.get('frame_skipping', 0)
     
