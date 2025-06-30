@@ -4,11 +4,70 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 import random
+import yaml
+
+def get_frame_structure_info(config):
+    """
+    Get frame structure information from config.
+    
+    Returns:
+        tuple: (frame_stack_size, channels_per_frame, is_grayscale)
+    """
+    env_config = config.get('environment', {})
+    
+    input_channels_per_frame = env_config.get('input_channels_per_frame', 3)
+    frame_stack_size = env_config.get('frame_stack_size', 1)
+    grayscale_conversion = env_config.get('grayscale_conversion', False)
+    
+    # Determine channels per frame after grayscale conversion
+    if grayscale_conversion and input_channels_per_frame > 1:
+        channels_per_frame = 1
+        is_grayscale = True
+    else:
+        channels_per_frame = input_channels_per_frame
+        is_grayscale = (input_channels_per_frame == 1)
+    
+    return frame_stack_size, channels_per_frame, is_grayscale
+
+def separate_stacked_frames(stacked_tensor, frame_stack_size, channels_per_frame):
+    """
+    Separate a stacked frame tensor into individual frames.
+    
+    Args:
+        stacked_tensor: Tensor of shape (C*frame_stack_size, H, W)
+        frame_stack_size: Number of stacked frames
+        channels_per_frame: Channels per individual frame
+        
+    Returns:
+        list: List of individual frame tensors, each of shape (channels_per_frame, H, W)
+    """
+    total_channels, H, W = stacked_tensor.shape
+    expected_channels = frame_stack_size * channels_per_frame
+    
+    if total_channels != expected_channels:
+        raise ValueError(f"Expected {expected_channels} channels but got {total_channels}")
+    
+    frames = []
+    for i in range(frame_stack_size):
+        start_channel = i * channels_per_frame
+        end_channel = start_channel + channels_per_frame
+        frame = stacked_tensor[start_channel:end_channel, :, :]
+        frames.append(frame)
+    
+    return frames
+
+def load_config():
+    """Load configuration from config.yaml."""
+    try:
+        with open("config.yaml", "r") as f:
+            return yaml.safe_load(f)
+    except (FileNotFoundError, yaml.YAMLError):
+        return None
 
 class ValidationPlotter:
     """Handles consistent validation plotting for encoder-decoder and JEPA decoder models."""
     
-    def __init__(self, plot_dir, enable_plotting=True, num_samples=5, random_seed=None):
+    def __init__(self, plot_dir, enable_plotting=True, num_samples=5, random_seed=None, config=None):
         """
         Initialize the validation plotter.
         
@@ -17,12 +76,27 @@ class ValidationPlotter:
             enable_plotting (bool): Whether plotting is enabled
             num_samples (int): Number of samples to plot per epoch
             random_seed (int, optional): Random seed for reproducible sample selection
+            config (dict, optional): Configuration dictionary for frame structure info
         """
         self.plot_dir = plot_dir
         self.enable_plotting = enable_plotting
         self.num_samples = num_samples
         self.random_seed = random_seed
         self._epoch_random_state = None
+        
+        # Load config if not provided
+        if config is None:
+            config = load_config()
+        self.config = config
+        
+        # Get frame structure info
+        if self.config:
+            self.frame_stack_size, self.channels_per_frame, self.is_grayscale = get_frame_structure_info(self.config)
+        else:
+            # Default values if config not available
+            self.frame_stack_size = 1
+            self.channels_per_frame = 3
+            self.is_grayscale = False
         
     def set_epoch_random_state(self, epoch):
         """Set the random state for consistent sampling across models for a given epoch."""
@@ -91,6 +165,23 @@ class ValidationPlotter:
         """
         img_np = img_tensor.cpu().numpy()
         
+        # Handle the case where we get a stacked frame tensor instead of single frame
+        # This can happen if there's a model configuration issue (e.g., old trained model)
+        expected_single_frame_channels = getattr(self, 'channels_per_frame', None)
+        if expected_single_frame_channels is None:
+            # Fallback: assume it's grayscale if self.is_grayscale, otherwise RGB
+            expected_single_frame_channels = 1 if self.is_grayscale else 3
+            
+        if img_np.shape[0] > expected_single_frame_channels:
+            print(f"Warning: Got {img_np.shape[0]} channels in image for plotting.")
+            print(f"Expected single frame ({expected_single_frame_channels} channels) but got multi-frame tensor.")
+            print("This suggests a model output channel mismatch - model may be from old training with different config.")
+            print(f"Using first {expected_single_frame_channels} channels only as a temporary fix.")
+            print("Consider retraining the model with the current configuration.")
+            
+            # Extract the expected number of channels for single frame
+            img_np = img_np[:expected_single_frame_channels, :, :]
+        
         # Handle channel dimension
         if img_np.shape[0] == 1 or img_np.shape[0] == 3:  # C, H, W
             img_np = np.transpose(img_np, (1, 2, 0))
@@ -111,9 +202,9 @@ class ValidationPlotter:
         Save a comparison plot of current state, true next state, and predicted next state.
         
         Args:
-            current_state: Current state tensor
-            true_next_state: True next state tensor  
-            predicted_next_state: Predicted next state tensor
+            current_state: Current state tensor (potentially frame-stacked)
+            true_next_state: True next state tensor (single frame)
+            predicted_next_state: Predicted next state tensor (single frame)
             epoch: Current epoch number
             sample_num: Sample number (1-indexed)
             model_name: Name to include in plot title
@@ -121,28 +212,56 @@ class ValidationPlotter:
         if not self.enable_plotting:
             return
             
-        # Process images
-        curr_img = self.process_image_for_plotting(current_state)
-        true_img = self.process_image_for_plotting(true_next_state) 
+        # Determine layout based on frame stack size
+        if self.frame_stack_size == 1:
+            # Single frame layout: current, true next, predicted next
+            fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+            
+            curr_img = self.process_image_for_plotting(current_state)
+            axes[0].imshow(curr_img, cmap='gray' if self.is_grayscale else None)
+            axes[0].set_title("Current State (s_t)")
+            axes[0].axis('off')
+            
+        else:
+            # Multi-frame layout: stacked frames + true next + predicted next
+            total_plots = self.frame_stack_size + 2
+            fig, axes = plt.subplots(1, total_plots, figsize=(4 * total_plots, 4))
+            
+            # Plot each frame in the stack
+            try:
+                frames = separate_stacked_frames(current_state, self.frame_stack_size, self.channels_per_frame)
+                for frame_idx, frame in enumerate(frames):
+                    frame_img = self.process_image_for_plotting(frame)
+                    axes[frame_idx].imshow(frame_img, cmap='gray' if self.is_grayscale else None)
+                    axes[frame_idx].set_title(f"Frame {frame_idx + 1}")
+                    axes[frame_idx].axis('off')
+            except Exception as e:
+                print(f"Warning: Could not separate stacked frames: {e}. Using full tensor.")
+                curr_img = self.process_image_for_plotting(current_state)
+                axes[0].imshow(curr_img, cmap='gray' if self.is_grayscale else None)
+                axes[0].set_title("Current State (s_t)")
+                axes[0].axis('off')
+                # Hide unused frame axes
+                for i in range(1, self.frame_stack_size):
+                    axes[i].axis('off')
+                    axes[i].set_title("")
+        
+        # Process and plot true next state
+        true_img = self.process_image_for_plotting(true_next_state)
+        true_next_axis_idx = self.frame_stack_size if self.frame_stack_size > 1 else 1
+        axes[true_next_axis_idx].imshow(true_img, cmap='gray' if self.is_grayscale else None)
+        axes[true_next_axis_idx].set_title("True Next State (s_{t+1})")
+        axes[true_next_axis_idx].axis('off')
+        
+        # Process and plot predicted next state
         pred_img = self.process_image_for_plotting(predicted_next_state)
-        
-        # Create plot
-        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-        
-        axes[0].imshow(curr_img)
-        axes[0].set_title("Current State (s_t)")
-        axes[0].axis('off')
-        
-        axes[1].imshow(true_img)
-        axes[1].set_title("True Next State (s_{t+1})")
-        axes[1].axis('off')
-        
-        axes[2].imshow(pred_img)
+        pred_next_axis_idx = self.frame_stack_size + 1 if self.frame_stack_size > 1 else 2
+        axes[pred_next_axis_idx].imshow(pred_img, cmap='gray' if self.is_grayscale else None)
         title = "Predicted Next State"
         if model_name:
             title += f" ({model_name})"
-        axes[2].set_title(title)
-        axes[2].axis('off')
+        axes[pred_next_axis_idx].set_title(title)
+        axes[pred_next_axis_idx].axis('off')
         
         # Save plot
         os.makedirs(self.plot_dir, exist_ok=True)
@@ -290,17 +409,19 @@ def create_shared_validation_plotters(config, main_model_dir, random_seed=42):
     jepa_plotting_enabled = jepa_decoder_config.get('enable_validation_plot', True)
     jepa_plot_dir = os.path.join(evaluation_plots_dir, "decoder_plots", "jepa_decoder")
     
-    # Create plotters with shared random seed
+    # Create plotters with shared random seed and config
     enc_dec_plotter = ValidationPlotter(
         plot_dir=enc_dec_plot_dir,
         enable_plotting=enc_dec_plotting_enabled,
-        random_seed=random_seed
+        random_seed=random_seed,
+        config=config
     )
     
     jepa_decoder_plotter = ValidationPlotter(
         plot_dir=jepa_plot_dir, 
         enable_plotting=jepa_plotting_enabled,
-        random_seed=random_seed
+        random_seed=random_seed,
+        config=config
     )
     
     return enc_dec_plotter, jepa_decoder_plotter
