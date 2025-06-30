@@ -87,8 +87,6 @@ class EncoderDecoderJEPAStyle(nn.Module):
         _decoder_patch_size = jepa_decoder_patch_size if jepa_decoder_patch_size is not None else patch_size
         _output_image_size_tuple = output_image_size if isinstance(output_image_size, tuple) else (output_image_size, output_image_size)
 
-
-
         self.decoder = StateDecoder(
             input_latent_dim=predictor_output_dim, # Output of self.predictor
             decoder_dim=jepa_decoder_dim,

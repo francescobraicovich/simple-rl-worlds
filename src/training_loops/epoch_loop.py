@@ -91,12 +91,9 @@ def train_validate_model_epoch(
         s_t, s_t_plus_1 = s_t.to(device), s_t_plus_1.to(device)
         s_t_plus_1_encoder_decoder = s_t_plus_1[:, -1, :, :, :]  # Use the last frame for encoder input
         if action_type == 'discrete':
-            if a_t.ndim == 1:
-                a_t = a_t.unsqueeze(1)
-            a_t_processed = F.one_hot(a_t.long().view(-1), num_classes=action_dim).float().to(device)
+            a_t_processed = a_t.to(device)
         else:
             a_t_processed = a_t.float().to(device)
-
         optimizer.zero_grad()
 
         current_loss_primary_item, current_loss_aux_item = 0, 0
@@ -257,10 +254,8 @@ def train_validate_model_epoch(
             for s_t_val, a_t_val, r_t_val, s_t_plus_1_val in val_dataloader:
                 s_t_val, s_t_plus_1_val = s_t_val.to(device), s_t_plus_1_val.to(device)
                 s_t_plus_1_val_encoder_decoder = s_t_plus_1_val[:, -1, :, :, :]  # Use the last frame for encoder input
-                if action_type == 'discrete':
-                    if a_t_val.ndim == 1:
-                        a_t_val = a_t_val.unsqueeze(1)
-                    a_t_val_processed = F.one_hot(a_t_val.long().view(-1), num_classes=action_dim).float().to(device)
+                if action_type == 'discrete':      
+                    a_t_val = a_t_val.to(device)
                 else:
                     a_t_val_processed = a_t_val.float().to(device)
 

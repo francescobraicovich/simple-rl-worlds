@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from einops import rearrange  # For use in forward method
 from einops.layers.torch import Rearrange  # For use in __init__ as a layer
 
 # Import available encoders
@@ -15,6 +14,7 @@ class StandardEncoderDecoder(nn.Module):
                  input_channels,
                  action_dim,
                  action_type, # Added action_type
+                 action_emb_dim,  # Added missing action_emb_dim parameter
                  latent_dim,  # This is the output dim of any encoder
                  decoder_dim,
                  decoder_depth,
@@ -33,6 +33,7 @@ class StandardEncoderDecoder(nn.Module):
 
         self.input_channels = input_channels
         self.output_channels = output_channels
+        self.action_type = action_type  # Store action_type
 
         # Determine decoder_patch_size
         # If not provided, default to 'patch_size' (which was historically ViT's patch_size)
@@ -58,7 +59,14 @@ class StandardEncoderDecoder(nn.Module):
         )
 
         # Action embedding
-        self.action_embedding = nn.Linear(action_dim, action_emb_dim)
+        if self.action_type == 'discrete':
+            # action_dim is num_actions for discrete
+            self.action_embedding = nn.Embedding(action_dim, action_emb_dim)
+        elif self.action_type == 'continuous':
+            # action_dim is the dimensionality of the action vector
+            self.action_embedding = nn.Linear(action_dim, action_emb_dim)
+        else:
+            raise ValueError(f"Unsupported action_type: {self.action_type}")
 
         # Decoder input projection
         self.decoder_input_dim = latent_dim + action_emb_dim
@@ -97,13 +105,27 @@ class StandardEncoderDecoder(nn.Module):
 
     def forward(self, current_state_img, action):
         # current_state_img: (b, c, h, w)
-        # action: (b, action_dim)
+        # action: (batch, action_dim) for continuous, or (batch,) or (batch,1) for discrete
 
         # 1. Encode current state
         latent_s_t = self.encoder(current_state_img)  # (b, latent_dim)
 
         # 2. Embed action
-        embedded_action = self.action_embedding(action)  # (b, action_emb_dim)
+        if self.action_type == 'discrete':
+            # Ensure action is long and squeezed if it's (batch, 1)
+            if action.ndim == 2 and action.shape[1] == 1:
+                action = action.squeeze(1)
+            if action.dtype != torch.long:
+                action = action.long()
+            embedded_action = self.action_embedding(action)  # (b, action_emb_dim)
+        elif self.action_type == 'continuous':
+            # Ensure action is float
+            if action.dtype != torch.float32:  # Or match the model's default dtype
+                action = action.float()
+            embedded_action = self.action_embedding(action)  # (b, action_emb_dim)
+        else:
+            # This case should have been caught in __init__, but as a safeguard:
+            raise ValueError(f"Unsupported action_type in forward pass: {self.action_type}")
 
         # 3. Combine latent state and action for decoder memory
         decoder_memory_input = torch.cat((latent_s_t, embedded_action), dim=-1)
