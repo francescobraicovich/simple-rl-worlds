@@ -1,10 +1,16 @@
 import os
+import sys
 import yaml
 import torch
 import random
 import numpy as np
 import matplotlib.pyplot as plt
 from torchvision.transforms import ToPILImage
+
+# Add the project root to Python path to enable imports when loading torch files
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 def load_config():
     """Load configuration from config.yaml."""
@@ -114,12 +120,10 @@ def load_training_dataset():
 
         return train_dataset, dataset_dir_from_config, config
 
-    except Exception:
+    except Exception as e:
         full_path_attempted = os.path.join(dataset_dir_from_config, config.get("data", {}).get("dataset", {}).get("filename", "unknown.pth"))
         print(f"Error: Could not load dataset file at {full_path_attempted}.")
-        return None, None, None
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
+        print(f"Detailed error: {e}")
         return None, None, None
 
 def sample_data_points(dataset, num_samples=50):
