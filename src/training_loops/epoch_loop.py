@@ -152,7 +152,14 @@ def train_validate_model_epoch(
             total_loss = total_loss / 1000.0
             total_loss_item = total_loss.item()
         
-        total_loss.backward()
+        if model_name_log_prefix == "JEPA" and aux_loss_fn and use_aux_for_jepa:
+            # Backpropagate the three losses individually for less memory usage
+            sim_loss.backward(retain_graph=True)
+            std_loss.backward(retain_graph=True)
+            cov_loss.backward()
+        else:
+            # For non-JEPA models, backpropagate the primary loss only
+            loss_primary.backward()
         
         # Enhanced gradient clipping with NaN/Inf checks
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
