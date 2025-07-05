@@ -104,13 +104,14 @@ def train_validate_model_epoch(
             if aux_loss_fn is not None and use_aux_for_jepa:
                 # Use VICReg forward method with projector for all three losses
                 total_vicreg_loss, sim_loss, std_loss, cov_loss = aux_loss_fn(online_s_t_emb, target_s_t_emb)
-                current_loss_aux = total_vicreg_loss
-                total_loss = current_loss_aux
+                total_loss = total_vicreg_loss
+                current_loss_aux = std_loss + cov_loss
                 loss_primary = sim_loss  # For JEPA with VICReg, primary loss is the similarity (invariance) loss
             else:
                 # Fallback to MSE loss between predicted and target embeddings
                 loss_primary = loss_fn(pred_emb, target_emb_detached)
                 total_loss = loss_primary
+                
 
         else:  # Standard Encoder-Decoder or EncDecJEPAStyle - No auxiliary loss
             output = model(s_t, a_t_processed)
@@ -203,7 +204,6 @@ def train_validate_model_epoch(
                 f"{model_name_log_prefix}/train/VICReg_Std_Loss": std_loss.item(),
                 f"{model_name_log_prefix}/train/VICReg_Cov_Loss": cov_loss.item(),
                 f"{model_name_log_prefix}/train/VICReg_Total_Loss": current_loss_aux_item,
-                f"{model_name_log_prefix}/train/VICReg_Weighted_Loss": current_loss_aux_item * aux_loss_weight,
                 f"{model_name_log_prefix}/train/Total_Loss": total_loss_item,
                 f"{model_name_log_prefix}/train/Learning_Rate": optimizer.param_groups[0]['lr']
             }
@@ -264,7 +264,8 @@ def train_validate_model_epoch(
                     if aux_loss_fn is not None and use_aux_for_jepa:
                         # Use VICReg forward method with projector for all three losses
                         total_vicreg_loss_val, sim_loss_val, std_loss_val, cov_loss_val = aux_loss_fn(online_s_t_emb_val, target_s_t_emb_val)
-                        val_loss_aux_item = total_vicreg_loss_val.item()
+
+                        val_loss_aux_item = std_loss_val.item() + cov_loss_val.item()
                         val_loss_primary = sim_loss_val  # For JEPA with VICReg, primary loss is the similarity (invariance) loss
                     else:
                         # Fallback to MSE loss between predicted and target embeddings

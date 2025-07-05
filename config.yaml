@@ -22,8 +22,8 @@ environment:
 # --- Data Collection & Dataset Management ---
 data:
   collection:
-    num_episodes: 150 # Number of episodes to collect for the dataset
-    max_steps_per_episode: 600 # Max steps per episode during data collection
+    num_episodes: 20 # Number of episodes to collect for the dataset
+    max_steps_per_episode: 300 # Max steps per episode during data collection
   dataset:
     dir: "datasets/"
     load_path: "ale_pong_rep_2.pth" # empty string means don't load, otherwise it's a path relative to dataset.dir
@@ -159,8 +159,8 @@ models:
         std_coeff: 1.0  # Reduced from 25.0 for stability
         cov_coeff: 0.1  # Reduced from 1.0 for stability
         eps: 0.0001     # Default VICRegLoss epsilon
-        proj_hidden_dim: 256
-        proj_output_dim: 256
+        proj_hidden_dim: 512
+        proj_output_dim: 512
       barlow_twins:
         lambda_param: 0.0051
         eps: 0.00001
