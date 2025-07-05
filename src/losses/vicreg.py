@@ -24,6 +24,7 @@ class VICRegLoss(nn.Module):
     def __init__(self, sim_coeff=1.0, std_coeff=1.0, cov_coeff=1.0, eps=1e-4, 
                  proj_hidden_dim=8192, proj_output_dim=8192, representation_dim=None):
         super().__init__()
+        
         self.sim_coeff = sim_coeff
         self.std_coeff = std_coeff
         self.cov_coeff = cov_coeff
@@ -67,8 +68,7 @@ class VICRegLoss(nn.Module):
         y_std = torch.sqrt(torch.clamp(y_proj.var(dim=0), min=self.eps))  # (D,)
         std_loss_y = torch.mean(F.relu(1 - y_std))  # Hinge loss
 
-        std_loss = self.std_coeff * \
-            (std_loss_x + std_loss_y) * 0.5  # Average over x and y
+        std_loss = self.std_coeff * (std_loss_x + std_loss_y) * 0.5  # Average over x and y
 
         # Calculate covariance loss (prevents redundant features) with numerical stability
         x_centered = x_proj - x_proj.mean(dim=0)
@@ -84,8 +84,7 @@ class VICRegLoss(nn.Module):
         cov_y = torch.clamp(cov_y, -100, 100)
         cov_loss_y = (cov_y.fill_diagonal_(0).pow_(2).sum()) / y_proj.size(1)
 
-        cov_loss = self.cov_coeff * \
-            (cov_loss_x + cov_loss_y) * 0.5  # Average over x and y
+        cov_loss = self.cov_coeff * (cov_loss_x + cov_loss_y) * 0.5  # Average over x and y
 
         # Clamp individual loss components to prevent explosions
         sim_loss = torch.clamp(sim_loss, 0, 100)
