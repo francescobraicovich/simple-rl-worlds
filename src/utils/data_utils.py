@@ -619,7 +619,7 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
             # Action selection by PPO agent for the primary action
             # Note: PPO agent expects raw image, but we need to adapt for stacked frames
             # For now, use the current raw image for action prediction
-            original_action, _ = ppo_agent.predict(current_state_img, deterministic=True)
+            original_action, _ = ppo_agent.predict(current_state_img, deterministic=False)
             print(f'PPO Action sampled: {original_action}')
 
             # First step

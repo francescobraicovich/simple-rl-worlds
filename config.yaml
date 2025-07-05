@@ -2,7 +2,7 @@
 
 # --- Environment Configuration ---
 environment:
-  name: "ALE/Pong-v5" # Example, choose a relevant Gym environment (e.g., "CarRacing-v3", "ALE/Pong-v5")
+  name: "CarRacing-v3" # Example, choose a relevant Gym environment (e.g., "CarRacing-v3", "ALE/Pong-v5")
   
   # Image preprocessing parameters
   input_channels_per_frame: 3 # Number of channels from environment (3=RGB, 1=grayscale, 4=RGBA)
@@ -26,8 +26,8 @@ data:
     max_steps_per_episode: 300 # Max steps per episode during data collection
   dataset:
     dir: "datasets/"
-    load_path: "ale_pong_rep_2.pth" # empty string means don't load, otherwise it's a path relative to dataset.dir
-    filename: "ale_pong_rep_2.pth"
+    load_path: ".pth" # empty string means don't load, otherwise it's a path relative to dataset.dir
+    filename: "CarRacing_rep_4.pth"
   validation_split: 0.2 # Proportion of data to use for validation (moved from early_stopping)
 
 # --- Model Loading Configuration ---
@@ -174,15 +174,15 @@ models:
 ppo_agent:
   enabled: true # Master switch for using PPO for data collection
   n_envs: 8 # Number of parallel environments for PPO training (default: CPU count)
-  action_repetition_k: 2
+  action_repetition_k: 4
   learning_rate: 0.0003
   total_train_timesteps: 500000 # Timesteps to train PPO before data collection
-  n_steps: 1024       # PPO n_steps parameter
-  batch_size: 32      # PPO batch_size parameter
+  n_steps: 64       # PPO n_steps parameter
+  batch_size: 64      # PPO batch_size parameter
   n_epochs: 5         # PPO n_epochs parameter
   gamma: 0.99         # PPO gamma parameter
   gae_lambda: 0.95    # PPO gae_lambda parameter
-  clip_range: 0.2     # PPO clip_range parameter
+  clip_range: 0.3     # PPO clip_range parameter
   additional_log_std_noise: 0.0
   policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
 
