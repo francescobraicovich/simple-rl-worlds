@@ -24,7 +24,6 @@ class Encoder(nn.Module):
                 'patch_size': patch_size,
                 'channels': input_channels,
                 'num_frames': encoder_params.get('num_frames'),
-                'num_classes': 0,  # Not used for feature extraction
                 'dim': latent_dim,
                 'depth': encoder_params.get('depth', 6),
                 'heads': encoder_params.get('heads', 8),
