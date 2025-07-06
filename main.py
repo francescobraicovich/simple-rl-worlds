@@ -85,9 +85,8 @@ def main():
 
 
     validate_environment_config(config)  # This will print the configuration summary
-    input_channels = config.get('environment', {}).get('input_channels_per_frame', 3) # Default to 3 for RGB
-    if config.get('environment', {}).get('grayscale_conversion', False):
-        input_channels = 1
+    input_channels = config.get('environment', {}).get('input_channels_per_frame', 1) # Default to 1 for grayscale
+
     
     # initialize_models will also need to be updated to use the new config structure.
     # Pass action_type to initialize_models
