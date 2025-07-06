@@ -83,7 +83,8 @@ def train_validate_model_epoch(
 
     for batch_idx, (s_t, a_t, r_t, s_t_plus_1) in enumerate(train_dataloader):
         s_t, s_t_plus_1 = s_t.to(device), s_t_plus_1.to(device)
-        s_t_plus_1_encoder_decoder = s_t_plus_1[:, -1, :, :, :]  # Use the last frame for encoder input
+        s_t_plus_1_encoder_decoder = s_t_plus_1[:, -1, :, :]  # Use the last frame for encoder input
+        s_t_plus_1_encoder_decoder = s_t_plus_1_encoder_decoder.unsqueeze(1).to(device)  # Add channel dimension
         if action_type == 'discrete':
             a_t_processed = a_t.to(device)
         else:
@@ -108,7 +109,7 @@ def train_validate_model_epoch(
                 current_loss_aux = std_loss + cov_loss
                 loss_primary = sim_loss  # For JEPA with VICReg, primary loss is the similarity (invariance) loss
             else:
-                # Fallback to MSE loss between predicted and target embeddings
+                # Fallback to MSE loss between predicted and target embeddings)
                 loss_primary = loss_fn(pred_emb, target_emb_detached)
                 total_loss = loss_primary
                 
@@ -254,7 +255,8 @@ def train_validate_model_epoch(
         with torch.no_grad():
             for s_t_val, a_t_val, r_t_val, s_t_plus_1_val in val_dataloader:
                 s_t_val, s_t_plus_1_val = s_t_val.to(device), s_t_plus_1_val.to(device)
-                s_t_plus_1_val_encoder_decoder = s_t_plus_1_val[:, -1, :, :, :]  # Use the last frame for encoder input
+                s_t_plus_1_val_encoder_decoder = s_t_plus_1_val[:, -1, :, :]  # Use the last frame for encoder input
+                s_t_plus_1_val_encoder_decoder = s_t_plus_1_val_encoder_decoder.unsqueeze(1).to(device)
                 if action_type == 'discrete':      
                     a_t_val_processed = a_t_val.to(device)
                 else:
@@ -309,15 +311,15 @@ def train_validate_model_epoch(
                 epoch_val_loss_cov += cov_loss_val.item()
 
         # Handle plotting after validation loop for encoder-decoder
-        #if (validation_plotter and model_name_log_prefix == "StdEncDec" and 
-        #    plot_batch_data is not None and plot_predictions is not None):
-        #    validation_plotter.plot_validation_samples(
-        #        batch_data=plot_batch_data,
-        #        selected_indices=plot_sample_indices,
-        #        predictions=plot_predictions,
-        #        epoch=epoch_num,
-        #        model_name="Encoder-Decoder"
-        #    )
+        if (validation_plotter and model_name_log_prefix == "StdEncDec" and 
+            plot_batch_data is not None and plot_predictions is not None):
+            validation_plotter.plot_validation_samples(
+                batch_data=plot_batch_data,
+                selected_indices=plot_sample_indices,
+                predictions=plot_predictions,
+                epoch=epoch_num,
+                model_name="Encoder-Decoder"
+            )
 
         avg_val_loss_primary = epoch_val_loss_primary / num_val_batches if num_val_batches > 0 else float('inf')
         avg_val_loss_aux_raw = epoch_val_loss_aux / num_val_batches if num_val_batches > 0 else 0
