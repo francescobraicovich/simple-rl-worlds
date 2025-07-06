@@ -50,7 +50,7 @@ class EncoderDecoderJEPAStyle(nn.Module):
         # output_image_size is now directly passed and used by JEPAStateDecoder
         # self.input_channels = input_channels # Stored by encoder if needed
         # self.output_channels = output_channels # Stored by JEPAStateDecoder
-
+        print(f'Encoder params: {encoder_params}')
         # Encoder instantiation
         self.encoder = Encoder(
             encoder_type=encoder_type,
