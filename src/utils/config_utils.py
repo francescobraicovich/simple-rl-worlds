@@ -84,11 +84,8 @@ def create_image_preprocessing_transforms(config, image_size):
     if grayscale_conversion and input_channels_per_frame > 1:
         transforms.append(T.Grayscale(num_output_channels=1))
     
-    # Add resize and tensor conversion
-    transforms.extend([
-        T.Resize(image_size),
-        T.ToTensor()
-    ])
+    # Add resize only (no ToTensor to avoid normalization)
+    transforms.append(T.Resize(image_size))
     
     return T.Compose(transforms)
 
@@ -156,9 +153,9 @@ def validate_environment_config(config):
     """
     env_config = config.get('environment', {})
     
-    input_channels_per_frame = env_config.get('input_channels_per_frame')
+    input_channels_per_frame = 3
     frame_stack_size = env_config.get('frame_stack_size', 1)
-    grayscale_conversion = env_config.get('grayscale_conversion', False)
+    grayscale_conversion = True
     
     if input_channels_per_frame is None:
         raise ValueError("Configuration error: 'environment.input_channels_per_frame' is not set.")
@@ -187,18 +184,7 @@ def get_single_frame_channels(config):
     Returns:
         int: Number of channels for a single frame after preprocessing
     """
-    env_config = config.get('environment', {})
-    
-    input_channels_per_frame = env_config.get('input_channels_per_frame', 3)
-    grayscale_conversion = env_config.get('grayscale_conversion', False)
-    
-    # Apply grayscale conversion only if input has multiple channels
-    if grayscale_conversion and input_channels_per_frame > 1:
-        channels_per_frame = 1
-    else:
-        channels_per_frame = input_channels_per_frame
-    
-    return channels_per_frame
+    return 1
 
 
 # Example of how you might extend it for multiple files later:
