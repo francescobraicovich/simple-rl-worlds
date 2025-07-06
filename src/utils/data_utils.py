@@ -2,13 +2,12 @@ import gymnasium as gym
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms as T
 import random  # Added for shuffling episodes
 import os
 import multiprocessing
-from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, VecTransposeImage
 from src.rl_agent import create_ppo_agent, train_ppo_agent
-from src.utils.env_wrappers import ActionRepeatWrapper
+from src.utils.env_wrappers import ActionRepeatWrapper, ImagePreprocessingWrapper, FrameStackWrapper
 from src.utils.config_utils import create_image_preprocessing_transforms, FrameStackBuffer, get_single_frame_channels
 try:
     from scipy import stats
@@ -59,32 +58,32 @@ class ExperienceDataset(Dataset):
         reward = self.rewards[idx]
         next_state = self.next_states[idx]
 
-        if self.transform:
-            state = self.transform(state)
-            next_state = self.transform(next_state)
-
-        if self.config:
-            # Get configuration for shape validation
-            image_height = self.config['environment']['image_height']
-            image_width = self.config['environment']['image_width']
-
-            num_channels = self.config['environment'].get('input_channels_per_frame')  # Default to 1 if not set
-            if self.config['environment'].get('grayscale_conversion'):
-                num_channels = 1
-
-            num_frames = self.config['environment'].get('frame_stack_size')  # Default to 1 if not set
-            
-            expected_stacked_shape = (num_frames, num_channels, image_height, image_width)
-
-            # Validate current state (should be stacked)
-            if state.shape != expected_stacked_shape:
-                error_msg = f"State shape {state.shape} does not match expected stacked shape {expected_stacked_shape} for idx {idx}."
-                raise ValueError(error_msg)
-
-            # Validate next state (should be single frame)
-            if next_state.shape != expected_stacked_shape:
-                error_msg = f"Next state shape {next_state.shape} does not match expected stacked frame shape {expected_stacked_shape} for idx {idx}."
-                raise ValueError(error_msg)
+        #if self.transform:
+        #    state = self.transform(state)
+        #    next_state = self.transform(next_state)
+#
+        #if self.config:
+        #    # Get configuration for shape validation
+        #    image_height = self.config['environment']['image_height']
+        #    image_width = self.config['environment']['image_width']
+#
+        #    num_channels = self.config['environment'].get('input_channels_per_frame', 3)  # Default to 1 if not set
+        #    if self.config['environment'].get('grayscale_conversion', True):
+        #        num_channels = 1
+#
+        #    num_frames = self.config['environment'].get('frame_stack_size')  # Default to 1 if not set
+        #    
+        #    expected_stacked_shape = (num_frames, num_channels, image_height, image_width)
+#
+        #    # Validate current state (should be stacked)
+        #    if state.shape != expected_stacked_shape:
+        #        error_msg = f"State shape {state.shape} does not match expected stacked shape {expected_stacked_shape} for idx {idx}."
+        #        raise ValueError(error_msg)
+#
+        #    # Validate next state (should be single frame)
+        #    if next_state.shape != expected_stacked_shape:
+        #        error_msg = f"Next state shape {next_state.shape} does not match expected stacked frame shape {expected_stacked_shape} for idx {idx}."
+        #        raise ValueError(error_msg)
 
         # Convert action to tensor, ensure it's float for potential nn.Linear embedding
         # Adjust dtype based on action type (discrete typically long, continuous float)
@@ -207,7 +206,14 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
         frame_buffer = FrameStackBuffer(frame_stack_size, single_frame_shape)
         
         # Process the initial frame and add to buffer
-        initial_frame = preprocess(current_state_img)
+        initial_frame_pil = preprocess(current_state_img)
+        # Convert PIL to tensor without normalization (keep 0-255 range)
+        initial_frame = torch.from_numpy(np.array(initial_frame_pil, dtype=np.uint8)).float()
+        # Ensure CHW format
+        if len(initial_frame.shape) == 2:
+            initial_frame = initial_frame.unsqueeze(0)  # Add channel dimension
+        elif len(initial_frame.shape) == 3:
+            initial_frame = initial_frame.permute(2, 0, 1)  # HWC to CHW
         frame_buffer.add_frame(initial_frame)
         
         # Get the initial stacked state
@@ -294,7 +300,14 @@ def collect_random_episodes(config, max_steps_per_episode, image_size, validatio
                     continue
 
             # Process the next state frame
-            next_frame = preprocess(next_state_img)
+            next_frame_pil = preprocess(next_state_img)
+            # Convert PIL to tensor without normalization (keep 0-255 range)
+            next_frame = torch.from_numpy(np.array(next_frame_pil, dtype=np.uint8)).float()
+            # Ensure CHW format
+            if len(next_frame.shape) == 2:
+                next_frame = next_frame.unsqueeze(0)  # Add channel dimension
+            elif len(next_frame.shape) == 3:
+                next_frame = next_frame.permute(2, 0, 1)  # HWC to CHW
 
             # Add the next frame to buffer
             frame_buffer.add_frame(next_frame)
@@ -468,6 +481,13 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
 
     print(f"Collecting data from environment: {env_name} using PPO agent.")
     env_render_mode = None  # Track the successful render mode for parallel envs
+    
+    # Get image configuration early for environment setup
+    env_config = config.get('environment', {})
+    image_height = env_config.get('image_height', 64)
+    image_width = env_config.get('image_width', 64)
+    target_image_size = (image_height, image_width)
+    
     try:
         env = gym.make(env_name, render_mode='rgb_array')
         env_render_mode = 'rgb_array'
@@ -484,15 +504,18 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
             env_render_mode = 'default'
             print(f"Successfully created env '{env_name}' with default render_mode ('{env.render_mode if hasattr(env, 'render_mode') else 'unknown'}') for PPO collection.")
 
+    # Apply preprocessing wrappers to the main environment BEFORE PPO training
+    print("Applying image preprocessing wrappers for PPO training...")
+    env = apply_preprocessing_wrappers(env, config, target_image_size)
+
     # PPO Agent Setup
     ppo_specific_config = config.get('ppo_agent', {})
     if not ppo_specific_config or not ppo_specific_config.get('enabled', False):
         print("PPO agent configuration is missing or disabled in config. Cannot collect PPO episodes.")
-        # Return empty datasets or raise an error
-        # Pass config to ExperienceDataset constructor
+        # Return empty datasets
         empty_dataset = ExperienceDataset(
             [], [], [], [],
-            transform=T.Compose([T.ToPILImage(),T.Resize(image_size),T.ToTensor()]),  # image_size is tuple (height, width)
+            transform=None,  # No transform needed as env is already preprocessed
             config=config
         )
         return empty_dataset, empty_dataset
@@ -504,7 +527,7 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
     # Create a temporary env for PPO training if needed, or use the main `env`
     # It's better to pass the same env instance to ensure compatibility of obs/action spaces
 
-    # Action Repetition Wrapper applied to single env for data collection later
+    # Action Repetition Wrapper applied after preprocessing
     action_repetition_k = ppo_specific_config.get('action_repetition_k', 0)
     original_frame_skipping = frame_skipping # Store original frame_skipping
 
@@ -520,19 +543,22 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
     # Get number of parallel environments from config (default to CPU count)
     n_envs = ppo_specific_config.get('n_envs', multiprocessing.cpu_count())
     n_envs = max(1, min(n_envs, multiprocessing.cpu_count()))  # Ensure valid range
+
     
     print(f"Creating {n_envs} parallel environments for PPO training (CPU cores: {multiprocessing.cpu_count()})")
     
-    if n_envs == 1:
-        # Use DummyVecEnv for single environment (no multiprocessing overhead)
-        vec_env = DummyVecEnv([lambda: env])
-        print("Using DummyVecEnv (single environment)")
-    else:
-        # Use SubprocVecEnv for parallel environments
-        env_fns = [create_env_for_ppo(env_name, action_repetition_k, env_render_mode) for _ in range(n_envs)]
-        vec_env = SubprocVecEnv(env_fns)
-        print(f"Using SubprocVecEnv with {n_envs} parallel environments")
+    # For debugging, always use DummyVecEnv to avoid subprocess issues
+    # Create the environments 
+    env_fns = [create_env_for_ppo(env_name, action_repetition_k, env_render_mode, config, target_image_size) for _ in range(n_envs)]
+    vec_env = DummyVecEnv(env_fns)
+    print(f"Using DummyVecEnv with {n_envs} parallel environments (debugging mode)")
 
+    # Apply VecTransposeImage wrapper to transpose observations from HWC to CHW for CNN policies
+    vec_env = VecTransposeImage(vec_env)
+    print("Applied VecTransposeImage wrapper to transpose observations from HWC to CHW")
+
+
+    print(f'Observation space: {vec_env.observation_space}')
     ppo_agent = create_ppo_agent(vec_env, ppo_specific_config, device=device) # Pass vec_env
     train_ppo_agent(ppo_agent, ppo_specific_config, task_name="Initial PPO Training for Data Collection") # Uses the vec_env
 
@@ -555,22 +581,17 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
         else:
             print("Warning: PPO policy does not have a 'log_std' Tensor or 'action_dist.log_std_param' Tensor. Skipping noise addition to log_std.")
 
-    # After training, the env used by PPO (which is `env` wrapped in VecEnv) should still be usable
-    # as SB3 usually doesn't close the original envs passed to VecEnv unless vec_env.close() is called,
-    # which happens if ppo_agent.env.close() is called. `learn()` does not close it.
-
+    # After training, use the vectorized environment for data collection to maintain consistency
+    # Since the PPO agent was trained on vec_env, we should collect data using the same format
     all_episodes_raw_data = []
-    # Create preprocessing transforms using the new config-based approach
-    preprocess = create_image_preprocessing_transforms(config, image_size)
     
-    # Get frame stacking configuration
+    # Since environment is vectorized and already preprocessed, we need to handle single episode collection
+    # Get frame stacking configuration for compatibility checking
     env_config = config.get('environment', {})
     frame_stack_size = env_config.get('frame_stack_size', 1)
     
-    # Determine single frame shape after preprocessing
-    single_frame_channels = get_single_frame_channels(config)
-    single_frame_shape = (single_frame_channels, image_size[0], image_size[1])
-
+    print(f"Environment is vectorized and preprocessed. Frame stack size: {frame_stack_size}")
+    
     if action_repetition_k > 1:
         print(f"Note: Action repetition is active with k={action_repetition_k}.\n\
               Even though max_steps_per_episode is set to {max_steps_per_episode},\n\
@@ -578,130 +599,139 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
               For car_racing_v3, the max_steps_per_episode is typically 1000, but with action repetition it will be {1000 // action_repetition_k} effective steps.\n")
 
     for episode_idx in range(num_episodes):
-        current_state_img, info = env.reset()
-        initial_obs_is_uint8_image = isinstance(current_state_img, np.ndarray) and current_state_img.dtype == np.uint8
-
-        if not initial_obs_is_uint8_image:
-            if env.render_mode == 'rgb_array':
-                current_state_img = env.render()
-                if not (isinstance(current_state_img, np.ndarray) and current_state_img.dtype == np.uint8):
-                    print(f"Error: env.render() did not return a uint8 numpy array for PPO ep {episode_idx+1}. Skipping.")
-                    continue
-            else:
-                print(f"Warning: Initial PPO obs for ep {episode_idx+1} not uint8 and env not in 'rgb_array' mode. Skipping. Obs: {current_state_img}")
-                continue
-
-        if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2):
-            print(f"Skipping PPO episode {episode_idx+1} due to unsuitable initial state. State: {current_state_img}")
+        current_state = vec_env.reset()  # Returns batched observations [batch_size, ...]
+        
+        # Extract the first environment's state (since we're collecting one episode at a time)
+        if isinstance(current_state, tuple):
+            current_state = current_state[0]  # Handle (obs, info) tuple from newer gym versions
+        current_state = current_state[0]  # Get first environment's observation from batch
+        
+        # VecTransposeImage already converted to CHW format
+        if not isinstance(current_state, np.ndarray):
+            print(f"Error: Expected numpy array from vectorized env, got {type(current_state)}. Skipping episode {episode_idx+1}.")
             continue
-
-        # Initialize frame stacking buffer for this episode
-        frame_buffer = FrameStackBuffer(frame_stack_size, single_frame_shape)
-        
-        # Process the initial frame and add to buffer
-        initial_frame = preprocess(current_state_img)
-        frame_buffer.add_frame(initial_frame)
-        
-        # Get the initial stacked state
-        current_stacked_state = frame_buffer.get_stacked_frames()
 
         episode_transitions = []
         terminated = False
         truncated = False
         step_count = 0
-        cumulative_reward_episode = 0.0  # Initialize cumulative reward
+        cumulative_reward_episode = 0.0
 
         while not (terminated or truncated) and step_count < max_steps_per_episode:
-            # Record the current stacked state before taking action
-            recorded_current_stacked_state = current_stacked_state
+            # Record the current preprocessed state (already in CHW format from VecTransposeImage)
+            recorded_current_state = current_state.copy()
             accumulated_reward = 0.0
 
-            # Action selection by PPO agent for the primary action
-            # Note: PPO agent expects raw image, but we need to adapt for stacked frames
-            # For now, use the current raw image for action prediction
-            original_action, _ = ppo_agent.predict(current_state_img, deterministic=False)
-            print(f'PPO Action sampled: {original_action}')
+            # Action selection by PPO agent using preprocessed state
+            # For vectorized env, we need to expand state to batch dimension if needed
+            if current_state.ndim == 3:  # Single environment state (CHW)
+                state_batch = np.expand_dims(current_state, axis=0)  # Add batch dimension
+            else:  # Already batched
+                state_batch = current_state
+                
+            action_batch, _ = ppo_agent.predict(state_batch, deterministic=False)
+            print(f"Selected action: {action_batch}")
+            
+            # action_batch is an array of actions for the batch
+            # For single environment, extract the scalar action
+            if isinstance(action_batch, np.ndarray) and action_batch.shape == (1,):
+                original_action = action_batch[0]
+            else:
+                original_action = action_batch
 
-            # First step
-            next_state_img, reward, terminated, truncated, info = env.step(original_action)
+            # Pass action to vectorized environment
+            step_result = vec_env.step(action_batch)
+            
+            if len(step_result) == 4:
+                # Old format: (obs, reward, done, info)
+                next_state_batch, reward_batch, done_batch, info_batch = step_result
+                # Split done into terminated and truncated
+                terminated_batch = done_batch
+                truncated_batch = np.zeros_like(done_batch, dtype=bool)
+            elif len(step_result) == 5:
+                # New format: (obs, reward, terminated, truncated, info)
+                next_state_batch, reward_batch, terminated_batch, truncated_batch, info_batch = step_result
+            else:
+                raise ValueError(f"Unexpected step result length: {len(step_result)}")
+            # Extract single environment results from batch
+            next_state = next_state_batch[0]
+            reward = reward_batch[0]
+            terminated = terminated_batch[0]
+            truncated = truncated_batch[0]
+            # info = info_batch[0]  # Not used, so commented out
+            
             accumulated_reward += reward
-            current_step_next_state_img = next_state_img
-            # Similar to random collection, step_count for the main recorded transition is incremented after skipping.
+            current_step_next_state = next_state
 
+            # Frame skipping with vectorized environment
             if frame_skipping > 0:
                 for _ in range(frame_skipping):
                     if terminated or truncated:
                         break
 
-                    step_count += 1 # This step is part of the episode's max_steps
+                    step_count += 1
                     if step_count >= max_steps_per_episode:
                         break
 
-                    # Action for skip step based on the *actual current* state in the environment
-                    action_skip, _ = ppo_agent.predict(current_step_next_state_img, deterministic=True)
-                    next_state_skip, reward_skip, terminated, truncated, info = env.step(action_skip)
-                    accumulated_reward += reward_skip
-                    current_step_next_state_img = next_state_skip
-
-            next_state_img = current_step_next_state_img # S' after all skips
-
-            # Standardize image check for next_state_img (which is current_step_next_state_img)
-            next_obs_is_uint8_image = isinstance(next_state_img, np.ndarray) and next_state_img.dtype == np.uint8
-
-            if not next_obs_is_uint8_image:
-                if env.render_mode == 'rgb_array':
-                    next_state_img = env.render()
-                    if not (isinstance(next_state_img, np.ndarray) and next_state_img.dtype == np.uint8):
-                        print(f"Error: env.render() for next_state (PPO) did not return uint8 array for ep {episode_idx+1}, step {step_count+1}. Skipping step.")
-                        step_count += 1
-                        if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2):
-                            break
-                        else:
-                            continue
-                else:
-                    print(f"Warning: Next PPO obs for ep {episode_idx+1}, step {step_count+1} not uint8 and env not 'rgb_array'. Skipping step. Obs: {next_state_img}")
-                    step_count += 1
-                    if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2):
-                        break
+                    # Action for skip step using preprocessed state
+                    if current_step_next_state.ndim == 3:  # Single environment state
+                        state_skip_batch = np.expand_dims(current_step_next_state, axis=0)
+                    else:  # Already batched
+                        state_skip_batch = current_step_next_state
+                        
+                    action_skip_batch, _ = ppo_agent.predict(state_skip_batch, deterministic=True)
+                    step_skip_result = vec_env.step(action_skip_batch)
+                    
+                    if len(step_skip_result) == 4:
+                        # Old format: (obs, reward, done, info)
+                        next_state_skip_batch, reward_skip_batch, done_batch, info_batch = step_skip_result
+                        terminated_batch = done_batch
+                        truncated_batch = np.zeros_like(done_batch, dtype=bool)
+                    elif len(step_skip_result) == 5:
+                        # New format: (obs, reward, terminated, truncated, info)
+                        next_state_skip_batch, reward_skip_batch, terminated_batch, truncated_batch, info_batch = step_skip_result
                     else:
-                        continue
-                
-            cumulative_reward_episode += accumulated_reward # Add accumulated reward to cumulative reward for the episode
+                        raise ValueError(f"Unexpected step skip result length: {len(step_skip_result)}")
+                    
+                    # Extract results
+                    reward_skip = reward_skip_batch[0]
+                    terminated = terminated_batch[0]
+                    truncated = truncated_batch[0]
+                    current_step_next_state = next_state_skip_batch[0]
+                    
+                    accumulated_reward += reward_skip
 
-            if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2 and
-                    isinstance(next_state_img, np.ndarray) and next_state_img.ndim >= 2):
-                print(f"Warning: Skipping PPO step in ep {episode_idx+1}, step {step_count+1} due to unsuitable state dims. Current: {current_state_img.shape if hasattr(current_state_img, 'shape') else 'N/A'}, Next: {next_state_img.shape if hasattr(next_state_img, 'shape') else 'N/A'}")
-                current_state_img = next_state_img
+            next_state = current_step_next_state
+
+            # Validate preprocessed state dimensions
+            if not isinstance(next_state, np.ndarray):
+                print(f"Error: Expected numpy array from vectorized env for next state, got {type(next_state)}. Skipping step.")
                 step_count += 1
-                if not (isinstance(current_state_img, np.ndarray) and current_state_img.ndim >= 2):
-                    break
-                else:
-                    continue
+                continue
+                
+            cumulative_reward_episode += accumulated_reward
 
-            # Process the next state frame
-            next_frame = preprocess(next_state_img)
+            # States are from VecTransposeImage in CHW format as uint8 [0, 255]
+            # Keep values in [0, 255] range as requested, just convert to float32 tensors
+            current_state_tensor = torch.from_numpy(recorded_current_state).float()
 
-            # Add the next frame to buffer for the next iteration's current state
-            frame_buffer.add_frame(next_frame)
-            next_stacked_state = frame_buffer.get_stacked_frames()
+            next_state_tensor = torch.from_numpy(next_state).float()
             
-            # Record transition: stacked current state -> action -> single next frame
-            processed_action = original_action.item() if isinstance(original_action, np.ndarray) and env.action_space.shape == () else original_action
+            # Process action for storage
+            processed_action = original_action.item() if isinstance(original_action, np.ndarray) and vec_env.action_space.shape == () else original_action
             
-            episode_transitions.append((recorded_current_stacked_state, processed_action, accumulated_reward, next_stacked_state))
-            
-            # update current stacked state for next iteration
-            current_stacked_state = next_stacked_state
+            # Record transition: preprocessed current state -> action -> preprocessed next state
+            episode_transitions.append((current_state_tensor, processed_action, accumulated_reward, next_state_tensor))
             
             # Update current state for next iteration
-            current_state_img = next_state_img
-            step_count += 1 # Increment step_count for the primary transition
+            current_state = next_state
+            step_count += 1
 
         if episode_transitions:
             all_episodes_raw_data.append(episode_transitions)
         print(f"PPO Episode {episode_idx+1}/{num_episodes} finished after {step_count} steps. Cumulative Reward: {cumulative_reward_episode:.2f}. Collected {len(episode_transitions)} transitions.")
 
-    env.close() # Close the environment used for PPO collection
+    vec_env.close()  # Close the vectorized environment used for PPO collection
 
     if not all_episodes_raw_data:
         print("No data collected with PPO. Returning empty datasets.")
@@ -719,27 +749,22 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
     print(f"Splitting into {len(train_episodes_list)} training episodes and {len(val_episodes_list)} validation episodes.")
 
     # This is a re-definition of the helper function.
-    # It should be identical to the one in collect_random_episodes if it's meant to be shared,
-    # or named differently if specific. Assuming it's intended to be the same.
-    # It already has been modified in the previous hunk for collect_random_episodes if this diff is applied sequentially.
-    # For safety, ensuring the change here if it wasn't.
-    # Note: transform_fn is not used since frames are already preprocessed and stacked
-    def create_dataset_from_episode_list(episode_list, transform_fn, dataset_config): # Added dataset_config
+    # Since data is already preprocessed, we don't need transform_fn
+    def create_dataset_from_episode_list(episode_list, transform_fn, dataset_config):
         flat_states, flat_actions, flat_rewards, flat_next_states = [], [], [], []
         for episode_data in episode_list:
             for s, a, r, ns in episode_data:
-                # s and ns are already preprocessed tensors (stacked frames)
+                # s and ns are already preprocessed tensors from the wrappers
                 flat_states.append(s)
                 flat_actions.append(a)
                 flat_rewards.append(r)
                 flat_next_states.append(ns)
         # Pass None for transform since data is already preprocessed
-        # Pass dataset_config to ExperienceDataset constructor
         return ExperienceDataset(flat_states, flat_actions, flat_rewards, flat_next_states, transform=None, config=dataset_config)
 
-    # Pass config to create_dataset_from_episode_list
-    train_dataset = create_dataset_from_episode_list(train_episodes_list, preprocess, config)
-    validation_dataset = create_dataset_from_episode_list(val_episodes_list, preprocess, config)
+    # Create datasets (transform_fn parameter is not used)
+    train_dataset = create_dataset_from_episode_list(train_episodes_list, None, config)
+    validation_dataset = create_dataset_from_episode_list(val_episodes_list, None, config)
 
     print(f"PPO Training dataset: {len(train_dataset)} transitions.")
     print(f"PPO Validation dataset: {len(validation_dataset)} transitions.")
@@ -751,8 +776,8 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
             metadata_to_save = {
                 'environment_name': env_name,
                 'num_episodes_collected': num_episodes_collected,
-                'image_height': image_size[0],  # Extract height from tuple
-                'image_width': image_size[1],   # Extract width from tuple
+                'image_height': target_image_size[0],  # Extract height from tuple
+                'image_width': target_image_size[1],   # Extract width from tuple
                 'max_steps_per_episode': max_steps_per_episode,
                 'validation_split_ratio': validation_split_ratio,
                 'num_train_transitions': len(train_dataset),
@@ -776,15 +801,15 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
             print("No new PPO data was collected, so dataset will not be saved.")
 
     # Perform distribution check on the train/val split
-    if len(train_dataset) > 0 and len(validation_dataset) > 0:
-        check_validation_distribution(
-            train_dataset, 
-            validation_dataset, 
-            config=config,
-            n_samples=min(500, len(train_dataset), len(validation_dataset)),
-            save_plots=config.get('data', {}).get('save_distribution_plots', False),
-            plot_dir=config.get('data', {}).get('distribution_plot_dir', "validation_plots")
-        )
+    #if len(train_dataset) > 0 and len(validation_dataset) > 0:
+    #    check_validation_distribution(
+    #        train_dataset, 
+    #        validation_dataset, 
+    #        config=config,
+    #        n_samples=min(500, len(train_dataset), len(validation_dataset)),
+    #        save_plots=config.get('data', {}).get('save_distribution_plots', False),
+    #        plot_dir=config.get('data', {}).get('distribution_plot_dir', "validation_plots")
+    #    )
 
     return train_dataset, validation_dataset
 
@@ -1043,7 +1068,33 @@ def check_validation_distribution(train_dataset, val_dataset, config=None, n_sam
     return summary
 
 
-def create_env_for_ppo(env_name, action_repetition_k=0, original_render_mode=None):
+def apply_preprocessing_wrappers(env, config, image_size):
+    """
+    Apply preprocessing wrappers to environment based on config.
+    
+    Args:
+        env: Base gymnasium environment
+        config: Configuration dictionary
+        image_size: Target image size as (height, width)
+        
+    Returns:
+        Wrapped environment
+    """
+    env_config = config.get('environment', {})
+    
+    # Apply image preprocessing wrapper
+    grayscale = True
+    env = ImagePreprocessingWrapper(env, image_size, grayscale=grayscale)
+    
+    # Apply frame stacking wrapper
+    frame_stack_size = env_config.get('frame_stack_size', 1)
+    if frame_stack_size > 1:
+        env = FrameStackWrapper(env, frame_stack_size)
+    
+    return env
+
+
+def create_env_for_ppo(env_name, action_repetition_k=0, original_render_mode=None, config=None, image_size=None):
     """
     Factory function to create environment instances for parallel PPO training.
     This is needed for SubprocVecEnv which requires a callable that returns an environment.
@@ -1052,6 +1103,8 @@ def create_env_for_ppo(env_name, action_repetition_k=0, original_render_mode=Non
         env_name: Name of the gymnasium environment
         action_repetition_k: Action repetition factor (0 or 1 means no repetition)
         original_render_mode: The render mode to use for environment creation
+        config: Configuration dictionary for applying preprocessing wrappers
+        image_size: Target image size as (height, width)
     
     Returns:
         Callable that returns a gymnasium environment
@@ -1077,7 +1130,11 @@ def create_env_for_ppo(env_name, action_repetition_k=0, original_render_mode=Non
             except Exception:
                 env = gym.make(env_name, render_mode=None)
         
-        # Apply action repetition wrapper if needed
+        # Apply image preprocessing wrappers if config is provided
+        if config is not None and image_size is not None:
+            env = apply_preprocessing_wrappers(env, config, image_size)
+        
+        # Apply action repetition wrapper if needed (after preprocessing)
         if action_repetition_k > 1:
             env = ActionRepeatWrapper(env, action_repetition_k)
         
