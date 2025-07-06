@@ -538,11 +538,10 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
 
     for episode_idx in range(num_episodes):
         current_state = env.reset()  # Returns batched observations [batch_size, ...]
-        
+
         # Extract the first environment's state (since we're collecting one episode at a time)
         if isinstance(current_state, tuple):
             current_state = current_state[0]  # Handle (obs, info) tuple from newer gym versions
-        current_state = current_state[0]  # Get first environment's observation from batch
         
         # VecTransposeImage already converted to CHW format
         if not isinstance(current_state, np.ndarray):
@@ -562,23 +561,17 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
 
             # Action selection by PPO agent using preprocessed state
             # For vectorized env, we need to expand state to batch dimension if needed
-            if current_state.ndim == 3:  # Single environment state (CHW)
-                state_batch = np.expand_dims(current_state, axis=0)  # Add batch dimension
-            else:  # Already batched
-                state_batch = current_state
+    
+            state_batch = current_state
                 
             action_batch, _ = ppo_agent.predict(state_batch, deterministic=False)
-            print('type of predicted action:', type(action_batch))
-            print(f"Selected action: {action_batch}")
             
             # The crucial change: Use action_batch directly, it's already an array of actions for the batch (even if batch size is 1)
             # No need to extract action_batch[0] if it's for a single environment in a vectorized setup
             action_to_step = action_batch # This is the array of actions (e.g., [2])
-            print(f"Action to step with for episode {episode_idx+1}, step {step_count+1}: {action_to_step}")
 
             # Pass action to vectorized environment
             step_result = env.step(action_to_step)  # Step with the PPO action
-            print(f"Step result length: {len(step_result)}")
             
             # action_batch is an array of actions for the batch
             # For single environment, extract the scalar action
@@ -586,7 +579,6 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
                 original_action = action_batch[0]
             else:
                 original_action = action_batch
-            print(f"Original action for episode {episode_idx+1}, step {step_count+1}: {original_action}")
 
             
             if len(step_result) == 4:
@@ -601,10 +593,10 @@ def collect_ppo_episodes(config, max_steps_per_episode, image_size, validation_s
             else:
                 raise ValueError(f"Unexpected step result length: {len(step_result)}")
             # Extract single environment results from batch
-            next_state = next_state_batch[0]
-            reward = reward_batch[0]
-            terminated = terminated_batch[0]
-            truncated = truncated_batch[0]
+            next_state = next_state_batch
+            reward = reward_batch
+            terminated = terminated_batch
+            truncated = truncated_batch
             # info = info_batch[0]  # Not used, so commented out
             
             accumulated_reward += reward

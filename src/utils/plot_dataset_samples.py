@@ -35,7 +35,7 @@ def get_frame_structure_info(config):
     
     input_channels_per_frame = env_config.get('input_channels_per_frame', 3)
     frame_stack_size = env_config.get('frame_stack_size', 1)
-    grayscale_conversion = env_config.get('grayscale_conversion', False)
+    grayscale_conversion = env_config.get('grayscale_conversion', True)
     
     # Determine channels per frame after grayscale conversion
     if grayscale_conversion and input_channels_per_frame > 1:
@@ -52,15 +52,24 @@ def separate_stacked_frames(stacked_tensor, frame_stack_size, channels_per_frame
     Separate a stacked frame tensor into individual frames.
     
     Args:
-        stacked_tensor: Tensor of shape (Frames, Channels, H, W) or (C*frame_stack_size, H, W) for backward compatibility
+        stacked_tensor: Tensor of shape (Frames, H, W) for grayscale or (Frames, Channels, H, W) for color,
+                       or (C*frame_stack_size, H, W) for backward compatibility
         frame_stack_size: Number of stacked frames
-        channels_per_frame: Channels per individual frame
+        channels_per_frame: Channels per individual frame (1 for grayscale)
         
     Returns:
-        list: List of individual frame tensors, each of shape (channels_per_frame, H, W)
+        list: List of individual frame tensors, each of shape (H, W) for grayscale or (channels_per_frame, H, W) for color
     """
-    # Handle new format: (Frames, Channels, H, W)
-    if len(stacked_tensor.shape) == 4 and stacked_tensor.shape[0] == frame_stack_size:
+    # Handle new grayscale format: (Frames, H, W)
+    if len(stacked_tensor.shape) == 3 and stacked_tensor.shape[0] == frame_stack_size:
+        frames = []
+        for i in range(frame_stack_size):
+            frame = stacked_tensor[i]  # Shape: (H, W) for grayscale
+            frames.append(frame)
+        return frames
+    
+    # Handle new color format: (Frames, Channels, H, W)
+    elif len(stacked_tensor.shape) == 4 and stacked_tensor.shape[0] == frame_stack_size:
         frames = []
         for i in range(frame_stack_size):
             frame = stacked_tensor[i]  # Shape: (Channels, H, W)
@@ -70,7 +79,7 @@ def separate_stacked_frames(stacked_tensor, frame_stack_size, channels_per_frame
         return frames
     
     # Handle old format: (C*frame_stack_size, H, W) for backward compatibility
-    elif len(stacked_tensor.shape) == 3:
+    elif len(stacked_tensor.shape) == 3 and stacked_tensor.shape[0] != frame_stack_size:
         total_channels, H, W = stacked_tensor.shape
         expected_channels = frame_stack_size * channels_per_frame
         
@@ -87,7 +96,7 @@ def separate_stacked_frames(stacked_tensor, frame_stack_size, channels_per_frame
         return frames
     
     else:
-        raise ValueError(f"Unexpected tensor shape: {stacked_tensor.shape}. Expected (Frames, Channels, H, W) or (C*frame_stack_size, H, W)")
+        raise ValueError(f"Unexpected tensor shape: {stacked_tensor.shape}. Expected (Frames, H, W), (Frames, Channels, H, W), or (C*frame_stack_size, H, W)")
 
 def load_training_dataset():
     """
@@ -160,39 +169,58 @@ def sample_data_points(dataset, num_samples=50):
 def process_image_for_plotting(img_data):
     """
     Converts a potential tensor or numpy array into a NumPy array suitable for matplotlib.
-    Handles PyTorch tensors (C,H,W or H,W) and NumPy arrays.
+    Handles PyTorch tensors (H,W for grayscale, C,H,W for color) and NumPy arrays.
     """
     to_pil = ToPILImage()
 
     if torch.is_tensor(img_data):
         img_tensor = img_data.detach().cpu()
         
-        # Handle the case where we get more channels than expected
-        if img_tensor.ndim == 3 and img_tensor.shape[0] > 3:
-            print(f"Warning: Got {img_tensor.shape[0]} channels in image, using first 3 channels")
-            img_tensor = img_tensor[:3, :, :]
+        # Handle grayscale format (H, W)
+        if img_tensor.ndim == 2:  # H, W (grayscale)
+            return img_tensor.numpy()
         
-        # Ensure CHW for ToPILImage if it's H,W (e.g. grayscale)
-        if img_tensor.ndim == 2: # H, W
-            img_tensor = img_tensor.unsqueeze(0) # Add channel dim: 1, H, W
-        # ToPILImage handles normalization for [0,1] or [-1,1] range tensors
-        pil_img = to_pil(img_tensor)
-        return np.array(pil_img)
+        # Handle color format (C, H, W)
+        elif img_tensor.ndim == 3:
+            # Handle the case where we get more channels than expected
+            if img_tensor.shape[0] > 3:
+                print(f"Warning: Got {img_tensor.shape[0]} channels in image, using first 3 channels")
+                img_tensor = img_tensor[:3, :, :]
+            
+            # For single channel, squeeze to grayscale
+            if img_tensor.shape[0] == 1:
+                return img_tensor.squeeze(0).numpy()
+            
+            # For multi-channel, use ToPILImage
+            pil_img = to_pil(img_tensor)
+            return np.array(pil_img)
+        
+        else:
+            raise ValueError(f"Unexpected tensor dimensions: {img_tensor.shape}")
+            
     elif isinstance(img_data, np.ndarray):
-        # Handle the case where we get more channels than expected
-        if img_data.ndim == 3 and img_data.shape[0] > 3:
-            print(f"Warning: Got {img_data.shape[0]} channels in image, using first 3 channels")
-            img_data = img_data[:3, :, :]
+        # Handle grayscale (H, W)
+        if img_data.ndim == 2:
+            return img_data
         
-        # If it's H,W (grayscale), it's fine for imshow.
-        # If it's C,H,W, convert to H,W,C for imshow.
-        if img_data.ndim == 3 and img_data.shape[0] in [1, 3, 4]: # C, H, W
-             # Check if it's more likely C,H,W or H,W,C by looking at channel dim size
-            if img_data.shape[2] not in [1, 3, 4]: # Likely C,H,W
-                return img_data.transpose(1, 2, 0)
-            else: # Likely H,W,C already
+        # Handle color (C, H, W) or (H, W, C)
+        elif img_data.ndim == 3:
+            # Handle the case where we get more channels than expected
+            if img_data.shape[0] > 3 and img_data.shape[2] <= 3:
+                print(f"Warning: Got {img_data.shape[0]} channels in image, using first 3 channels")
+                img_data = img_data[:3, :, :]
+            
+            # Check if it's C,H,W or H,W,C by looking at channel dim size
+            if img_data.shape[0] in [1, 3, 4] and img_data.shape[2] not in [1, 3, 4]:  # Likely C,H,W
+                if img_data.shape[0] == 1:  # Grayscale with channel dim
+                    return img_data.squeeze(0)
+                else:  # Color: convert to H,W,C
+                    return img_data.transpose(1, 2, 0)
+            else:  # Likely H,W,C already or grayscale with wrong channel dim
+                if img_data.shape[2] == 1:  # Grayscale with trailing channel
+                    return img_data.squeeze(2)
                 return img_data
-        # If H,W or H,W,C, it's generally fine
+        
         return img_data
     else:
         raise TypeError(f"Unsupported image data type: {type(img_data)}")
@@ -219,9 +247,11 @@ def generate_and_save_plots(sampled_points, plot_dir_path, config):
         try:
             # Handle new format where both current and next states may have frame dimension
             # Extract the actual next state frame from next_state
-            if len(next_state.shape) == 4:  # New format: (Frames, Channels, H, W)
-                actual_next_state = next_state[-1]  # Last frame
-            else:  # Old format: single frame (Channels, H, W)
+            if len(next_state.shape) == 3 and is_grayscale:  # New grayscale format: (Frames, H, W)
+                actual_next_state = next_state[-1]  # Last frame: (H, W)
+            elif len(next_state.shape) == 4:  # New color format: (Frames, Channels, H, W)
+                actual_next_state = next_state[-1]  # Last frame: (Channels, H, W)
+            else:  # Old format: single frame
                 actual_next_state = next_state
             
             # Multi-frame layout: all current frames + next state
@@ -243,8 +273,11 @@ def generate_and_save_plots(sampled_points, plot_dir_path, config):
             except Exception as e:
                 print(f"Warning: Could not separate stacked frames for sample {idx+1}: {e}. Using fallback display.")
                 # Fallback: try to display current state directly
-                if len(state.shape) == 4:
-                    # New format: use first frame as fallback
+                if len(state.shape) == 3 and is_grayscale:
+                    # New grayscale format: use first frame as fallback
+                    curr_img = process_image_for_plotting(state[0])
+                elif len(state.shape) == 4:
+                    # New color format: use first frame as fallback
                     curr_img = process_image_for_plotting(state[0])
                 else:
                     # Old format: use as is

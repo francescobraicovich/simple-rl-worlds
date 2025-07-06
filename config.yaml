@@ -20,7 +20,7 @@ environment:
 # --- Data Collection & Dataset Management ---
 data:
   collection:
-    num_episodes: 5 # Number of episodes to collect for the dataset (reduced for testing)
+    num_episodes: 100 # Number of episodes to collect for the dataset (reduced for testing)
     max_steps_per_episode: 100 # Max steps per episode during data collection (reduced for testing)
   dataset:
     dir: "datasets/"
@@ -171,12 +171,12 @@ models:
 # --- PPO Agent Configuration for Data Collection ---
 ppo_agent:
   enabled: true # Master switch for using PPO for data collection
-  n_envs: 8 # Number of parallel environments for PPO training (default: CPU count)
+  n_envs: 10 # Number of parallel environments for PPO training (default: CPU count)
   use_subproc_vec_env: true # Use SubprocVecEnv instead of DummyVecEnv for better performance
   action_repetition_k: 4
   learning_rate: 0.0003
-  total_train_timesteps: 500 # Timesteps to train PPO before data collection (reduced for testing)
-  n_steps: 64       # PPO n_steps parameter
+  total_train_timesteps: 500000 # Timesteps to train PPO before data collection (reduced for testing)
+  n_steps: 128       # PPO n_steps parameter
   batch_size: 64      # PPO batch_size parameter
   n_epochs: 5         # PPO n_epochs parameter
   gamma: 0.99         # PPO gamma parameter
