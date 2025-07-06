@@ -89,8 +89,6 @@ def initialize_models(config, action_dim, action_type, device, image_h_w, input_
         # output_channels_internal = input_channels (function arg)
         # output_image_size_internal = image_h_w (function arg)
 
-        print('image height and width:', image_h_w)
-
         std_enc_dec = EncoderDecoderJEPAStyle(
             image_size=image_h_w,
             patch_size=global_patch_size, # For ViT encoder and default for decoder patch size
