@@ -169,7 +169,7 @@ class ViTVideo(nn.Module):
         temporal_mlp_dim = 256,
         # Common parameters
         pool='cls',
-        channels=3,
+        channels=3,  # This parameter is now ignored since we force channels=1 for grayscale
         dim_head=64,
         dropout=0.,
         emb_dropout=0.,
@@ -181,6 +181,7 @@ class ViTVideo(nn.Module):
         # Instantiate the ViT class to handle per-frame feature extraction.
         # We set num_classes=0 to ensure it returns the latent CLS token representation
         # for each frame, not classification logits.
+        # For grayscale videos, we use channels=1
         self.spatial_transformer = ViT(
             image_size=image_size,
             patch_size=patch_size,
@@ -190,7 +191,7 @@ class ViTVideo(nn.Module):
             heads=heads,
             mlp_dim=mlp_dim,
             pool=pool,
-            channels=channels,
+            channels=1,  # Grayscale videos have 1 channel
             dim_head=dim_head,
             dropout=dropout,
             emb_dropout=emb_dropout
@@ -223,18 +224,17 @@ class ViTVideo(nn.Module):
 
     def forward(self, video):
         """
-        video: Tensor of shape [B, F, C, H, W]
+        video: Tensor of shape [B, F, H, W] for grayscale videos
         B: Batch size
         F: Number of frames
-        C: Channels
         H: Height
         W: Width
         """
-        B, F, C, H, W = video.shape
+        B, F, H, W = video.shape
 
         # === 1) SPATIAL PROCESSING: Apply ViT to each frame ===
-        # Reshape video into a batch of frames
-        frames = video.view(B * F, C, H, W)
+        # Reshape video into a batch of frames and add channel dimension for ViT
+        frames = video.view(B * F, H, W).unsqueeze(1)  # Shape: [B*F, 1, H, W]
 
         # Get the CLS token representation for each frame
         # Output shape: [B*F, dim]
