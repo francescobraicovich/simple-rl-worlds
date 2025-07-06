@@ -103,7 +103,8 @@ def train_jepa_state_decoder(
         else:
             for batch_idx, (s_t, a_t, _, s_t_plus_1) in enumerate(train_dataloader):
                 s_t, s_t_plus_1 = s_t.to(device), s_t_plus_1.to(device)
-                last_frame_of_next_state = s_t_plus_1[:, -1, :, :, :] 
+                last_frame_of_next_state = s_t_plus_1[:, -1, :, :]
+                last_frame_of_next_state = last_frame_of_next_state.unsqueeze(1).to(device)  # Add channel dimension for grayscale
                 if action_type == 'discrete':
                     a_t_processed = a_t.to(device)
                 else:
@@ -172,7 +173,8 @@ def train_jepa_state_decoder(
             with torch.no_grad():
                 for val_batch_idx, (s_t_val, a_t_val, _, s_t_plus_1_val) in enumerate(val_dataloader):
                     s_t_val, s_t_plus_1_val = s_t_val.to(device), s_t_plus_1_val.to(device)
-                    last_frame_of_next_state_val = s_t_plus_1_val[:, -1, :, :, :]
+                    last_frame_of_next_state_val = s_t_plus_1_val[:, -1, :, :]
+                    last_frame_of_next_state_val = last_frame_of_next_state_val.unsqueeze(1).to(device)  # Add channel dimension for grayscale
                     if action_type == 'discrete':      
                         a_t_val_processed = a_t_val.to(device)
                     else:
