@@ -17,7 +17,7 @@ def get_frame_structure_info(config):
     
     input_channels_per_frame = env_config.get('input_channels_per_frame', 3)
     frame_stack_size = env_config.get('frame_stack_size', 1)
-    grayscale_conversion = env_config.get('grayscale_conversion', False)
+    grayscale_conversion = env_config.get('grayscale_conversion', True)
     
     # Determine channels per frame after grayscale conversion
     if grayscale_conversion and input_channels_per_frame > 1:
@@ -34,15 +34,24 @@ def separate_stacked_frames(stacked_tensor, frame_stack_size, channels_per_frame
     Separate a stacked frame tensor into individual frames.
     
     Args:
-        stacked_tensor: Tensor of shape (Frames, Channels, H, W) or (C*frame_stack_size, H, W) for backward compatibility
+        stacked_tensor: Tensor of shape (Frames, H, W) for grayscale or (Frames, Channels, H, W) for color, 
+                       or (C*frame_stack_size, H, W) for backward compatibility
         frame_stack_size: Number of stacked frames
-        channels_per_frame: Channels per individual frame
+        channels_per_frame: Channels per individual frame (1 for grayscale)
         
     Returns:
-        list: List of individual frame tensors, each of shape (channels_per_frame, H, W)
+        list: List of individual frame tensors, each of shape (H, W) for grayscale or (channels_per_frame, H, W) for color
     """
-    # Handle new format: (Frames, Channels, H, W)
-    if len(stacked_tensor.shape) == 4 and stacked_tensor.shape[0] == frame_stack_size:
+    # Handle new grayscale format: (Frames, H, W)
+    if len(stacked_tensor.shape) == 3 and stacked_tensor.shape[0] == frame_stack_size:
+        frames = []
+        for i in range(frame_stack_size):
+            frame = stacked_tensor[i]  # Shape: (H, W) for grayscale
+            frames.append(frame)
+        return frames
+    
+    # Handle new color format: (Frames, Channels, H, W)
+    elif len(stacked_tensor.shape) == 4 and stacked_tensor.shape[0] == frame_stack_size:
         frames = []
         for i in range(frame_stack_size):
             frame = stacked_tensor[i]  # Shape: (Channels, H, W)
@@ -52,7 +61,7 @@ def separate_stacked_frames(stacked_tensor, frame_stack_size, channels_per_frame
         return frames
     
     # Handle old format: (C*frame_stack_size, H, W) for backward compatibility
-    elif len(stacked_tensor.shape) == 3:
+    elif len(stacked_tensor.shape) == 3 and stacked_tensor.shape[0] != frame_stack_size:
         total_channels, H, W = stacked_tensor.shape
         expected_channels = frame_stack_size * channels_per_frame
         
@@ -69,7 +78,7 @@ def separate_stacked_frames(stacked_tensor, frame_stack_size, channels_per_frame
         return frames
     
     else:
-        raise ValueError(f"Unexpected tensor shape: {stacked_tensor.shape}. Expected (Frames, Channels, H, W) or (C*frame_stack_size, H, W)")
+        raise ValueError(f"Unexpected tensor shape: {stacked_tensor.shape}. Expected (Frames, H, W), (Frames, Channels, H, W), or (C*frame_stack_size, H, W)")
 
 def load_config():
     """Load configuration from config.yaml."""
@@ -173,37 +182,43 @@ class ValidationPlotter:
         Process a tensor image for matplotlib plotting.
         
         Args:
-            img_tensor: Torch tensor of shape (C, H, W) or (H, W)
+            img_tensor: Torch tensor of shape (H, W) for grayscale, (C, H, W) for color, or (H, W) already
             
         Returns:
             numpy array ready for matplotlib imshow
         """
         img_np = img_tensor.cpu().numpy()
         
-        # Handle the case where we get a stacked frame tensor instead of single frame
-        # This can happen if there's a model configuration issue (e.g., old trained model)
-        expected_single_frame_channels = getattr(self, 'channels_per_frame', None)
-        if expected_single_frame_channels is None:
-            # Fallback: assume it's grayscale if self.is_grayscale, otherwise RGB
-            expected_single_frame_channels = 1 if self.is_grayscale else 3
+        # Handle different input shapes
+        if len(img_np.shape) == 2:  # Already (H, W) - grayscale
+            return img_np
+        elif len(img_np.shape) == 3:  # (C, H, W) format
+            # Handle the case where we get a stacked frame tensor instead of single frame
+            # This can happen if there's a model configuration issue (e.g., old trained model)
+            expected_single_frame_channels = getattr(self, 'channels_per_frame', None)
+            if expected_single_frame_channels is None:
+                # Fallback: assume it's grayscale if self.is_grayscale, otherwise RGB
+                expected_single_frame_channels = 1 if self.is_grayscale else 3
+                
+            if img_np.shape[0] > expected_single_frame_channels:
+                print(f"Warning: Got {img_np.shape[0]} channels in image for plotting.")
+                print(f"Expected single frame ({expected_single_frame_channels} channels) but got multi-frame tensor.")
+                print("This suggests a model output channel mismatch - model may be from old training with different config.")
+                print(f"Using first {expected_single_frame_channels} channels only as a temporary fix.")
+                print("Consider retraining the model with the current configuration.")
+                
+                # Extract the expected number of channels for single frame
+                img_np = img_np[:expected_single_frame_channels, :, :]
             
-        if img_np.shape[0] > expected_single_frame_channels:
-            print(f"Warning: Got {img_np.shape[0]} channels in image for plotting.")
-            print(f"Expected single frame ({expected_single_frame_channels} channels) but got multi-frame tensor.")
-            print("This suggests a model output channel mismatch - model may be from old training with different config.")
-            print(f"Using first {expected_single_frame_channels} channels only as a temporary fix.")
-            print("Consider retraining the model with the current configuration.")
+            # Handle channel dimension for color images
+            if img_np.shape[0] == 3:  # RGB: C, H, W -> H, W, C
+                img_np = np.transpose(img_np, (1, 2, 0))
+            elif img_np.shape[0] == 1:  # Grayscale with channel: 1, H, W -> H, W
+                img_np = img_np.squeeze(axis=0)
             
-            # Extract the expected number of channels for single frame
-            img_np = img_np[:expected_single_frame_channels, :, :]
-        
-        # Handle channel dimension
-        if img_np.shape[0] == 1 or img_np.shape[0] == 3:  # C, H, W
-            img_np = np.transpose(img_np, (1, 2, 0))
-        
-        # Handle grayscale
-        if img_np.shape[-1] == 1:
-            img_np = img_np.squeeze(axis=2)
+            # Handle grayscale with extra dimension
+            if len(img_np.shape) == 3 and img_np.shape[-1] == 1:
+                img_np = img_np.squeeze(axis=2)
         
         # Clip float values
         if img_np.dtype in [np.float32, np.float64]:
@@ -217,11 +232,11 @@ class ValidationPlotter:
         Save a comparison plot of current state, true next state, and predicted next state.
         
         Args:
-            current_state: Current state tensor (shape: Frames x Channels x H x W for new format, 
-                          or C*frame_stack_size x H x W for backward compatibility)
-            true_next_state: True next state tensor (shape: Frames x Channels x H x W for new format,
-                           or single frame for old format)
-            predicted_next_state: Predicted next state tensor (single frame: Channels x H x W)
+            current_state: Current state tensor (shape: Frames x H x W for grayscale, 
+                          or Frames x Channels x H x W for color, or C*frame_stack_size x H x W for backward compatibility)
+            true_next_state: True next state tensor (shape: Frames x H x W for grayscale,
+                           or Frames x Channels x H x W for color, or single frame for old format)
+            predicted_next_state: Predicted next state tensor (single frame: H x W for grayscale or Channels x H x W for color)
             epoch: Current epoch number
             sample_num: Sample number (1-indexed)
             model_name: Name to include in plot title
@@ -231,9 +246,11 @@ class ValidationPlotter:
         
         # Handle new format where both current and next states have frame dimension
         # Extract the last frame from true_next_state as the actual next state
-        if len(true_next_state.shape) == 4:  # New format: (Frames, Channels, H, W)
-            actual_next_state = true_next_state[-1]  # Last frame
-        else:  # Old format: single frame (Channels, H, W)
+        if len(true_next_state.shape) == 3 and self.is_grayscale:  # New grayscale format: (Frames, H, W)
+            actual_next_state = true_next_state[-1]  # Last frame: (H, W)
+        elif len(true_next_state.shape) == 4:  # New color format: (Frames, Channels, H, W)
+            actual_next_state = true_next_state[-1]  # Last frame: (Channels, H, W)
+        else:  # Old format: single frame
             actual_next_state = true_next_state
             
         # Multi-frame layout: all current frames + true next + predicted next
@@ -251,8 +268,11 @@ class ValidationPlotter:
         except Exception as e:
             print(f"Warning: Could not separate stacked frames: {e}. Using fallback display.")
             # Fallback: try to display current_state directly
-            if len(current_state.shape) == 4:
-                # New format: use first frame as fallback
+            if len(current_state.shape) == 3 and self.is_grayscale:
+                # New grayscale format: use first frame as fallback
+                curr_img = self.process_image_for_plotting(current_state[0])
+            elif len(current_state.shape) == 4:
+                # New color format: use first frame as fallback
                 curr_img = self.process_image_for_plotting(current_state[0])
             else:
                 # Old format: use as is
@@ -296,8 +316,8 @@ class ValidationPlotter:
         
         Args:
             batch_data: Tuple of (s_t, a_t, r_t, s_t_plus_1)
-                       s_t shape: (Batch, Frames, Channels, H, W) for new format
-                       s_t_plus_1 shape: (Batch, Frames, Channels, H, W) for new format
+                       s_t shape: (Batch, Frames, H, W) for grayscale or (Batch, Frames, Channels, H, W) for color
+                       s_t_plus_1 shape: (Batch, Frames, H, W) for grayscale or (Batch, Frames, Channels, H, W) for color
             selected_indices: Indices of samples to plot
             predictions: Predicted next states for the selected samples only (single frame each)
             epoch: Current epoch number
@@ -311,9 +331,9 @@ class ValidationPlotter:
         for i, batch_idx in enumerate(selected_indices):
             sample_num = i + 1  # 1-indexed sample numbers
             self.save_comparison_plot(
-                current_state=s_t[batch_idx],     # Shape: (Frames, Channels, H, W)
-                true_next_state=s_t_plus_1[batch_idx],  # Shape: (Frames, Channels, H, W)
-                predicted_next_state=predictions[i],  # Shape: (Channels, H, W) - single frame
+                current_state=s_t[batch_idx],     # Shape: (Frames, H, W) for grayscale or (Frames, Channels, H, W) for color
+                true_next_state=s_t_plus_1[batch_idx],  # Shape: (Frames, H, W) for grayscale or (Frames, Channels, H, W) for color
+                predicted_next_state=predictions[i],  # Shape: (H, W) for grayscale or (Channels, H, W) for color - single frame
                 epoch=epoch,
                 sample_num=sample_num,
                 model_name=model_name
