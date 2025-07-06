@@ -2,12 +2,10 @@
 
 # --- Environment Configuration ---
 environment:
-  name: "CarRacing-v3" # Example, choose a relevant Gym environment (e.g., "CarRacing-v3", "ALE/Pong-v5")
+  name: "ALE/Assault-v5" # Simple environment for testing (was "ALE/Assault-v5")
   
   # Image preprocessing parameters
-  input_channels_per_frame: 3 # Number of channels from environment (3=RGB, 1=grayscale, 4=RGBA)
   frame_stack_size: 4         # Number of frames to stack (1 = no stacking, 4 = stack 4 frames)
-  grayscale_conversion: true # Convert RGB to grayscale during preprocessing (only applies if input_channels_per_frame=3)
   image_height: 64            # Target height for image preprocessing
   image_width: 64             # Target width for image preprocessing
   
@@ -22,12 +20,12 @@ environment:
 # --- Data Collection & Dataset Management ---
 data:
   collection:
-    num_episodes: 20 # Number of episodes to collect for the dataset
-    max_steps_per_episode: 300 # Max steps per episode during data collection
+    num_episodes: 5 # Number of episodes to collect for the dataset (reduced for testing)
+    max_steps_per_episode: 100 # Max steps per episode during data collection (reduced for testing)
   dataset:
     dir: "datasets/"
     load_path: ".pth" # empty string means don't load, otherwise it's a path relative to dataset.dir
-    filename: "CarRacing_rep_4.pth"
+    filename: "assault_rep_2.pth"
   validation_split: 0.2 # Proportion of data to use for validation (moved from early_stopping)
 
 # --- Model Loading Configuration ---
@@ -174,9 +172,10 @@ models:
 ppo_agent:
   enabled: true # Master switch for using PPO for data collection
   n_envs: 8 # Number of parallel environments for PPO training (default: CPU count)
+  use_subproc_vec_env: true # Use SubprocVecEnv instead of DummyVecEnv for better performance
   action_repetition_k: 4
   learning_rate: 0.0003
-  total_train_timesteps: 500000 # Timesteps to train PPO before data collection
+  total_train_timesteps: 500 # Timesteps to train PPO before data collection (reduced for testing)
   n_steps: 64       # PPO n_steps parameter
   batch_size: 64      # PPO batch_size parameter
   n_epochs: 5         # PPO n_epochs parameter
