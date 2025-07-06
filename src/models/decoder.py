@@ -52,12 +52,20 @@ class StateDecoder(nn.Module):
         self.to_pixels = nn.Linear(decoder_dim, output_patch_dim)
 
         # Rearrange patches back into an image
-        self.patch_to_image = Rearrange(
-            'b (h w) (p1 p2 c) -> b c (h p1) (w p2)',
-            p1=decoder_patch_size, p2=decoder_patch_size,
-            h=self.output_num_patches_h, w=self.output_num_patches_w,
-            c=output_channels
-        )
+        # For grayscale images (output_channels=1), we can simplify the rearrangement
+        if output_channels == 1:
+            self.patch_to_image = Rearrange(
+                'b (h w) (p1 p2) -> b (h p1) (w p2)',
+                p1=decoder_patch_size, p2=decoder_patch_size,
+                h=self.output_num_patches_h, w=self.output_num_patches_w
+            )
+        else:
+            self.patch_to_image = Rearrange(
+                'b (h w) (p1 p2 c) -> b c (h p1) (w p2)',
+                p1=decoder_patch_size, p2=decoder_patch_size,
+                h=self.output_num_patches_h, w=self.output_num_patches_w,
+                c=output_channels
+            )
         self.apply(initialize_weights)
 
     def forward(self, jepa_predictor_embedding: torch.Tensor) -> torch.Tensor:
@@ -66,7 +74,8 @@ class StateDecoder(nn.Module):
         Args:
             jepa_predictor_embedding: Tensor of shape (b, input_latent_dim) from JEPA's predictor.
         Returns:
-            predicted_next_state_image: Tensor of shape (b, output_channels, output_image_h, output_image_w).
+            predicted_next_state_image: Tensor of shape (b, output_channels, output_image_h, output_image_w) 
+                                      or (b, 1, output_image_h, output_image_w) for grayscale images.
         """
         batch_size = jepa_predictor_embedding.shape[0]
 
@@ -91,8 +100,12 @@ class StateDecoder(nn.Module):
         pixel_patches = self.to_pixels(decoded_representation)
 
         # 5. Reshape patches to image
-        # Shape: (b, num_output_patches, output_patch_dim) -> (b, output_channels, output_image_h, output_image_w)
+        # Shape: (b, num_output_patches, output_patch_dim) -> (b, output_channels, output_image_h, output_image_w) or (b, output_image_h, output_image_w) for grayscale
         predicted_next_state_image = self.patch_to_image(pixel_patches)
+        
+        # For grayscale images, add channel dimension if needed
+        if self.output_channels == 1 and predicted_next_state_image.dim() == 3:
+            predicted_next_state_image = predicted_next_state_image.unsqueeze(1)  # Add channel dimension
 
         return predicted_next_state_image
 
@@ -104,7 +117,7 @@ if __name__ == '__main__':
     decoder_depth_test = 3
     decoder_heads_test = 4
     decoder_mlp_dim_test = 512
-    output_channels_test = 3
+    output_channels_test = 1  # Changed to 1 for grayscale
     image_size_test = (64, 64)
     patch_size_test = 8
 
@@ -143,14 +156,14 @@ if __name__ == '__main__':
         decoder_depth=decoder_depth_test,
         decoder_heads=decoder_heads_test,
         decoder_mlp_dim=decoder_mlp_dim_test,
-        output_channels=output_channels_test,
+        output_channels=1,  # Changed to 1 for grayscale
         output_image_size=image_size_test_rect,
         decoder_patch_size=patch_size_test_rect
     )
     dummy_predictor_output_rect = torch.randn(batch_size_test, latent_dim_test)
     predicted_image_rect = jepa_decoder_rect(dummy_predictor_output_rect)
     print(f"Output predicted image shape (rectangular): {predicted_image_rect.shape}")
-    assert predicted_image_rect.shape == (batch_size_test, output_channels_test, image_size_test_rect[0], image_size_test_rect[1])
+    assert predicted_image_rect.shape == (batch_size_test, 1, image_size_test_rect[0], image_size_test_rect[1])  # Changed to 1 channel
     print("Test passed: Rectangular output shape is correct.")
 
     # Test invalid patch size
@@ -161,7 +174,7 @@ if __name__ == '__main__':
             decoder_depth=decoder_depth_test,
             decoder_heads=decoder_heads_test,
             decoder_mlp_dim=decoder_mlp_dim_test,
-            output_channels=output_channels_test,
+            output_channels=1,  # Changed to 1 for grayscale
             output_image_size=(64, 60), # 60 is not divisible by 8
             decoder_patch_size=patch_size_test
         )
