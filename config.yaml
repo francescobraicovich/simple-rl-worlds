@@ -25,7 +25,7 @@ data:
   dataset:
     dir: "datasets/"
     load_path: ".pth" # empty string means don't load, otherwise it's a path relative to dataset.dir
-    filename: "assault_rep_2.pth"
+    filename: "assault_rep_4.pth"
   validation_split: 0.2 # Proportion of data to use for validation (moved from early_stopping)
 
 # --- Model Loading Configuration ---
