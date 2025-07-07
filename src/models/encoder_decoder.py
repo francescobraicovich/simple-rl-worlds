@@ -147,11 +147,6 @@ class StandardEncoderDecoder(nn.Module):
         predicted_patches = self.to_pixels(decoded_patches_representation)
         # Output: (b, num_output_patches, output_patch_dim)
 
-        # 7. Rearrange patches back into an image
-        # predicted_patches_reshaped = rearrange(
-        #     predicted_patches, 'b (ph pw) d -> (b ph pw) d', ph=self.output_num_patches_h, pw=self.output_num_patches_w)
-        # predicted_s_t_plus_1 = self.patch_to_image(predicted_patches_reshaped)
-
         predicted_s_t_plus_1 = self.patch_to_image(predicted_patches) # Directly use (b, num_patches, patch_dim)
         # Output: (b, output_channels, output_image_size_h, output_image_size_w)
 
