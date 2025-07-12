@@ -181,9 +181,7 @@ class JEPATrainer:
         self.optimizer.zero_grad()
         
         # Encode current state with main encoder
-        print(f'State shape: {state.shape}, Next state shape: {next_state.shape}, Action shape: {action.shape}')
         z_state = self.encoder(state)  # [B, N_tokens, embed_dim]
-        print(f'Encoded state shape: {z_state.shape}')
         
         # For JEPA, we need the action from the sequence
         # The dataset returns action sequences, we'll use the last action
@@ -194,12 +192,10 @@ class JEPATrainer:
             
         # Predict next latent state
         z_next_pred = self.predictor(z_state, action_for_prediction)
-        print(f'Predicted next state shape: {z_next_pred.shape}')
         
         # Encode ground-truth next state with target encoder (no gradients)
         with torch.no_grad():
             z_next_target = self.target_encoder(next_state)
-            print(f'Ground-truth next state shape: {z_next_target.shape}')
 
         # Compute L1 loss between predicted and target latent states
         loss = self.criterion(z_next_pred, z_next_target)
