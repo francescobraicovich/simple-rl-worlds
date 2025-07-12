@@ -17,7 +17,7 @@ data_collection:
   num_episodes: 5
   max_steps_per_episode: 20
   random_action_percentage: 0.0 # Percentage of actions to be random (0.0 = no random actions)
-  load_path: ""
+  load_path: "assault_rep_4.pth"
   filename: "assault_rep_4.pth"
   validation_split: 0.2
   ppo_agent:
@@ -35,7 +35,7 @@ data_collection:
     additional_log_std_noise: 0.0
     policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
 
-embed_dim: 12 # Dimension of the embedding space for the transformer model
+embed_dim: 16 # Dimension of the embedding space for the transformer model
 
 training:
   main_loops:
@@ -49,6 +49,18 @@ training:
     batch_size: 32 # Batch size for the JEPA decoder training
     learning_rate: 0.0001 # Learning rate for the JEPA decoder optimizer
     weight_decay: 0.0001 # Weight decay for the JEPA decoder optimizer
+  reward_predictor:
+    versions: "both" # Versions of the reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
+    num_epochs: 10 # Number of epochs for the reward predictor training
+    batch_size: 32 # Batch size for the reward predictor training
+    learning_rate: 0.0001 # Learning rate for the reward predictor optimizer
+    weight_decay: 0.0001 # Weight decay for the reward predictor optimizer
+  dynamics_reward_predictor:
+    versions: "both" # Versions of the dynamics reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
+    num_epochs: 10 # Number of epochs for the dynamics reward predictor training
+    batch_size: 32 # Batch size for the dynamics reward predictor training
+    learning_rate: 0.0001 # Learning rate for the dynamics reward predictor optimizer
+    weight_decay: 0.0001 # Weight decay for the dynamics reward predictor optimizer
 
 models:
   encoder:
@@ -67,14 +79,21 @@ models:
     attention_dropout: 0.1
     predictor_drop_path_rate: 0.1
   decoder:
-    num_layers: 6
     num_heads: 8
-    mlp_ratio: 4.0
     dropout: 0.1
     attention_dropout: 0.1
     decoder_drop_path_rate: 0.1
-    num_upsampling_blocks: 2 # Number of upsampling blocks in the decoder
+  reward_predictor:
+    internal_embedding_dim: 32
+    num_heads: 4
 
+
+# Wandb configuration for experiment tracking
+wandb:
+  enabled: true  # Set to true to enable wandb logging
+  project: "simple-rl-worlds"
+  entity: null  # Set to your wandb username/team
+  tags: []  # Add tags for organizing experiments
 
 
     
