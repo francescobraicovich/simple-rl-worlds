@@ -1,5 +1,8 @@
+import os
+# Set MPS fallback for unsupported operations
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+
 import torch
-import os # For path joining and checking existence
 import wandb
 import time
 
