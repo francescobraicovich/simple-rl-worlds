@@ -35,7 +35,7 @@ class ExperienceDataset(Dataset):
         start = self.valid_start_indices[idx]
 
         state = self.states[:, start:start + self.sequence_length, :, :]
-        next_state = self.states[:, start + self.sequence_length, :, :].unsqueeze(1)
+        next_state = self.states[:, start + self.sequence_length + 1, :, :].unsqueeze(1)
         action = self.actions[start:start + self.sequence_length]
         reward = self.rewards[start:start + self.sequence_length]
 

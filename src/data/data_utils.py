@@ -202,7 +202,7 @@ def _create_and_split_datasets(episodes_data: list, config: dict):
 
                 s = s.unsqueeze(0)  # Add channel dimension
                 state = s[:, -1, :, :]
-                a = torch.tensor(a, dtype=torch.float32)
+                a = torch.tensor(a, dtype=torch.int32)
                 r = torch.tensor(r, dtype=torch.float32)
                 states.append(state.unsqueeze(0))
                 actions.append(a)
