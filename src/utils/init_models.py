@@ -1,0 +1,130 @@
+import yaml
+import os
+from typing import Dict, Any
+
+from ..models.encoder import VideoViT
+from ..models.predictor import LatentDynamicsPredictor
+from ..models.decoder import HybridConvTransformerDecoder
+
+
+def load_config(config_path: str = None) -> Dict[str, Any]:
+    """
+    Load configuration from yaml file.
+    
+    Args:
+        config_path: Path to config.yaml file. If None, looks for config.yaml in project root.
+    
+    Returns:
+        Dictionary containing configuration parameters.
+    """
+    if config_path is None:
+        # Default to config.yaml in project root (two levels up from utils)
+        config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config.yaml')
+    
+    with open(config_path, 'r') as file:
+        config = yaml.safe_load(file)
+    
+    return config
+
+
+def init_encoder(config_path: str = None) -> VideoViT:
+    """
+    Initialize the VideoViT encoder model from configuration.
+    
+    Args:
+        config_path: Path to config.yaml file. If None, uses default location.
+    
+    Returns:
+        Initialized VideoViT encoder model.
+    """
+    config = load_config(config_path)
+    
+    # Extract relevant configuration parameters
+    data_config = config['data_and_patching']
+    encoder_config = config['models']['encoder']
+    embed_dim = config['embed_dim']
+    
+    encoder = VideoViT(
+        img_h=data_config['image_height'],
+        img_w=data_config['image_width'],
+        frames_per_clip=data_config['sequence_length'],
+        patch_size_h=data_config['patch_size_h'],
+        patch_size_w=data_config['patch_size_w'],
+        patch_size_t=data_config['patch_size_t'],
+        embed_dim=embed_dim,
+        mlp_ratio=encoder_config['mlp_ratio'],
+        drop_rate=encoder_config['dropout'],
+        attn_drop_rate=encoder_config['attention_dropout'],
+        encoder_num_layers=encoder_config['num_layers'],
+        encoder_num_heads=encoder_config['num_heads'],
+        encoder_drop_path_rate=encoder_config['predictor_drop_path_rate']
+    )
+    
+    return encoder
+
+
+def init_predictor(config_path: str = None) -> LatentDynamicsPredictor:
+    """
+    Initialize the LatentDynamicsPredictor model from configuration.
+    
+    Args:
+        config_path: Path to config.yaml file. If None, uses default location.
+    
+    Returns:
+        Initialized LatentDynamicsPredictor model.
+    """
+    config = load_config(config_path)
+    
+    # Extract relevant configuration parameters
+    predictor_config = config['models']['predictor']
+    embed_dim = config['embed_dim']
+    
+    predictor = LatentDynamicsPredictor(
+        embed_dim=embed_dim,
+        num_actions=predictor_config['num_actions'],
+        predictor_num_layers=predictor_config['num_layers'],
+        predictor_num_heads=predictor_config['num_heads'],
+        mlp_ratio=predictor_config['mlp_ratio'],
+        drop_rate=predictor_config['dropout'],
+        attn_drop_rate=predictor_config['attention_dropout'],
+        predictor_drop_path_rate=predictor_config['predictor_drop_path_rate']
+    )
+    
+    return predictor
+
+
+def init_decoder(config_path: str = None) -> HybridConvTransformerDecoder:
+    """
+    Initialize the HybridConvTransformerDecoder model from configuration.
+    
+    Args:
+        config_path: Path to config.yaml file. If None, uses default location.
+    
+    Returns:
+        Initialized HybridConvTransformerDecoder model.
+    """
+    config = load_config(config_path)
+    
+    # Extract relevant configuration parameters
+    data_config = config['data_and_patching']
+    decoder_config = config['models']['decoder']
+    embed_dim = config['embed_dim']
+    
+    decoder = HybridConvTransformerDecoder(
+        img_h=data_config['image_height'],
+        img_w=data_config['image_width'],
+        frames_per_clip=1,  # Decoder reconstructs single frames
+        embed_dim=embed_dim,
+        mlp_ratio=decoder_config['mlp_ratio'],
+        drop_rate=decoder_config['dropout'],
+        attn_drop_rate=decoder_config['attention_dropout'],
+        decoder_embed_dim=embed_dim,  # Use same embed_dim for decoder
+        decoder_num_layers=decoder_config['num_layers'],
+        decoder_num_heads=decoder_config['num_heads'],
+        decoder_drop_path_rate=decoder_config['decoder_drop_path_rate'],
+        num_upsampling_blocks=decoder_config['num_upsampling_blocks'],
+        patch_size_h=data_config['patch_size_h'],
+        patch_size_w=data_config['patch_size_w']
+    )
+    
+    return decoder
