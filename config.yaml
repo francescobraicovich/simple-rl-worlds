@@ -17,7 +17,7 @@ data_collection:
   num_episodes: 5
   max_steps_per_episode: 20
   random_action_percentage: 0.0 # Percentage of actions to be random (0.0 = no random actions)
-  load_path: ""
+  load_path: "assault_rep_4.pth"
   filename: "assault_rep_4.pth"
   validation_split: 0.2
   ppo_agent:
@@ -35,7 +35,7 @@ data_collection:
     additional_log_std_noise: 0.0
     policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
 
-embed_dim: 64 # Dimension of the embedding space for the transformer model
+embed_dim: 12 # Dimension of the embedding space for the transformer model
 
 training:
   main_loops:
@@ -53,7 +53,7 @@ training:
 models:
   encoder:
     num_layers: 6
-    num_heads: 8
+    num_heads: 2
     mlp_ratio: 4.0
     dropout: 0.1
     attention_dropout: 0.1
@@ -61,7 +61,7 @@ models:
   predictor:
     num_actions: 18
     num_layers: 4
-    num_heads: 8
+    num_heads: 2
     mlp_ratio: 4.0
     dropout: 0.1
     attention_dropout: 0.1
