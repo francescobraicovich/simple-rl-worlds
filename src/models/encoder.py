@@ -1,66 +1,216 @@
+import torch
 import torch.nn as nn
-from .vit import ViTVideo
-from .cnn import CNNEncoder
-from .mlp import MLPEncoder
+import torch.nn.functional as F
 
-class Encoder(nn.Module):
-    def __init__(self,
-                 encoder_type: str,
-                 image_size,  # int or tuple (h, w)
-                 patch_size: int,  # Primarily for ViT
-                 input_channels: int,
-                 latent_dim: int,  # This is the output dim of any encoder
-                 encoder_params: dict = None):
+
+class RotaryEmbedding(nn.Module):
+    """
+    Rotary Position Embedding (RoPE) for self-attention.
+    Generates cos and sin embedding tables for a given sequence length.
+    """
+    def __init__(self, dim):
         super().__init__()
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2).float() / dim))
+        self.register_buffer('inv_freq', inv_freq)
 
-        self._image_size_tuple = image_size
+    def forward(self, seq_len, device):
+        # Create position ids
+        t = torch.arange(seq_len, device=device).type_as(self.inv_freq)
+        # Outer product to get frequencies
+        freqs = torch.einsum('i,j->ij', t, self.inv_freq)
+        # Duplicate for sin and cos
+        emb = torch.cat((freqs, freqs), dim=-1)
+        cos = emb.cos()[None, None, :, :]
+        sin = emb.sin()[None, None, :, :]
+        return cos, sin
 
-        if encoder_params is None:
-            encoder_params = {}
-        
-        if encoder_type == 'vit':
-            vit_params = {
-                'image_size': self._image_size_tuple,
-                'patch_size': patch_size,
-                'channels': input_channels,
-                'num_frames': encoder_params.get('num_frames'),
-                'dim': latent_dim,
-                'depth': encoder_params.get('depth', 6),
-                'heads': encoder_params.get('heads', 8),
-                'mlp_dim': encoder_params.get('mlp_dim', 1024),
-                'pool': encoder_params.get('pool', 'cls'), # Ensures (batch, dim) output
-                'dropout': encoder_params.get('dropout', 0.),
-                'emb_dropout': encoder_params.get('emb_dropout', 0.)
-            }
-            self.encoder_model = ViTVideo(**vit_params)
-        elif encoder_type == 'cnn':
-            cnn_params = {
-                'input_channels': input_channels,
-                'image_size': self._image_size_tuple,
-                'latent_dim': latent_dim,
-                'num_conv_layers': encoder_params.get('num_conv_layers', 3),
-                'base_filters': encoder_params.get('base_filters', 32),
-                'kernel_size': encoder_params.get('kernel_size', 3),
-                'stride': encoder_params.get('stride', 2),
-                'padding': encoder_params.get('padding', 1),
-                'activation_fn_str': encoder_params.get('activation_fn_str', 'relu'),
-                'fc_hidden_dim': encoder_params.get('fc_hidden_dim', None),
-                'dropout_rate': encoder_params.get('dropout_rate', 0.0)
-            }
-            self.encoder_model = CNNEncoder(**cnn_params)
-        elif encoder_type == 'mlp':
-            mlp_params = {
-                'input_channels': input_channels,
-                'image_size': self._image_size_tuple, # MLPEncoder expects image_size to flatten
-                'latent_dim': latent_dim,
-                'num_hidden_layers': encoder_params.get('num_hidden_layers', 2),
-                'hidden_dim': encoder_params.get('hidden_dim', 512),
-                'activation_fn_str': encoder_params.get('activation_fn_str', 'relu'),
-                'dropout_rate': encoder_params.get('dropout_rate', 0.0)
-            }
-            self.encoder_model = MLPEncoder(**mlp_params)
+
+def apply_rotary_pos_emb(q, k, cos, sin):
+    """
+    Apply rotary embeddings to queries and keys.
+    """
+    # Split even and odd dims
+    q1, q2 = q[..., ::2], q[..., 1::2]
+    k1, k2 = k[..., ::2], k[..., 1::2]
+    # Rotate
+    q_rot = torch.cat([q1 * cos - q2 * sin, q1 * sin + q2 * cos], dim=-1)
+    k_rot = torch.cat([k1 * cos - k2 * sin, k1 * sin + k2 * cos], dim=-1)
+    return q_rot, k_rot
+
+
+class FactorizedPatchEmbed(nn.Module):
+    """
+    Factorized patch embedding for grayscale video.
+    Spatial conv then temporal conv (if T > 1).
+    """
+    def __init__(self, img_size, patch_size, frames_per_clip, embed_dim):
+        super().__init__()
+        _, self.patch_h, self.patch_w = patch_size
+        self.patch_t = patch_size[0]
+        self.conv_spatial = nn.Conv3d(
+            1, embed_dim,
+            kernel_size=(1, self.patch_h, self.patch_w),
+            stride=(1, self.patch_h, self.patch_w)
+        )
+        # Temporal conv only if clip length > 1
+        if frames_per_clip > 1 and self.patch_t > 1:
+            self.conv_temporal = nn.Conv3d(
+                embed_dim, embed_dim,
+                kernel_size=(self.patch_t, 1, 1),
+                stride=(self.patch_t, 1, 1)
+            )
         else:
-            raise ValueError(f"Unsupported encoder_type: {encoder_type}")
+            self.conv_temporal = None
 
     def forward(self, x):
-        return self.encoder_model(x)
+        # x: [B, 1, T, H, W]
+        x = self.conv_spatial(x)  # [B, E, T, H', W']
+        if self.conv_temporal is not None:
+            x = self.conv_temporal(x)  # [B, E, T', H', W']
+        # Flatten spatiotemporal dims
+        B, E, T, H, W = x.shape
+        x = x.flatten(2).transpose(1, 2)  # [B, N_tokens, E]
+        return x
+
+
+class DropPath(nn.Module):
+    """
+    Stochastic Depth ("DropPath").
+    """
+    def __init__(self, drop_prob=0.):
+        super().__init__()
+        self.drop_prob = drop_prob
+
+    def forward(self, x):
+        if self.drop_prob == 0. or not self.training:
+            return x
+        keep_prob = 1 - self.drop_prob
+        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+        random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+        random_tensor.floor_()
+        return x.div(keep_prob) * random_tensor
+
+
+class MLP(nn.Module):
+    """
+    Simple MLP block with one hidden layer, GELU activation, dropout.
+    """
+    def __init__(self, embed_dim, mlp_ratio=4., drop_rate=0.):
+        super().__init__()
+        hidden_dim = int(embed_dim * mlp_ratio)
+        self.fc1 = nn.Linear(embed_dim, hidden_dim)
+        self.act = nn.GELU()
+        self.fc2 = nn.Linear(hidden_dim, embed_dim)
+        self.drop = nn.Dropout(drop_rate)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.act(x)
+        x = self.drop(x)
+        x = self.fc2(x)
+        x = self.drop(x)
+        return x
+
+
+class MultiHeadSelfAttention(nn.Module):
+    """
+    Multi-head self-attention with Rotary Position Embeddings.
+    """
+    def __init__(self, embed_dim, num_heads, attn_drop_rate=0., proj_drop_rate=0.):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
+        self.head_dim = embed_dim // num_heads
+        self.scale = self.head_dim ** -0.5
+
+        self.qkv = nn.Linear(embed_dim, embed_dim * 3, bias=False)
+        self.proj = nn.Linear(embed_dim, embed_dim)
+        self.attn_drop = nn.Dropout(attn_drop_rate)
+        self.proj_drop = nn.Dropout(proj_drop_rate)
+
+        # Rotary embeddings
+        self.rotary_emb = RotaryEmbedding(self.head_dim)
+
+    def forward(self, x):
+        B, N, C = x.shape
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim)
+        q, k, v = qkv.permute(2, 0, 3, 1, 4)
+        # RoPE
+        cos, sin = self.rotary_emb(N, x.device)
+        q, k = apply_rotary_pos_emb(q, k, cos, sin)
+        # Attention
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+        out = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        out = self.proj(out)
+        out = self.proj_drop(out)
+        return out
+
+
+class TransformerBlock(nn.Module):
+    """
+    Pre-LayerNorm -> MHSA -> DropPath -> Pre-LayerNorm -> MLP -> DropPath
+    """
+    def __init__(self, embed_dim, num_heads, mlp_ratio=4., drop_rate=0., attn_drop_rate=0., drop_path_rate=0.):
+        super().__init__()
+        self.norm1 = nn.LayerNorm(embed_dim)
+        self.attn = MultiHeadSelfAttention(
+            embed_dim, num_heads,
+            attn_drop_rate=attn_drop_rate,
+            proj_drop_rate=drop_rate
+        )
+        self.drop_path1 = DropPath(drop_path_rate)
+        self.norm2 = nn.LayerNorm(embed_dim)
+        self.mlp = MLP(embed_dim, mlp_ratio, drop_rate)
+        self.drop_path2 = DropPath(drop_path_rate)
+
+    def forward(self, x):
+        x = x + self.drop_path1(self.attn(self.norm1(x)))
+        x = x + self.drop_path2(self.mlp(self.norm2(x)))
+        return x
+
+
+class VideoViT(nn.Module):
+    """
+    Vision Transformer for grayscale video clips with factorized patch embeddings.
+    """
+    def __init__(
+        self,
+        img_h=64, img_w=64,
+        frames_per_clip=16,
+        patch_size_h=8, patch_size_w=8, patch_size_t=2,
+        embed_dim=768,
+        mlp_ratio=4.,
+        drop_rate=0.,
+        attn_drop_rate=0.,
+        encoder_num_layers=12,
+        encoder_num_heads=12,
+        encoder_drop_path_rate=0.1
+    ):
+        super().__init__()
+        self.patch_embed = FactorizedPatchEmbed(
+            img_size=(frames_per_clip, img_h, img_w),
+            patch_size=(patch_size_t, patch_size_h, patch_size_w),
+            frames_per_clip=frames_per_clip,
+            embed_dim=embed_dim
+        )
+        # stochastic depth decay rule
+        dpr = [x.item() for x in torch.linspace(0, encoder_drop_path_rate, encoder_num_layers)]
+        self.blocks = nn.ModuleList([
+            TransformerBlock(
+                embed_dim, encoder_num_heads,
+                mlp_ratio, drop_rate,
+                attn_drop_rate, dpr[i]
+            ) for i in range(encoder_num_layers)
+        ])
+        self.norm = nn.LayerNorm(embed_dim)
+
+    def forward(self, x):
+        # x: [B, 1, T, H, W]
+        x = self.patch_embed(x)  # [B, N_tokens, embed_dim]
+        for blk in self.blocks:
+            x = blk(x)
+        x = self.norm(x)
+        return x
