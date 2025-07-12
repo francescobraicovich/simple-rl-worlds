@@ -226,9 +226,6 @@ class RewardPredictorTrainer:
         # Reshape reward tensors for MSE loss
         # predicted_reward is [B, 1, 1], we need [B]
         predicted_reward = predicted_reward.squeeze(-1).squeeze(-1)  # [B]
-
-        print(f"Predicted reward shape: {predicted_reward.shape}")  # Debugging output
-        print(f"Reward shape: {reward.shape}")  # Debugging output
         
         # Ensure reward is the right shape
         if reward.dim() > 1:
