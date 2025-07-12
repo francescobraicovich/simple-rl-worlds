@@ -25,51 +25,47 @@ class RotaryEmbedding(nn.Module):
         return cos, sin
 
 
+def rotate_half(x):
+    """Rotates half the hidden dims of the input."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2 :]
+    return torch.cat((-x2, x1), dim=-1)
+
+
 def apply_rotary_pos_emb(q, k, cos, sin):
     """
     Apply rotary embeddings to queries and keys.
     """
-    # Split even and odd dims
-    q1, q2 = q[..., ::2], q[..., 1::2]
-    k1, k2 = k[..., ::2], k[..., 1::2]
-    # Rotate
-    q_rot = torch.cat([q1 * cos - q2 * sin, q1 * sin + q2 * cos], dim=-1)
-    k_rot = torch.cat([k1 * cos - k2 * sin, k1 * sin + k2 * cos], dim=-1)
-    return q_rot, k_rot
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
 
 
 class FactorizedPatchEmbed(nn.Module):
     """
-    Factorized patch embedding for grayscale video.
-    Spatial conv then temporal conv (if T > 1).
+    Spatial patch embedding for grayscale video.
+    Applies a spatial convolution to each frame independently.
     """
     def __init__(self, img_size, patch_size, frames_per_clip, embed_dim):
         super().__init__()
         _, self.patch_h, self.patch_w = patch_size
-        self.patch_t = patch_size[0]
+        # This layer is a 3D conv with a kernel size of 1 in the temporal dimension,
+        # making it effectively a 2D conv applied to each frame.
         self.conv_spatial = nn.Conv3d(
             1, embed_dim,
             kernel_size=(1, self.patch_h, self.patch_w),
             stride=(1, self.patch_h, self.patch_w)
         )
-        # Temporal conv only if clip length > 1
-        if frames_per_clip > 1 and self.patch_t > 1:
-            self.conv_temporal = nn.Conv3d(
-                embed_dim, embed_dim,
-                kernel_size=(self.patch_t, 1, 1),
-                stride=(self.patch_t, 1, 1)
-            )
-        else:
-            self.conv_temporal = None
 
     def forward(self, x):
         # x: [B, 1, T, H, W]
-        x = self.conv_spatial(x)  # [B, E, T, H', W']
-        if self.conv_temporal is not None:
-            x = self.conv_temporal(x)  # [B, E, T', H', W']
-        # Flatten spatiotemporal dims
-        B, E, T, H, W = x.shape
-        x = x.flatten(2).transpose(1, 2)  # [B, N_tokens, E]
+        x = self.conv_spatial(x)  # [B, E, T, H_p, W_p]
+        
+        # Reshape for per-frame token sequences
+        # B, E, T, H_p, W_p -> B, T, E, H_p, W_p -> B, T, E, N_p -> B, T, N_p, E
+        x = x.permute(0, 2, 1, 3, 4)  # [B, T, E, H_p, W_p]
+        x = x.flatten(3)              # [B, T, E, N_tokens_single_frame]
+        x = x.transpose(2, 3)         # [B, T, N_tokens_single_frame, E]
         return x
 
 
