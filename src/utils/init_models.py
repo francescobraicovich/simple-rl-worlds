@@ -5,6 +5,7 @@ from typing import Dict, Any
 from ..models.encoder import VideoViT
 from ..models.predictor import LatentDynamicsPredictor
 from ..models.decoder import HybridConvTransformerDecoder
+from ..models.reward_predictor import RewardPredictor
 
 
 def load_config(config_path: str = None) -> Dict[str, Any]:
@@ -115,18 +116,38 @@ def init_decoder(config_path: str = None) -> HybridConvTransformerDecoder:
     decoder = HybridConvTransformerDecoder(
         img_h=data_config['image_height'],
         img_w=data_config['image_width'],
-        frames_per_clip=1,  # Decoder reconstructs single frames
         embed_dim=embed_dim,
-        mlp_ratio=decoder_config['mlp_ratio'],
         drop_rate=decoder_config['dropout'],
         attn_drop_rate=decoder_config['attention_dropout'],
         decoder_embed_dim=embed_dim,  # Use same embed_dim for decoder
-        decoder_num_layers=decoder_config['num_layers'],
         decoder_num_heads=decoder_config['num_heads'],
         decoder_drop_path_rate=decoder_config['decoder_drop_path_rate'],
-        num_upsampling_blocks=decoder_config['num_upsampling_blocks'],
         patch_size_h=data_config['patch_size_h'],
         patch_size_w=data_config['patch_size_w']
     )
     
     return decoder
+
+
+def init_reward_predictor(config_path: str = None) -> RewardPredictor:
+    """
+    Initialize the RewardPredictor model from configuration.
+    
+    Args:
+        config_path: Path to config.yaml file. If None, uses default location.
+    
+    Returns:
+        Initialized RewardPredictor model.
+    """
+    config = load_config(config_path)
+    
+    # Extract relevant configuration parameters
+    reward_predictor_config = config['models']['reward_predictor']
+    
+    reward_predictor = RewardPredictor(
+        embedding_dim=config['embed_dim'],
+        internal_embedding_dim=reward_predictor_config['internal_embedding_dim'],
+        num_heads=reward_predictor_config['num_heads']
+    )
+    
+    return reward_predictor
