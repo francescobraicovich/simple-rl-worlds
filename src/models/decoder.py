@@ -2,6 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Optional
 
 from .encoder import RotaryEmbedding, rotate_half, DropPath
 
@@ -108,10 +109,8 @@ class UpsampleBlock(nn.Module):
                  attn_drop_rate, proj_drop_rate, drop_path_rate):
         super().__init__()
         # Double spatial resolution
-        self.upconv = nn.ConvTranspose3d(
-            decoder_embed_dim, decoder_embed_dim,
-            kernel_size=(1, 2, 2), stride=(1, 2, 2)
-        )
+        self.upsample = nn.Upsample(scale_factor=(1, 2, 2), mode='trilinear', align_corners=False)
+        self.conv = nn.Conv3d(decoder_embed_dim, decoder_embed_dim, kernel_size=3, padding=1)
         # Residual conv block
         self.res_conv = ResidualConvBlock3D(decoder_embed_dim)
         # Cross-attention infusion
@@ -125,7 +124,8 @@ class UpsampleBlock(nn.Module):
         )
 
     def forward(self, feat, tokens):
-        feat = self.upconv(feat)
+        feat = self.upsample(feat)
+        feat = self.conv(feat)
         feat = self.res_conv(feat)
         feat = self.cross_attn(feat, tokens)
         return feat
@@ -149,7 +149,7 @@ class HybridConvTransformerDecoder(nn.Module):
         decoder_num_layers: int = 3,
         decoder_num_heads: int = 8,
         decoder_drop_path_rate: float = 0.1,
-        num_upsampling_blocks: int = None,  # Will be auto-calculated if None
+        num_upsampling_blocks: Optional[int] = None,  # Will be auto-calculated if None
         patch_size_h: int = 8,
         patch_size_w: int = 8
     ):
@@ -163,12 +163,73 @@ class HybridConvTransformerDecoder(nn.Module):
         # Auto-calculate number of upsampling blocks if not provided
         if num_upsampling_blocks is None:
             # Calculate how many 2x upsampling steps needed to go from patch grid to full image
-            upsampling_factor_h = img_h // self.H_p
-            upsampling_factor_w = img_w // self.W_p
-            assert upsampling_factor_h == upsampling_factor_w, "Non-square upsampling not supported"
-            num_upsampling_blocks = int(math.log2(upsampling_factor_h))
-            assert 2 ** num_upsampling_blocks == upsampling_factor_h, \
-                f"Upsampling factor {upsampling_factor_h} is not a power of 2"
+            # The upsampling factor is how much we need to scale from patch grid to image
+            upsampling_factor_h = img_h // patch_size_h  # This is H_p, but we want img_h // H_p
+            upsampling_factor_w = img_w // patch_size_w   # This is W_p, but we want img_w // W_p
+            
+            # The actual upsampling factor is how much we scale from patch grid to full image
+            # Since H_p = img_h // patch_size_h, the upsampling factor is patch_size_h (if img_h/patch_size_h has no remainder)
+            # But what we really want is: img_h / H_p = img_h / (img_h // patch_size_h) = patch_size_h (approximately)
+            # Actually, let's think about this differently:
+            # We start with H_p x W_p patches, and want to reach img_h x img_w pixels
+            # So upsampling_factor = img_h / H_p = img_h / (img_h // patch_size_h)
+            
+            # Validate that image dimensions are divisible by patch sizes
+            if img_h % patch_size_h != 0:
+                raise ValueError(
+                    f"Image height ({img_h}) must be divisible by patch height ({patch_size_h}). "
+                    f"Current remainder: {img_h % patch_size_h}. "
+                    f"Please adjust img_h to be a multiple of patch_size_h."
+                )
+            if img_w % patch_size_w != 0:
+                raise ValueError(
+                    f"Image width ({img_w}) must be divisible by patch width ({patch_size_w}). "
+                    f"Current remainder: {img_w % patch_size_w}. "
+                    f"Please adjust img_w to be a multiple of patch_size_w."
+                )
+            
+            # Now calculate the correct upsampling factors
+            upsampling_factor_h = patch_size_h  # How much we need to scale H_p to reach img_h
+            upsampling_factor_w = patch_size_w   # How much we need to scale W_p to reach img_w
+            
+            # Validate that upsampling factors are equal (square upsampling)
+            if upsampling_factor_h != upsampling_factor_w:
+                raise ValueError(
+                    f"Non-square upsampling not supported. "
+                    f"Height upsampling factor: {upsampling_factor_h}, "
+                    f"Width upsampling factor: {upsampling_factor_w}. "
+                    f"To fix this, ensure that patch_size_h == patch_size_w. "
+                    f"Current values: patch_size_h={patch_size_h}, patch_size_w={patch_size_w}"
+                )
+            
+            # Check if upsampling factor is a power of 2
+            if upsampling_factor_h <= 0:
+                raise ValueError(
+                    f"Invalid upsampling factor: {upsampling_factor_h}. "
+                    f"Patch sizes must be positive."
+                )
+            
+            # Calculate log2 to find number of upsampling blocks needed
+            log2_factor = math.log2(upsampling_factor_h)
+            
+            if not log2_factor.is_integer():
+                raise ValueError(
+                    f"Upsampling factor {upsampling_factor_h} is not a power of 2. "
+                    f"Each upsampling block doubles the spatial resolution, so the "
+                    f"patch size must be a power of 2. "
+                    f"Current patch_size_h={patch_size_h}, patch_size_w={patch_size_w}. "
+                    f"Valid patch sizes: 1, 2, 4, 8, 16, 32, 64, ..."
+                )
+            
+            num_upsampling_blocks = int(log2_factor)
+            
+            # Additional validation: ensure we don't have zero upsampling blocks
+            if num_upsampling_blocks == 0:
+                raise ValueError(
+                    f"No upsampling needed: patch size is 1x1. "
+                    f"This means we're not really using patches. "
+                    f"Consider using larger patch sizes."
+                )
         
         self.num_upsampling_blocks = num_upsampling_blocks
 
