@@ -15,9 +15,9 @@ class ExperienceDataset(Dataset):
 
     def compute_valid_start_indices(self):
         valid_start_indices = []
-        for i in range(len(self.stop_episodes) - self.sequence_length + 1):
+        for i in range(len(self.stop_episodes) - self.sequence_length):
             valid = True
-            for j in range(i, i + self.sequence_length - 1):
+            for j in range(i, i + self.sequence_length):
                 if self.stop_episodes[j]:
                     valid = False
                     break
