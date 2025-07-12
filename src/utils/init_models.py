@@ -50,7 +50,6 @@ def init_encoder(config_path: str = None) -> VideoViT:
         frames_per_clip=data_config['sequence_length'],
         patch_size_h=data_config['patch_size_h'],
         patch_size_w=data_config['patch_size_w'],
-        patch_size_t=data_config['patch_size_t'],
         embed_dim=embed_dim,
         mlp_ratio=encoder_config['mlp_ratio'],
         drop_rate=encoder_config['dropout'],
@@ -78,8 +77,11 @@ def init_predictor(config_path: str = None) -> LatentDynamicsPredictor:
     # Extract relevant configuration parameters
     predictor_config = config['models']['predictor']
     embed_dim = config['embed_dim']
-    
+
+    data_config = config['data_and_patching']
+
     predictor = LatentDynamicsPredictor(
+        frames_per_clip=data_config['sequence_length'],
         embed_dim=embed_dim,
         num_actions=predictor_config['num_actions'],
         predictor_num_layers=predictor_config['num_layers'],
