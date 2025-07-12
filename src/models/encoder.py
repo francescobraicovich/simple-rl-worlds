@@ -45,10 +45,11 @@ class FactorizedPatchEmbed(nn.Module):
     """
     Spatial patch embedding for grayscale video.
     Applies a spatial convolution to each frame independently.
+    (Corrected Version)
     """
-    def __init__(self, img_size, patch_size, frames_per_clip, embed_dim):
+    def __init__(self, patch_size, embed_dim):
         super().__init__()
-        _, self.patch_h, self.patch_w = patch_size
+        self.patch_h, self.patch_w = patch_size
         # This layer is a 3D conv with a kernel size of 1 in the temporal dimension,
         # making it effectively a 2D conv applied to each frame.
         self.conv_spatial = nn.Conv3d(
@@ -118,6 +119,10 @@ class MultiHeadSelfAttention(nn.Module):
         self.num_heads = num_heads
         assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
         self.head_dim = embed_dim // num_heads
+        
+        # FIX: Add assertion to ensure head_dim is even for RoPE compatibility.
+        assert self.head_dim % 2 == 0, "head_dim must be an even number for Rotary Position Embeddings"
+
         self.scale = self.head_dim ** -0.5
 
         self.qkv = nn.Linear(embed_dim, embed_dim * 3, bias=False)
@@ -171,12 +176,14 @@ class TransformerBlock(nn.Module):
 class VideoViT(nn.Module):
     """
     Vision Transformer for grayscale video clips with factorized patch embeddings.
+    (Corrected and Modified Version)
     """
     def __init__(
         self,
-        img_h=64, img_w=64,
-        frames_per_clip=16,
-        patch_size_h=8, patch_size_w=8, patch_size_t=2,
+        # img_h and img_w are not needed for the conv patcher but kept for clarity
+        img_h=64, img_w=64, 
+        frames_per_clip=16, # Not used in this implementation but good for context
+        patch_size_h=8, patch_size_w=8, # Removed patch_size_t
         embed_dim=768,
         mlp_ratio=4.,
         drop_rate=0.,
@@ -186,10 +193,9 @@ class VideoViT(nn.Module):
         encoder_drop_path_rate=0.1
     ):
         super().__init__()
+        # Corrected call to FactorizedPatchEmbed
         self.patch_embed = FactorizedPatchEmbed(
-            img_size=(frames_per_clip, img_h, img_w),
-            patch_size=(patch_size_t, patch_size_h, patch_size_w),
-            frames_per_clip=frames_per_clip,
+            patch_size=(patch_size_h, patch_size_w),
             embed_dim=embed_dim
         )
         # stochastic depth decay rule
@@ -205,8 +211,22 @@ class VideoViT(nn.Module):
 
     def forward(self, x):
         # x: [B, 1, T, H, W]
-        x = self.patch_embed(x)  # [B, N_tokens, embed_dim]
+        x = self.patch_embed(x)  # [B, T, N_tokens_single_frame, E]
+
+        # Reshape to process all frames as a single batch
+        B, T, N, E = x.shape
+        x = x.reshape(B * T, N, E)
+
+        # Apply transformer blocks to each frame's tokens independently
         for blk in self.blocks:
             x = blk(x)
         x = self.norm(x)
+
+        # Reshape back to per-frame token sequences
+        x = x.reshape(B, T, N, E)
+        
+        # MODIFICATION: Pool the spatial patch tokens for each frame
+        # (B, T, N, E) -> (B, T, E)
+        x = x.mean(dim=2)
+        
         return x
