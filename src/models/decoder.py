@@ -3,13 +3,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .encoder import RotaryEmbedding, apply_rotary_pos_emb, DropPath
+from .encoder import RotaryEmbedding, rotate_half, DropPath
 
 
 class MultiHeadCrossAttention(nn.Module):
     """
     Multi-head cross-attention with Rotary Position Embeddings.
-    Queries from feature map, keys/values from latent tokens.
+    Queries from feature map, keys/values from spatial tokens derived from single latent token.
     """
     def __init__(self, embed_dim_q, embed_dim_kv, num_heads,
                  attn_drop_rate=0., proj_drop_rate=0., drop_path_rate=0.):
@@ -52,10 +52,13 @@ class MultiHeadCrossAttention(nn.Module):
         k = k.reshape(B, Nt, self.num_heads, self.head_dim_q).permute(0, 2, 1, 3)      # [B, h, Nt, dh]
         v = v.reshape(B, Nt, self.num_heads, self.head_dim_q).permute(0, 2, 1, 3)      # [B, h, Nt, dh]
 
-        # Rotary embeddings
-        cos, sin = self.rotary_emb(Nq, feat.device)
-        # Expand cos/sin to match heads: [1,1,Nq,dh]
-        q, k = apply_rotary_pos_emb(q, k, cos, sin)
+        # Rotary embeddings for queries and keys separately
+        cos_q, sin_q = self.rotary_emb(Nq, feat.device)
+        cos_k, sin_k = self.rotary_emb(Nt, feat.device)
+        
+        # Apply rotary embeddings separately
+        q = (q * cos_q) + (rotate_half(q) * sin_q)
+        k = (k * cos_k) + (rotate_half(k) * sin_k)
 
         # Attention
         attn = (q @ k.transpose(-2, -1)) * self.scale
@@ -131,6 +134,7 @@ class UpsampleBlock(nn.Module):
 class HybridConvTransformerDecoder(nn.Module):
     """
     Hybrid Transformer-Convolutional decoder for grayscale frame reconstruction.
+    Accepts a single predicted latent token and reconstructs a complete frame.
     """
     def __init__(
         self,
@@ -145,7 +149,7 @@ class HybridConvTransformerDecoder(nn.Module):
         decoder_num_layers: int = 3,
         decoder_num_heads: int = 8,
         decoder_drop_path_rate: float = 0.1,
-        num_upsampling_blocks: int = 3,
+        num_upsampling_blocks: int = None,  # Will be auto-calculated if None
         patch_size_h: int = 8,
         patch_size_w: int = 8
     ):
@@ -154,12 +158,28 @@ class HybridConvTransformerDecoder(nn.Module):
         self.H_p = img_h // patch_size_h
         self.W_p = img_w // patch_size_w
         self.decoder_embed_dim = decoder_embed_dim
+        self.embed_dim = embed_dim
 
-        # Initial projection from tokens to feature map
+        # Auto-calculate number of upsampling blocks if not provided
+        if num_upsampling_blocks is None:
+            # Calculate how many 2x upsampling steps needed to go from patch grid to full image
+            upsampling_factor_h = img_h // self.H_p
+            upsampling_factor_w = img_w // self.W_p
+            assert upsampling_factor_h == upsampling_factor_w, "Non-square upsampling not supported"
+            num_upsampling_blocks = int(math.log2(upsampling_factor_h))
+            assert 2 ** num_upsampling_blocks == upsampling_factor_h, \
+                f"Upsampling factor {upsampling_factor_h} is not a power of 2"
+        
+        self.num_upsampling_blocks = num_upsampling_blocks
+
+        # Token decoder: maps single token to spatial tokens
+        self.token_decoder = nn.Linear(embed_dim, self.H_p * self.W_p * embed_dim)
+
+        # Initial projection from spatial tokens to feature map
         self.proj = nn.Linear(embed_dim, decoder_embed_dim)
 
         # Build upsampling blocks
-        dpr = [x.item() for x in torch.linspace(0, decoder_drop_path_rate, num_upsampling_blocks)]
+        dpr = [x.item() for x in torch.linspace(0, decoder_drop_path_rate, self.num_upsampling_blocks)]
         self.blocks = nn.ModuleList([
             UpsampleBlock(
                 decoder_embed_dim,
@@ -167,7 +187,7 @@ class HybridConvTransformerDecoder(nn.Module):
                 attn_drop_rate,
                 drop_rate,
                 dpr[i]
-            ) for i in range(num_upsampling_blocks)
+            ) for i in range(self.num_upsampling_blocks)
         ])
 
         # Final conv to 1 channel
@@ -176,21 +196,32 @@ class HybridConvTransformerDecoder(nn.Module):
             kernel_size=1, stride=1
         )
 
-    def forward(self, x_tokens: torch.Tensor) -> torch.Tensor:
+    def forward(self, latent_token: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x_tokens: [B, N_tokens, embed_dim]
+            latent_token: [B, 1, embed_dim] - single predicted latent token
         Returns:
-            recon: [B, 1, 1, img_h, img_w]
+            recon: [B, 1, 1, img_h, img_w] - reconstructed frame
         """
-        B, N, E = x_tokens.shape
-        # Initial projection and reshape
-        x = self.proj(x_tokens)  # [B, N, D]
-        feat = x.transpose(1, 2).reshape(B, self.decoder_embed_dim, 1, self.H_p, self.W_p)
+        B, _, E = latent_token.shape
+        assert latent_token.shape[1] == 1, f"Expected single token, got {latent_token.shape[1]} tokens"
+        
+        # Squeeze to [B, E] and decode to spatial tokens
+        token = latent_token.squeeze(1)  # [B, E]
+        spatial_tokens_flat = self.token_decoder(token)  # [B, H_p * W_p * E]
+        
+        # Reshape to spatial token grid
+        spatial_tokens = spatial_tokens_flat.reshape(B, self.H_p * self.W_p, E)  # [B, H_p * W_p, E]
+        
+        # Project to decoder dimension - these will be used for cross-attention
+        projected_tokens = self.proj(spatial_tokens)  # [B, H_p * W_p, decoder_embed_dim]
+        
+        # Initialize feature map from projected tokens
+        feat = projected_tokens.transpose(1, 2).reshape(B, self.decoder_embed_dim, 1, self.H_p, self.W_p)
 
-        # Upsampling stages
+        # Upsampling stages - use projected_tokens for cross-attention
         for block in self.blocks:
-            feat = block(feat, x_tokens)
+            feat = block(feat, projected_tokens)
 
         # Final reconstruction
         recon = self.final_conv(feat)
