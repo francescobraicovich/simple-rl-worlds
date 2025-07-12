@@ -189,3 +189,4 @@ cython_debug/
 
 /weights
 /best_models
+/evaluation_results
