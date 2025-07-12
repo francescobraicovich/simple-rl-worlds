@@ -17,7 +17,7 @@ data_collection:
   num_episodes: 5
   max_steps_per_episode: 20
   random_action_percentage: 0.0 # Percentage of actions to be random (0.0 = no random actions)
-  load_path: "assault_rep_4.pth"
+  load_path: ""
   filename: "assault_rep_4.pth"
   validation_split: 0.2
   ppo_agent:
