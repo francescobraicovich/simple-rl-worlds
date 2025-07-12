@@ -10,6 +10,10 @@ Joint-Embedding Predictive Architecture (JEPA). The main objective is to train:
 The training uses a target encoder (EMA of main encoder) for stable targets.
 """
 
+import os
+# Set MPS fallback for unsupported operations
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+
 import sys
 import time
 import copy
