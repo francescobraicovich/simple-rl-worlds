@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class RotaryEmbedding(nn.Module):
@@ -113,10 +112,11 @@ class MultiHeadSelfAttention(nn.Module):
     """
     Multi-head self-attention with Rotary Position Embeddings.
     """
-    def __init__(self, embed_dim, num_heads, attn_drop_rate=0., proj_drop_rate=0.):
+    def __init__(self, embed_dim, num_heads, attn_drop_rate=0., proj_drop_rate=0., causal=False):
         super().__init__()
         self.embed_dim = embed_dim
         self.num_heads = num_heads
+        self.causal = causal
         assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
         self.head_dim = embed_dim // num_heads
         
@@ -142,6 +142,12 @@ class MultiHeadSelfAttention(nn.Module):
         q, k = apply_rotary_pos_emb(q, k, cos, sin)
         # Attention
         attn = (q @ k.transpose(-2, -1)) * self.scale
+        
+        # Apply causal mask if needed
+        if self.causal:
+            mask = torch.tril(torch.ones(N, N, device=x.device, dtype=torch.bool))
+            attn = attn.masked_fill(~mask, float('-inf'))
+        
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
         out = (attn @ v).transpose(1, 2).reshape(B, N, C)
@@ -154,13 +160,14 @@ class TransformerBlock(nn.Module):
     """
     Pre-LayerNorm -> MHSA -> DropPath -> Pre-LayerNorm -> MLP -> DropPath
     """
-    def __init__(self, embed_dim, num_heads, mlp_ratio=4., drop_rate=0., attn_drop_rate=0., drop_path_rate=0.):
+    def __init__(self, embed_dim, num_heads, mlp_ratio=4., drop_rate=0., attn_drop_rate=0., drop_path_rate=0., causal=False):
         super().__init__()
         self.norm1 = nn.LayerNorm(embed_dim)
         self.attn = MultiHeadSelfAttention(
             embed_dim, num_heads,
             attn_drop_rate=attn_drop_rate,
-            proj_drop_rate=drop_rate
+            proj_drop_rate=drop_rate,
+            causal=causal
         )
         self.drop_path1 = DropPath(drop_path_rate)
         self.norm2 = nn.LayerNorm(embed_dim)
