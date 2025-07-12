@@ -28,6 +28,7 @@ sys.path.insert(0, str(project_root))
 
 from src.utils.init_models import init_encoder, init_predictor, load_config
 from src.scripts.collect_load_data import DataCollectionPipeline
+from src.utils.set_device import set_device
 
 
 class JEPATrainer:
@@ -60,8 +61,8 @@ class JEPATrainer:
         self.weight_decay = self.training_config['weight_decay']
         self.ema_decay = self.training_config['ema_decay']
         
-        # Device setup
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        # Device setup using set_device
+        self.device = torch.device(set_device())
         
         # Models
         self.encoder = None
@@ -171,7 +172,7 @@ class JEPATrainer:
             Loss value for this batch
         """
         state, next_state, action, reward = batch
-        
+
         # Move to device
         state = state.to(self.device)
         next_state = next_state.to(self.device)
@@ -220,7 +221,7 @@ class JEPATrainer:
             Loss value for this batch
         """
         state, next_state, action, reward = batch
-        
+
         # Move to device
         state = state.to(self.device)
         next_state = next_state.to(self.device)
