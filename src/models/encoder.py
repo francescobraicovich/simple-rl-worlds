@@ -215,6 +215,23 @@ class VideoViT(nn.Module):
             ) for i in range(encoder_num_layers)
         ])
         self.norm = nn.LayerNorm(embed_dim)
+        # Initialize weights
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        # Initialize linear layers
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        # Initialize conv3d layers
+        elif isinstance(m, nn.Conv3d):
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        # Initialize embeddings
+        elif isinstance(m, nn.Embedding):
+            nn.init.normal_(m.weight, mean=0.0, std=0.02)
 
     def forward(self, x):
         # x: [B, 1, T, H, W]

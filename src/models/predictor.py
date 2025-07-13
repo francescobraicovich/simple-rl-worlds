@@ -49,6 +49,23 @@ class LatentDynamicsPredictor(nn.Module):
             nn.LayerNorm(embed_dim),
             nn.Linear(embed_dim, embed_dim)
         )
+        # Initialize weights
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        # Initialize linear layers
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        # Initialize conv3d layers
+        elif isinstance(m, nn.Conv3d):
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        # Initialize embeddings
+        elif isinstance(m, nn.Embedding):
+            nn.init.normal_(m.weight, mean=0.0, std=0.02)
 
     def forward(self, x: torch.Tensor, a: torch.LongTensor) -> torch.Tensor:
         """
@@ -60,8 +77,9 @@ class LatentDynamicsPredictor(nn.Module):
         """
         B, T, E = x.shape
         
+        # 1. Embed action and prepend as the first token
         a_emb = self.action_embed(a).unsqueeze(1)  # Shape: [B, 1, E]
-        x = x + a_emb  # Add action embedding to all frame latents
+        x = torch.cat((a_emb, x), dim=1)  # Shape: [B, T + 1, E]
 
         # 2. Process with Transformer blocks (using rotary embeddings and causal attention)
         for blk in self.blocks:
