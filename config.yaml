@@ -25,7 +25,7 @@ data_collection:
     n_envs: 10 # Number of parallel environments for PPO training (default: CPU count)
     action_repetition_k: 4
     learning_rate: 0.0003
-    total_train_timesteps: 1000000 # Timesteps to train PPO before data collection (reduced for testing)
+    total_train_timesteps: 3000000 # Timesteps to train PPO before data collection (reduced for testing)
     n_steps: 32       # PPO n_steps parameter
     batch_size: 128      # PPO batch_size parameter
     n_epochs: 6         # PPO n_epochs parameter
