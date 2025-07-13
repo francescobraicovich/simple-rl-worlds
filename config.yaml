@@ -35,7 +35,7 @@ data_collection:
     additional_log_std_noise: 0.0
     policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
 
-embed_dim: 128 # Dimension of the embedding space for the transformer model
+embed_dim: 256 # Dimension of the embedding space for the transformer model
 
 training:
   main_loops:
