@@ -14,7 +14,7 @@ data_and_patching:
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 5
+  num_episodes: 200
   max_steps_per_episode: 150
   random_action_percentage: 0.1 # Percentage of actions to be random (0.0 = no random actions)
   load_path: "assault_rep_4.pth"
@@ -25,7 +25,7 @@ data_collection:
     n_envs: 10 # Number of parallel environments for PPO training (default: CPU count)
     action_repetition_k: 4
     learning_rate: 0.0003
-    total_train_timesteps: 100 # Timesteps to train PPO before data collection (reduced for testing)
+    total_train_timesteps: 1000000 # Timesteps to train PPO before data collection (reduced for testing)
     n_steps: 32       # PPO n_steps parameter
     batch_size: 128      # PPO batch_size parameter
     n_epochs: 6         # PPO n_epochs parameter
@@ -39,13 +39,13 @@ embed_dim: 128 # Dimension of the embedding space for the transformer model
 
 training:
   main_loops:
-    num_epochs: 5 # Number of epochs for training
+    num_epochs: 15 # Number of epochs for training
     batch_size: 64 # Batch size for training
     learning_rate: 0.0001 # Learning rate for the optimizer
     weight_decay: 0.0001 # Weight decay for the optimizer
     ema_decay: 0.999 # Exponential moving average decay for model parameters
   jepa_decoder:
-    num_epochs: 5 # Number of epochs for the JEPA decoder training
+    num_epochs: 15 # Number of epochs for the JEPA decoder training
     batch_size: 64 # Batch size for the JEPA decoder training
     learning_rate: 0.0001 # Learning rate for the JEPA decoder optimizer
     weight_decay: 0.0001 # Weight decay for the JEPA decoder optimizer
