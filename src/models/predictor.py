@@ -60,9 +60,8 @@ class LatentDynamicsPredictor(nn.Module):
         """
         B, T, E = x.shape
         
-        # 1. Embed action and prepend as the first token
         a_emb = self.action_embed(a).unsqueeze(1)  # Shape: [B, 1, E]
-        x = torch.cat((a_emb, x), dim=1)  # Shape: [B, T + 1, E]
+        x = x + a_emb  # Add action embedding to all frame latents
 
         # 2. Process with Transformer blocks (using rotary embeddings and causal attention)
         for blk in self.blocks:
