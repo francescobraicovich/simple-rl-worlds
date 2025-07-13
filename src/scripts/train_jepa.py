@@ -63,6 +63,7 @@ class JEPATrainer:
         self.learning_rate = self.training_config['learning_rate']
         self.weight_decay = self.training_config['weight_decay']
         self.ema_decay = self.training_config['ema_decay']
+        self.gradient_clipping = self.training_config.get('gradient_clipping', None)
         
         # Device setup using set_device
         self.device = torch.device(set_device())
@@ -170,6 +171,12 @@ class JEPATrainer:
         
         # Backward pass
         loss.backward()
+        # Gradient clipping if configured
+        if self.gradient_clipping is not None:
+            torch.nn.utils.clip_grad_norm_(
+                list(self.encoder.parameters()) + list(self.predictor.parameters()),
+                self.gradient_clipping
+            )
         self.optimizer.step()
         
         # Update target encoder with EMA

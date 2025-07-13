@@ -71,6 +71,7 @@ class DynamicsRewardPredictorTrainer:
         self.batch_size = self.training_config['batch_size']
         self.learning_rate = self.training_config['learning_rate']
         self.weight_decay = self.training_config['weight_decay']
+        self.gradient_clipping = self.training_config.get('gradient_clipping', None)
         
         # Device setup using set_device
         self.device = torch.device(set_device())
@@ -206,6 +207,12 @@ class DynamicsRewardPredictorTrainer:
         
         # Backward pass (only reward predictor parameters will be updated)
         loss.backward()
+        # Gradient clipping if configured
+        if self.gradient_clipping is not None:
+            torch.nn.utils.clip_grad_norm_(
+                self.reward_predictor.parameters(),
+                self.gradient_clipping
+            )
         self.optimizer.step()
         
         return loss.item()
