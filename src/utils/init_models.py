@@ -147,7 +147,13 @@ def init_reward_predictor(config_path: str = None) -> RewardPredictor:
     reward_predictor = RewardPredictor(
         embedding_dim=config['embed_dim'],
         internal_embedding_dim=reward_predictor_config['internal_embedding_dim'],
-        num_heads=reward_predictor_config['num_heads']
+        num_heads=reward_predictor_config['num_heads'],
+        num_attention_layers=reward_predictor_config.get('num_attention_layers', 1),
+        mlp_hidden_layers=reward_predictor_config.get('mlp_hidden_layers', None),
+        dropout=reward_predictor_config.get('dropout', 0.1),
+        attention_dropout=reward_predictor_config.get('attention_dropout', 0.1),
+        use_layer_norm=reward_predictor_config.get('use_layer_norm', True),
+        activation=reward_predictor_config.get('activation', 'relu')
     )
     
     return reward_predictor

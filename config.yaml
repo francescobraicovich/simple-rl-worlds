@@ -84,8 +84,14 @@ models:
     attention_dropout: 0.1
     decoder_drop_path_rate: 0.1
   reward_predictor:
-    internal_embedding_dim: 32
-    num_heads: 4
+    internal_embedding_dim: 128
+    num_heads: 8
+    num_attention_layers: 3
+    mlp_hidden_layers: [256, 128, 64]
+    dropout: 0.1
+    attention_dropout: 0.1
+    use_layer_norm: true
+    activation: "gelu"
 
 
 # Wandb configuration for experiment tracking
