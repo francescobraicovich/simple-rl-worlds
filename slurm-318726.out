@@ -1,0 +1,35 @@
+Running on node: gnode02
+Using 4 CPU cores
+CUDA devices available:
+Sun Jul 13 18:18:18 2025       
++---------------------------------------------------------------------------------------+
+| NVIDIA-SMI 530.30.02              Driver Version: 530.30.02    CUDA Version: 12.1     |
+|-----------------------------------------+----------------------+----------------------+
+| GPU  Name                  Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp  Perf            Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
+|                                         |                      |               MIG M. |
+|=========================================+======================+======================|
+|   0  NVIDIA A100 80GB PCIe           On | 00000000:65:00.0 Off |                    0 |
+| N/A   29C    P0               42W / 300W|      0MiB / 81920MiB |      0%      Default |
+|                                         |                      |             Disabled |
++-----------------------------------------+----------------------+----------------------+
+                                                                                         
++---------------------------------------------------------------------------------------+
+| Processes:                                                                            |
+|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
+|        ID   ID                                                             Usage      |
+|=======================================================================================|
+|  No running processes found                                                           |
++---------------------------------------------------------------------------------------+
+2025-07-13 18:18:24,084 - INFO - Loading validation data...
+Warning: Dataset not found at datasets/assault_rep_4.pth. Proceeding to collect new data.
+Traceback (most recent call last):
+  File "/home/3157425/rl-worlds/simple-rl-worlds/src/scripts/representation_metrics/analyse_smoothness.py", line 241, in <module>
+    main()
+  File "/home/3157425/rl-worlds/simple-rl-worlds/src/scripts/representation_metrics/analyse_smoothness.py", line 203, in main
+    _, val_dataloader = data_pipeline.run_pipeline()
+  File "/home/3157425/rl-worlds/simple-rl-worlds/src/scripts/collect_load_data.py", line 433, in run_pipeline
+    self.load_existing_data()        
+  File "/home/3157425/rl-worlds/simple-rl-worlds/src/scripts/collect_load_data.py", line 340, in load_existing_data
+    raise RuntimeError(
+RuntimeError: No existing datasets found. Please run data collection first using the data_collection stage of the pipeline or run collect_load_data.py standalone.

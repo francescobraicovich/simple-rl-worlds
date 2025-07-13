@@ -1,0 +1,27 @@
+Running on node: gnode02
+Using 4 CPU cores
+CUDA devices available:
+Sun Jul 13 16:27:14 2025       
++---------------------------------------------------------------------------------------+
+| NVIDIA-SMI 530.30.02              Driver Version: 530.30.02    CUDA Version: 12.1     |
+|-----------------------------------------+----------------------+----------------------+
+| GPU  Name                  Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp  Perf            Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
+|                                         |                      |               MIG M. |
+|=========================================+======================+======================|
+|   0  NVIDIA A100 80GB PCIe           On | 00000000:65:00.0 Off |                    0 |
+| N/A   31C    P0               42W / 300W|      0MiB / 81920MiB |      0%      Default |
+|                                         |                      |             Disabled |
++-----------------------------------------+----------------------+----------------------+
+                                                                                         
++---------------------------------------------------------------------------------------+
+| Processes:                                                                            |
+|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
+|        ID   ID                                                             Usage      |
+|=======================================================================================|
+|  No running processes found                                                           |
++---------------------------------------------------------------------------------------+
+Traceback (most recent call last):
+  File "/home/3157425/rl-worlds/simple-rl-worlds/src/scripts/representation_metrics/analyse_smoothness.py", line 44, in <module>
+    import seaborn as sns
+ModuleNotFoundError: No module named 'seaborn'

@@ -1,0 +1,36 @@
+Using Python at: /home/3157425/.conda/envs/rlworlds/bin/python
+Python 3.13.5
+GLIBCXX_3.4.30 not found!
+Running on node: gnode02
+Using 4 CPU cores
+CUDA devices available:
+Sun Jul 13 14:23:10 2025       
++---------------------------------------------------------------------------------------+
+| NVIDIA-SMI 530.30.02              Driver Version: 530.30.02    CUDA Version: 12.1     |
+|-----------------------------------------+----------------------+----------------------+
+| GPU  Name                  Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp  Perf            Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
+|                                         |                      |               MIG M. |
+|=========================================+======================+======================|
+|   0  NVIDIA A100 80GB PCIe           On | 00000000:65:00.0 Off |                    0 |
+| N/A   29C    P0               42W / 300W|      0MiB / 81920MiB |      0%      Default |
+|                                         |                      |             Disabled |
++-----------------------------------------+----------------------+----------------------+
+                                                                                         
++---------------------------------------------------------------------------------------+
+| Processes:                                                                            |
+|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
+|        ID   ID                                                             Usage      |
+|=======================================================================================|
+|  No running processes found                                                           |
++---------------------------------------------------------------------------------------+
+
+Running stage: data_collection
+ERROR: ld.so: object '/home/3157425/miniconda3/envs/rlworlds/lib/libstdc++.so.6' from LD_PRELOAD cannot be preloaded (cannot open shared object file): ignored.
+Traceback (most recent call last):
+  File "/home/3157425/rl-worlds/simple-rl-worlds/src/scripts/collect_load_data.py", line 6, in <module>
+    import torch
+  File "/home/3157425/.conda/envs/rlworlds/lib/python3.13/site-packages/torch/__init__.py", line 405, in <module>
+    from torch._C import *  # noqa: F403
+    ^^^^^^^^^^^^^^^^^^^^^^
+ImportError: /lib64/libstdc++.so.6: version `GLIBCXX_3.4.30' not found (required by /home/3157425/.conda/envs/rlworlds/lib/python3.13/site-packages/torch/../../../libtorch_python.so)

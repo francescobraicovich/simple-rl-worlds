@@ -1,0 +1,161 @@
+Running on node: gnode02
+Using 4 CPU cores
+CUDA devices available:
+Mon Jul 14 00:54:15 2025       
++---------------------------------------------------------------------------------------+
+| NVIDIA-SMI 530.30.02              Driver Version: 530.30.02    CUDA Version: 12.1     |
+|-----------------------------------------+----------------------+----------------------+
+| GPU  Name                  Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp  Perf            Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
+|                                         |                      |               MIG M. |
+|=========================================+======================+======================|
+|   0  NVIDIA A100 80GB PCIe           On | 00000000:17:00.0 Off |                    0 |
+| N/A   31C    P0               45W / 300W|      0MiB / 81920MiB |      0%      Default |
+|                                         |                      |             Disabled |
++-----------------------------------------+----------------------+----------------------+
+                                                                                         
++---------------------------------------------------------------------------------------+
+| Processes:                                                                            |
+|  GPU   GI   CI        PID   Type   Process name                            GPU Memory |
+|        ID   ID                                                             Usage      |
+|=======================================================================================|
+|  No running processes found                                                           |
++---------------------------------------------------------------------------------------+
+
+Running stage: model_init
+🚀 MODEL INITIALIZATION AND PARAMETER ANALYSIS
+================================================================================
+Using device: cuda
+
+📊 Initializing models...
+
+1. Initializing Encoder...
+2. Initializing Predictor...
+3. Initializing Decoder...
+4. Initializing Reward Predictor...
+
+✅ All models initialized successfully!
+
+============================================================
+ENCODER MODEL INFORMATION
+============================================================
+Model Class: VideoViT
+Total Parameters: 1.20M (1,195,904)
+Trainable Parameters: 1.20M (1,195,904)
+Non-trainable Parameters: 0 (0)
+
+Model Architecture Summary:
+  Device: cuda:0
+  Dtype: torch.float32
+  Layer Types:
+    DropPath: 12
+    Dropout: 18
+    GELU: 6
+    LayerNorm: 13
+    Linear: 24
+    MLP: 6
+    MultiHeadSelfAttention: 6
+    RotaryEmbedding: 6
+    TransformerBlock: 6
+
+============================================================
+PREDICTOR MODEL INFORMATION
+============================================================
+Model Class: LatentDynamicsPredictor
+Total Parameters: 810.62K (810,624)
+Trainable Parameters: 810.62K (810,624)
+Non-trainable Parameters: 0 (0)
+
+Model Architecture Summary:
+  Device: cuda:0
+  Dtype: torch.float32
+  Layer Types:
+    DropPath: 8
+    Dropout: 12
+    GELU: 4
+    LayerNorm: 9
+    Linear: 17
+    MLP: 4
+    MultiHeadSelfAttention: 4
+    RotaryEmbedding: 4
+    TransformerBlock: 4
+
+============================================================
+DECODER MODEL INFORMATION
+============================================================
+Model Class: HybridConvTransformerDecoder
+Total Parameters: 3.93M (3,926,145)
+Trainable Parameters: 3.93M (3,926,145)
+Non-trainable Parameters: 0 (0)
+
+Model Architecture Summary:
+  Device: cuda:0
+  Dtype: torch.float32
+  Layer Types:
+    Conv3d: 7
+    DropPath: 3
+    Dropout: 6
+    GELU: 3
+    LayerNorm: 3
+    Linear: 11
+    MultiHeadCrossAttention: 3
+    ResidualConvBlock3D: 3
+    RotaryEmbedding: 3
+    Upsample: 3
+    UpsampleBlock: 3
+
+============================================================
+REWARD PREDICTOR MODEL INFORMATION
+============================================================
+Model Class: RewardPredictor
+Total Parameters: 307.20K (307,201)
+Trainable Parameters: 307.20K (307,201)
+Non-trainable Parameters: 0 (0)
+
+Model Architecture Summary:
+  Device: cuda:0
+  Dtype: torch.float32
+  Layer Types:
+    Dropout: 4
+    GELU: 3
+    LayerNorm: 6
+    Linear: 6
+    ModuleList: 2
+    MultiheadAttention: 3
+    NonDynamicallyQuantizableLinear: 3
+
+============================================================
+SUMMARY - ALL MODELS COMBINED
+============================================================
+Total Parameters (All Models): 6.24M (6,239,874)
+Trainable Parameters (All Models): 6.24M (6,239,874)
+Non-trainable Parameters (All Models): 0 (0)
+
+Parameter Distribution:
+  Encoder: 1.20M (19.2%)
+  Predictor: 810.62K (13.0%)
+  Decoder: 3.93M (62.9%)
+  Reward Predictor: 307.20K (4.9%)
+
+🎉 Model initialization completed successfully!
+================================================================================
+
+Running stage: data_collection
+Loading dataset from datasets/assault_rep_4.pth...
+Successfully loaded PPO-collected dataset for 'ALE/Assault-v5'.
+Data loaded: 44277 training samples, 10913 validation samples
+len(train_dataset):  44277
+
+✓ Data collection and loading completed successfully!
+✓ Training DataLoader ready with 691 batches
+✓ Validation DataLoader ready with 171 batches
+
+Running stage: encoder_decoder
+wandb: Currently logged in as: francesco-braicovich (francesco-braicovich-bocconi-university) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.21.0
+wandb: Run data is saved locally in /home/3157425/rl-worlds/simple-rl-worlds/wandb/run-20250714_005431-u4uiwetq
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run encoder-decoder-20250714-005431
+wandb: ⭐️ View project at https://wandb.ai/francesco-braicovich-bocconi-university/simple-rl-worlds
+wandb: 🚀 View run at https://wandb.ai/francesco-braicovich-bocconi-university/simple-rl-worlds/runs/u4uiwetq
+slurmstepd: error: *** JOB 318989 ON gnode02 CANCELLED AT 2025-07-14T01:06:21 ***
