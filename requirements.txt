@@ -2,13 +2,9 @@ gymnasium
 torch
 torchvision
 numpy
-einops
 pyyaml
 matplotlib
 ale-py
-gym
 stable-baselines3
-stable-baselines3[extra]
 scipy
-scikit-learn
 wandb
