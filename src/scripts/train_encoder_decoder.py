@@ -21,7 +21,6 @@ import sys
 import time
 from pathlib import Path
 from typing import Tuple, Optional
-import logging
 
 import torch
 import torch.nn as nn
@@ -33,7 +32,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.utils.init_models import init_encoder, init_predictor, init_decoder, load_config
-from src.scripts.collect_load_data import DataCollectionPipeline
+from src.scripts.collect_load_data import DataLoadingPipeline
 from src.utils.set_device import set_device
 
 
@@ -87,38 +86,12 @@ class EncoderDecoderTrainer:
         self.checkpoint_dir = Path("weights/encoder_decoder")
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
-        # Setup logging
-        self._setup_logging()
-        
-    def _setup_logging(self):
-        """Configure logging for the trainer."""
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler('training.log'),
-                logging.StreamHandler()
-            ]
-        )
-        self.logger = logging.getLogger(__name__)
-        
     def initialize_models(self):
         """Initialize encoder, predictor, and decoder models."""
-        self.logger.info("Initializing models...")
-        
         # Initialize all models
         self.encoder = init_encoder(self.config_path).to(self.device)
         self.predictor = init_predictor(self.config_path).to(self.device)
         self.decoder = init_decoder(self.config_path).to(self.device)
-        
-        self.logger.info(f"Encoder parameters: {sum(p.numel() for p in self.encoder.parameters()):,}")
-        self.logger.info(f"Predictor parameters: {sum(p.numel() for p in self.predictor.parameters()):,}")
-        self.logger.info(f"Decoder parameters: {sum(p.numel() for p in self.decoder.parameters()):,}")
-        
-        total_params = (sum(p.numel() for p in self.encoder.parameters()) +
-                       sum(p.numel() for p in self.predictor.parameters()) +
-                       sum(p.numel() for p in self.decoder.parameters()))
-        self.logger.info(f"Total parameters: {total_params:,}")
         
     def initialize_optimizer(self):
         """Initialize the AdamW optimizer for all trainable parameters."""
@@ -133,32 +106,17 @@ class EncoderDecoderTrainer:
             weight_decay=self.weight_decay
         )
         
-        self.logger.info(f"Optimizer initialized with lr={self.learning_rate}, weight_decay={self.weight_decay}")
-        
     def load_data(self):
-        """Load training and validation data using DataCollectionPipeline."""
-        self.logger.info("Loading data...")
-        
-        # Initialize data collection pipeline
-        pipeline = DataCollectionPipeline(
+        """Load training and validation data using DataLoadingPipeline."""
+        # Initialize data loading pipeline (loads existing data only)
+        pipeline = DataLoadingPipeline(
             batch_size=self.batch_size,
             config_path=self.config_path
         )
 
-        # Run the full pipeline to get dataloaders
-        self.train_dataloader, self.val_dataloader = pipeline.run_full_pipeline()
+        # Run the pipeline to get dataloaders from existing data
+        self.train_dataloader, self.val_dataloader = pipeline.run_pipeline()
         
-        # Update batch size in dataloaders if needed
-        if self.train_dataloader.batch_size != self.batch_size:
-            self.logger.warning(f"Dataloader batch size ({self.train_dataloader.batch_size}) "
-                                f"differs from config batch size ({self.batch_size})")
-            
-        self.logger.info(f"Train batches: {len(self.train_dataloader)}")
-        if self.val_dataloader:
-            self.logger.info(f"Validation batches: {len(self.val_dataloader)}")
-        else:
-            self.logger.info("No validation data available")
-                
     def train_step(self, batch: Tuple[torch.Tensor, ...]) -> float:
         """
         Perform a single training step with end-to-end reconstruction.
@@ -324,12 +282,8 @@ class EncoderDecoderTrainer:
             torch.save(self.predictor.state_dict(), self.checkpoint_dir / "best_predictor.pth")
             torch.save(self.decoder.state_dict(), self.checkpoint_dir / "best_decoder.pth")
             
-            self.logger.info(f"New best validation loss: {val_loss:.6f} - saved checkpoint")
-            
     def train(self):
         """Run the complete end-to-end training loop."""
-        self.logger.info("Starting Encoder-Decoder training...")
-        
         # Initialize everything
         self.initialize_models()
         self.initialize_optimizer()
@@ -344,9 +298,6 @@ class EncoderDecoderTrainer:
                 name=f"encoder-decoder-{time.strftime('%Y%m%d-%H%M%S')}",
                 config=self.config
             )
-            self.logger.info("Wandb initialized")
-        else:
-            self.logger.info("Wandb not configured or disabled")
         
         # Training loop
         for epoch in range(self.num_epochs):
@@ -373,21 +324,15 @@ class EncoderDecoderTrainer:
             if wandb.run is not None:
                 wandb.log(log_dict)
             
-            # Terminal output (minimal)
-            if val_loss is not None:
-                self.logger.info(f"Epoch {epoch+1}/{self.num_epochs} - "
-                               f"Train Reconstruction Loss: {train_loss:.6f}, "
-                               f"Val Reconstruction Loss: {val_loss:.6f}")
-            else:
-                self.logger.info(f"Epoch {epoch+1}/{self.num_epochs} - "
-                               f"Train Reconstruction Loss: {train_loss:.6f}")
-            
             # Save checkpoint
             self.save_checkpoint(epoch, train_loss, val_loss)
+
+            # Print average train and validation loss
+            if val_loss is not None:
+                print(f"Epoch {epoch+1}/{self.num_epochs} - Train Loss: {train_loss:.6f}, Validation Loss: {val_loss:.6f}")
+            else:
+                print(f"Epoch {epoch+1}/{self.num_epochs} - Train Loss: {train_loss:.6f}, Validation Loss: N/A")
             
-        self.logger.info("End-to-end training completed!")
-        
-        # Close wandb run
         if wandb.run is not None:
             wandb.finish()
 

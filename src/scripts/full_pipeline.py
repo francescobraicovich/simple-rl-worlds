@@ -19,7 +19,6 @@ import os
 import sys
 import subprocess
 import argparse
-import logging
 import time
 from pathlib import Path
 from typing import List
@@ -55,6 +54,11 @@ class FullPipelineRunner:
         # Define the training pipeline stages in order
         self.pipeline_stages = [
             {
+                'name': 'data_collection',
+                'script': 'collect_load_data.py',
+                'description': 'Collect or load training data using PPO agents'
+            },
+            {
                 'name': 'encoder_decoder',
                 'script': 'train_encoder_decoder.py',
                 'description': 'End-to-end training of encoder, predictor, and decoder'
@@ -81,23 +85,8 @@ class FullPipelineRunner:
             }
         ]
         
-        # Setup logging
-        self._setup_logging()
-        
         # Get the scripts directory path
         self.scripts_dir = Path(__file__).parent
-        
-    def _setup_logging(self):
-        """Configure logging for the pipeline runner."""
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler('full_pipeline.log'),
-                logging.StreamHandler()
-            ]
-        )
-        self.logger = logging.getLogger(__name__)
         
     def _should_run_stage(self, stage_name: str) -> bool:
         """
@@ -128,7 +117,6 @@ class FullPipelineRunner:
         script_path = self.scripts_dir / script_name
         
         if not script_path.exists():
-            self.logger.error(f"Script not found: {script_path}")
             return False
             
         # Prepare command
@@ -136,9 +124,6 @@ class FullPipelineRunner:
         if self.config_path:
             cmd.extend(['--config', self.config_path])
             
-        self.logger.info(f"Starting stage '{stage_name}': {script_name}")
-        self.logger.info(f"Command: {' '.join(cmd)}")
-        
         start_time = time.time()
         
         try:
@@ -153,9 +138,8 @@ class FullPipelineRunner:
             
             # Stream output in real-time
             for line in iter(process.stdout.readline, ''):
-                if line.strip():
-                    self.logger.info(f"[{stage_name}] {line.strip()}")
-                    
+                print(line, end='')  # Print each line to the console
+                
             process.stdout.close()
             return_code = process.wait()
             
@@ -163,14 +147,12 @@ class FullPipelineRunner:
             duration = end_time - start_time
             
             if return_code == 0:
-                self.logger.info(f"Stage '{stage_name}' completed successfully in {duration:.2f} seconds")
                 return True
             else:
-                self.logger.error(f"Stage '{stage_name}' failed with return code {return_code}")
                 return False
                 
         except Exception as e:
-            self.logger.error(f"Error running stage '{stage_name}': {str(e)}")
+            print(f"Error while running script {script_name}: {e}")
             return False
             
     def run_pipeline(self, fail_fast: bool = True) -> bool:
@@ -183,70 +165,43 @@ class FullPipelineRunner:
         Returns:
             True if all stages completed successfully, False if any stage failed
         """
-        self.logger.info("="*80)
-        self.logger.info("Starting Full Training Pipeline")
-        self.logger.info("="*80)
-        
-        if self.config_path:
-            self.logger.info(f"Using config file: {self.config_path}")
-        else:
-            self.logger.info("Using default configuration")
-            
         if self.only_stages:
-            self.logger.info(f"Running only stages: {', '.join(self.only_stages)}")
+            pass
         elif self.skip_stages:
-            self.logger.info(f"Skipping stages: {', '.join(self.skip_stages)}")
+            pass
         else:
-            self.logger.info("Running all stages")
+            pass
             
         pipeline_start_time = time.time()
         successful_stages = []
         failed_stages = []
         
         for stage in self.pipeline_stages:
+
+            print(f"\nRunning stage: {stage['name']}")
             stage_name = stage['name']
             script_name = stage['script']
             description = stage['description']
             
             if not self._should_run_stage(stage_name):
-                self.logger.info(f"Skipping stage '{stage_name}': {description}")
                 continue
                 
-            self.logger.info(f"\n{'='*60}")
-            self.logger.info(f"Stage: {stage_name}")
-            self.logger.info(f"Description: {description}")
-            self.logger.info(f"Script: {script_name}")
-            self.logger.info(f"{'='*60}")
-            
             success = self._run_script(script_name, stage_name)
             
             if success:
                 successful_stages.append(stage_name)
-                self.logger.info(f"✅ Stage '{stage_name}' completed successfully")
             else:
                 failed_stages.append(stage_name)
-                self.logger.error(f"❌ Stage '{stage_name}' failed")
                 
                 if fail_fast:
-                    self.logger.error(f"Stopping pipeline due to failure in stage '{stage_name}'")
                     break
                     
         pipeline_end_time = time.time()
         total_duration = pipeline_end_time - pipeline_start_time
         
-        # Summary
-        self.logger.info("\n" + "="*80)
-        self.logger.info("Pipeline Execution Summary")
-        self.logger.info("="*80)
-        self.logger.info(f"Total execution time: {total_duration:.2f} seconds")
-        self.logger.info(f"Successful stages ({len(successful_stages)}): {', '.join(successful_stages) if successful_stages else 'None'}")
-        
         if failed_stages:
-            self.logger.error(f"Failed stages ({len(failed_stages)}): {', '.join(failed_stages)}")
-            self.logger.error("❌ Pipeline completed with failures")
             return False
         else:
-            self.logger.info("✅ Pipeline completed successfully!")
             return True
             
     def list_stages(self):
@@ -257,7 +212,6 @@ class FullPipelineRunner:
             print(f"{i}. {stage['name']}")
             print(f"   Script: {stage['script']}")
             print(f"   Description: {stage['description']}")
-            print()
 
 
 def main():
@@ -267,7 +221,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run complete pipeline
+  # Run complete pipeline (including data collection)
   python full_pipeline.py
   
   # Run with custom config
@@ -275,6 +229,12 @@ Examples:
   
   # Run only specific stages
   python full_pipeline.py --only jepa jepa_decoder
+  
+  # Skip data collection if data already exists
+  python full_pipeline.py --skip data_collection
+  
+  # Run only data collection
+  python full_pipeline.py --only data_collection
   
   # Skip specific stages
   python full_pipeline.py --skip encoder_decoder reward_predictor
@@ -291,12 +251,12 @@ Examples:
                        help='Path to config.yaml file')
     
     parser.add_argument('--skip', nargs='+', default=None,
-                       choices=['encoder_decoder', 'jepa', 'jepa_decoder', 
+                       choices=['data_collection', 'encoder_decoder', 'jepa', 'jepa_decoder', 
                                'reward_predictor', 'dynamics_reward_predictor'],
                        help='Stages to skip during execution')
     
     parser.add_argument('--only', nargs='+', default=None,
-                       choices=['encoder_decoder', 'jepa', 'jepa_decoder', 
+                       choices=['data_collection', 'encoder_decoder', 'jepa', 'jepa_decoder', 
                                'reward_predictor', 'dynamics_reward_predictor'],
                        help='Run only these stages (ignores --skip)')
     

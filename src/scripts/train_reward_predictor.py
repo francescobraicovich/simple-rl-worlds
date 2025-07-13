@@ -18,7 +18,6 @@ import sys
 import time
 from pathlib import Path
 from typing import Tuple, Optional
-import logging
 
 import torch
 import torch.nn as nn
@@ -33,7 +32,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.utils.init_models import init_encoder, init_predictor, init_reward_predictor, load_config
-from src.scripts.collect_load_data import DataCollectionPipeline
+from src.scripts.collect_load_data import DataLoadingPipeline
 from src.utils.set_device import set_device
 
 
@@ -96,43 +95,20 @@ class RewardPredictorTrainer:
         # Paths for pre-trained models
         self.pretrained_dir = Path(f"weights/{self.approach}")
         
-        # Setup logging
-        self._setup_logging()
-        
-    def _setup_logging(self):
-        """Configure logging for the trainer."""
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler('training_reward_predictor.log'),
-                logging.StreamHandler()
-            ]
-        )
-        self.logger = logging.getLogger(__name__)
-        
     def initialize_models(self):
         """Initialize encoder, predictor, and reward predictor models."""
-        self.logger.info(f"Initializing models for {self.approach} approach...")
-        
         # Initialize models
         self.encoder = init_encoder(self.config_path).to(self.device)
         self.predictor = init_predictor(self.config_path).to(self.device)
         self.reward_predictor = init_reward_predictor(self.config_path).to(self.device)
         
-        self.logger.info(f"Encoder parameters: {sum(p.numel() for p in self.encoder.parameters()):,}")
-        self.logger.info(f"Predictor parameters: {sum(p.numel() for p in self.predictor.parameters()):,}")
-        self.logger.info(f"Reward predictor parameters: {sum(p.numel() for p in self.reward_predictor.parameters()):,}")
-        
     def load_pretrained_weights(self):
         """Load pre-trained encoder and predictor weights."""
-        self.logger.info(f"Loading pre-trained weights from {self.pretrained_dir}...")
         
         # Load encoder weights
         encoder_path = self.pretrained_dir / "best_encoder.pth"
         if encoder_path.exists():
             self.encoder.load_state_dict(torch.load(encoder_path, map_location=self.device))
-            self.logger.info(f"Loaded encoder weights from {encoder_path}")
         else:
             raise FileNotFoundError(f"Pre-trained encoder not found at {encoder_path}")
             
@@ -140,7 +116,6 @@ class RewardPredictorTrainer:
         predictor_path = self.pretrained_dir / "best_predictor.pth"
         if predictor_path.exists():
             self.predictor.load_state_dict(torch.load(predictor_path, map_location=self.device))
-            self.logger.info(f"Loaded predictor weights from {predictor_path}")
         else:
             raise FileNotFoundError(f"Pre-trained predictor not found at {predictor_path}")
             
@@ -154,8 +129,6 @@ class RewardPredictorTrainer:
         for param in self.predictor.parameters():
             param.requires_grad = False
             
-        self.logger.info("Encoder and predictor set to evaluation mode with gradients disabled")
-        
     def initialize_optimizer(self):
         """Initialize the AdamW optimizer for reward predictor parameters only."""
         # Only optimize reward predictor parameters
@@ -165,31 +138,16 @@ class RewardPredictorTrainer:
             weight_decay=self.weight_decay
         )
         
-        self.logger.info(f"Optimizer initialized with lr={self.learning_rate}, weight_decay={self.weight_decay}")
-        
     def load_data(self):
-        """Load training and validation data using DataCollectionPipeline."""
-        self.logger.info("Loading data...")
-        
-        # Initialize data collection pipeline
-        pipeline = DataCollectionPipeline(
+        """Load training and validation data using DataLoadingPipeline."""
+        # Initialize data loading pipeline (loads existing data only)
+        pipeline = DataLoadingPipeline(
             batch_size=self.batch_size,
             config_path=self.config_path
         )
 
-        # Run the full pipeline to get dataloaders
-        self.train_dataloader, self.val_dataloader = pipeline.run_full_pipeline()
-        
-        # Update batch size in dataloaders if needed
-        if self.train_dataloader.batch_size != self.batch_size:
-            self.logger.warning(f"Dataloader batch size ({self.train_dataloader.batch_size}) "
-                                f"differs from config batch size ({self.batch_size})")
-            
-        self.logger.info(f"Train batches: {len(self.train_dataloader)}")
-        if self.val_dataloader:
-            self.logger.info(f"Validation batches: {len(self.val_dataloader)}")
-        else:
-            self.logger.info("No validation data available")
+        # Run the pipeline to get dataloaders from existing data
+        self.train_dataloader, self.val_dataloader = pipeline.run_pipeline()
                 
     def train_step(self, batch: Tuple[torch.Tensor, ...]) -> float:
         """
@@ -361,13 +319,8 @@ class RewardPredictorTrainer:
             full_checkpoint_path = self.checkpoint_dir / "best_checkpoint.pth"
             torch.save(full_checkpoint, full_checkpoint_path)
             
-            loss_type = "validation" if val_loss is not None else "training"
-            self.logger.info(f"New best {loss_type} loss: {current_loss:.6f} - saved checkpoint")
-            
     def train(self):
         """Run the complete training loop."""
-        self.logger.info(f"Starting reward predictor training with {self.approach} approach...")
-        
         # Initialize everything
         self.initialize_models()
         self.load_pretrained_weights()
@@ -384,9 +337,6 @@ class RewardPredictorTrainer:
                 config={**self.config, 'approach': self.approach},
                 tags=["reward-predictor", self.approach]
             )
-            self.logger.info("Wandb initialized")
-        else:
-            self.logger.info("Wandb not configured or disabled")
         
         # Training loop
         for epoch in range(self.num_epochs):
@@ -413,21 +363,16 @@ class RewardPredictorTrainer:
                 
             if wandb.run is not None:
                 wandb.log(log_dict)
-            
+                
             # Terminal output (minimal)
             if val_loss is not None:
-                self.logger.info(f"Epoch {epoch+1}/{self.num_epochs} - "
-                               f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+                print(f"Epoch {epoch+1}/{self.num_epochs} - Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
             else:
-                self.logger.info(f"Epoch {epoch+1}/{self.num_epochs} - "
-                               f"Train Loss: {train_loss:.6f}")
-            
+                print(f"Epoch {epoch+1}/{self.num_epochs} - Train Loss: {train_loss:.6f}, Val Loss: N/A")
+                
             # Save checkpoint
             self.save_checkpoint(epoch, train_loss, val_loss)
             
-        self.logger.info(f"Reward predictor training with {self.approach} approach completed!")
-        
-        # Close wandb run
         if wandb.run is not None:
             wandb.finish()
 

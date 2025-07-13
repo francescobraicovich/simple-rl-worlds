@@ -19,7 +19,6 @@ import time
 import copy
 from pathlib import Path
 from typing import Tuple, Optional
-import logging
 
 import torch
 import torch.nn as nn
@@ -31,7 +30,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.utils.init_models import init_encoder, init_predictor, load_config
-from src.scripts.collect_load_data import DataCollectionPipeline
+from src.scripts.collect_load_data import DataLoadingPipeline
 from src.utils.set_device import set_device
 
 
@@ -86,25 +85,8 @@ class JEPATrainer:
         self.checkpoint_dir = Path("weights/jepa")
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
-        # Setup logging
-        self._setup_logging()
-        
-    def _setup_logging(self):
-        """Configure logging for the trainer."""
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler('training.log'),
-                logging.StreamHandler()
-            ]
-        )
-        self.logger = logging.getLogger(__name__)
-        
     def initialize_models(self):
         """Initialize encoder, predictor, and target encoder models."""
-        self.logger.info("Initializing models...")
-        
         # Initialize main models
         self.encoder = init_encoder(self.config_path).to(self.device)
         self.predictor = init_predictor(self.config_path).to(self.device)
@@ -116,9 +98,6 @@ class JEPATrainer:
         for param in self.target_encoder.parameters():
             param.requires_grad = False
             
-        self.logger.info(f"Encoder parameters: {sum(p.numel() for p in self.encoder.parameters()):,}")
-        self.logger.info(f"Predictor parameters: {sum(p.numel() for p in self.predictor.parameters()):,}")
-        
     def initialize_optimizer(self):
         """Initialize the AdamW optimizer for trainable parameters."""
         # Combine parameters from encoder and predictor
@@ -130,32 +109,16 @@ class JEPATrainer:
             weight_decay=self.weight_decay
         )
         
-        self.logger.info(f"Optimizer initialized with lr={self.learning_rate}, weight_decay={self.weight_decay}")
-        
     def load_data(self):
-        """Load training and validation data using DataCollectionPipeline."""
-        self.logger.info("Loading data...")
-        
-        # Initialize data collection pipeline
-        pipeline = DataCollectionPipeline(
+        """Load training and validation data using DataLoadingPipeline."""
+        # Initialize data loading pipeline (loads existing data only)
+        pipeline = DataLoadingPipeline(
             batch_size=self.batch_size,
             config_path=self.config_path
         )
 
-        # Run the full pipeline to get dataloaders
-        self.train_dataloader, self.val_dataloader = pipeline.run_full_pipeline()
-        
-        # Update batch size in dataloaders if needed
-        if self.train_dataloader.batch_size != self.batch_size:
-            self.logger.warning(f"Dataloader batch size ({self.train_dataloader.batch_size}) "
-                                f"differs from config batch size ({self.batch_size})")
-            
-        self.logger.info(f"Train batches: {len(self.train_dataloader)}")
-        if self.val_dataloader:
-            self.logger.info(f"Validation batches: {len(self.val_dataloader)}")
-        else:
-            self.logger.info("No validation data available")
-                
+        # Run the pipeline to get dataloaders from existing data
+        self.train_dataloader, self.val_dataloader = pipeline.run_pipeline()
             
     def update_target_encoder(self):
         """Update target encoder weights using Exponential Moving Average (EMA)."""
@@ -335,12 +298,8 @@ class JEPATrainer:
             torch.save(self.encoder.state_dict(), self.checkpoint_dir / "best_encoder.pth")
             torch.save(self.predictor.state_dict(), self.checkpoint_dir / "best_predictor.pth")
             
-            self.logger.info(f"New best validation loss: {val_loss:.6f} - saved checkpoint")
-            
     def train(self):
         """Run the complete training loop."""
-        self.logger.info("Starting JEPA training...")
-        
         # Initialize everything
         self.initialize_models()
         self.initialize_optimizer()
@@ -357,9 +316,6 @@ class JEPATrainer:
                 name=f"jepa-{time.strftime('%Y%m%d-%H%M%S')}",
                 config=self.config
             )
-            self.logger.info("Wandb initialized")
-        else:
-            self.logger.info("Wandb not configured or disabled")
         
         # Training loop
         for epoch in range(self.num_epochs):
@@ -385,20 +341,16 @@ class JEPATrainer:
                 
             if wandb.run is not None:
                 wandb.log(log_dict)
-            
+                
             # Terminal output (minimal)
             if val_loss is not None:
-                self.logger.info(f"Epoch {epoch+1}/{self.num_epochs} - "
-                               f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+                print(f"Epoch {epoch+1}/{self.num_epochs} - Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
             else:
-                self.logger.info(f"Epoch {epoch+1}/{self.num_epochs} - "
-                               f"Train Loss: {train_loss:.6f}")
-            
+                print(f"Epoch {epoch+1}/{self.num_epochs} - Train Loss: {train_loss:.6f}, Val Loss: N/A")
+                
             # Save checkpoint
             self.save_checkpoint(epoch, train_loss, val_loss)
             
-        self.logger.info("Training completed!")
-        
         # Close wandb run
         if wandb.run is not None:
             wandb.finish()

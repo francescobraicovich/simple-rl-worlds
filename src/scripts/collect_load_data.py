@@ -1,8 +1,6 @@
-
 #!/usr/bin/env python3
 import sys
 import argparse
-import logging
 from pathlib import Path
 from typing import Tuple, Optional
 import torch
@@ -12,7 +10,7 @@ from torch.utils.data import DataLoader
 sys.path.append(str(Path(__file__).parent.parent))
 
 from utils.config_utils import load_config
-from data.data_utils import collect_ppo_episodes
+from data.data_utils import collect_ppo_episodes, _load_existing_dataset
 from data.dataset import ExperienceDataset
 
 
@@ -39,21 +37,8 @@ class DataCollectionPipeline:
         self.train_dataloader = None
         self.val_dataloader = None  
         self.batch_size = batch_size
-        
-        # Setup logging
-        self._setup_logging()
-        
-    def _setup_logging(self):
-        """Configure logging for the pipeline."""
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.StreamHandler(sys.stdout),
-                logging.FileHandler('data_collection.log')
-            ]
-        )
-        self.logger = logging.getLogger(__name__)
+
+        # Removed logging setup
         
     def load_configuration(self) -> dict:
         """
@@ -66,14 +51,14 @@ class DataCollectionPipeline:
             FileNotFoundError: If config file doesn't exist
             ValueError: If config validation fails
         """
-        self.logger.info(f"Loading configuration from {self.config_path}")
-        
         self.config = load_config(self.config_path)
+
+        if not isinstance(self.batch_size, int) or self.batch_size <= 0:
+            self.batch_size = self.config['training']['main_loops']['batch_size']
         
         # Validate critical configuration parameters
         self._validate_config()
         
-        self.logger.info("Configuration loaded and validated successfully")
         return self.config
     
     def _validate_config(self):
@@ -118,22 +103,16 @@ class DataCollectionPipeline:
         Returns:
             Tuple of (train_dataset, val_dataset)
         """
-        self.logger.info("Starting data collection pipeline")
-        
         if self.config is None:
             raise RuntimeError("Configuration not loaded. Call load_configuration() first.")
         
         # Collect or load data using the PPO pipeline
         self.train_dataset, self.val_dataset = collect_ppo_episodes(self.config)
 
-        print('dataset lengths: ', len(self.train_dataset), len(self.val_dataset) if self.val_dataset else 0)
+        print(f"Data loaded: {len(self.train_dataset)} training samples, {len(self.val_dataset) if self.val_dataset else 0} validation samples")
         
         # Validate collected data
         self._validate_datasets()
-        
-        self.logger.info("Data collection completed successfully:")
-        self.logger.info(f"  - Training samples: {len(self.train_dataset)}")
-        self.logger.info(f"  - Validation samples: {len(self.val_dataset) if self.val_dataset else 0}")
         
         return self.train_dataset, self.val_dataset
     
@@ -172,8 +151,6 @@ class DataCollectionPipeline:
         Returns:
             Tuple of (train_dataloader, val_dataloader)
         """
-        self.logger.info("Creating PyTorch DataLoaders")
-        
         if self.train_dataset is None:
             raise RuntimeError("No datasets available. Call collect_data() first.")
         
@@ -212,13 +189,6 @@ class DataCollectionPipeline:
                 drop_last=False  # Use all validation data
             )
         
-        self.logger.info("DataLoaders created successfully:")
-        self.logger.info(f"  - Training batches: {len(self.train_dataloader)}")
-        self.logger.info(f"  - Validation batches: {len(self.val_dataloader) if self.val_dataloader else 0}")
-        self.logger.info(f"  - Batch size: {batch_size}")
-        self.logger.info(f"  - Workers: {num_workers}")
-        self.logger.info(f"  - Pin memory: {pin_memory}")
-        
         return self.train_dataloader, self.val_dataloader
     
     def run_full_pipeline(self) -> Tuple[DataLoader, Optional[DataLoader]]:
@@ -233,9 +203,6 @@ class DataCollectionPipeline:
         Returns:
             Tuple of (train_dataloader, val_dataloader)
         """
-        self.logger.info("=" * 60)
-        self.logger.info("STARTING COMPLETE DATA COLLECTION PIPELINE")
-        self.logger.info("=" * 60)
         
         # Step 1: Load configuration
         self.load_configuration()
@@ -246,10 +213,6 @@ class DataCollectionPipeline:
         # Step 3: Create DataLoaders
         train_dataloader, val_dataloader = self.create_dataloaders()
 
-        
-        self.logger.info("=" * 60)
-        self.logger.info("PIPELINE COMPLETED SUCCESSFULLY")
-        self.logger.info("=" * 60)
         
         return train_dataloader, val_dataloader
     
@@ -281,6 +244,198 @@ class DataCollectionPipeline:
         }
         
         return info
+
+
+class DataLoadingPipeline:
+    """
+    Pipeline for loading existing datasets without triggering new data collection.
+    
+    This class is designed to be used by training scripts that assume data has
+    already been collected and just need to load and create dataloaders from
+    existing datasets.
+    """
+    
+    def __init__(self, batch_size: int, config_path: str = "config.yaml"):
+        """
+        Initialize the data loading pipeline.
+        
+        Args:
+            batch_size: Batch size for DataLoaders
+            config_path: Path to the YAML configuration file
+        """
+        self.config_path = config_path
+        self.config = None
+        self.train_dataset = None
+        self.val_dataset = None
+        self.train_dataloader = None
+        self.val_dataloader = None  
+        self.batch_size = batch_size
+        
+        # Removed logging setup
+        
+    def load_configuration(self) -> dict:
+        """
+        Load and validate the configuration file.
+        
+        Returns:
+            Configuration dictionary
+            
+        Raises:
+            FileNotFoundError: If config file doesn't exist
+            ValueError: If config validation fails
+        """
+        self.config = load_config(self.config_path)
+        
+        # Validate critical configuration parameters
+        self._validate_config()
+        
+        return self.config
+        
+    def _validate_config(self):
+        """Validate that all required configuration parameters are present."""
+        required_sections = ['environment', 'data_collection', 'training']
+        
+        for section in required_sections:
+            if section not in self.config:
+                raise ValueError(f"Missing required configuration section: {section}")
+        
+        # Validate environment config
+        env_config = self.config['environment']
+        required_env_params = ['name']
+        for param in required_env_params:
+            if param not in env_config:
+                raise ValueError(f"Missing required environment parameter: {param}")
+            
+        # Validate data and patching config
+        data_and_patching_config = self.config['data_and_patching']
+        required_data_and_patching_params = ['image_height', 'image_width']
+        for param in required_data_and_patching_params:
+            if param not in data_and_patching_config:
+                raise ValueError(f"Missing required data and patching parameter: {param}")
+
+        # Validate data collection config
+        data_config = self.config['data_collection']
+        required_data_params = ['validation_split']
+        for param in required_data_params:
+            if param not in data_config:
+                raise ValueError(f"Missing required data collection parameter: {param}")
+                
+    def load_existing_data(self) -> Tuple[ExperienceDataset, ExperienceDataset]:
+        """
+        Load existing datasets without triggering new data collection.
+        
+        Returns:
+            Tuple of (train_dataset, val_dataset)
+            
+        Raises:
+            RuntimeError: If no existing datasets are found
+        """
+        if self.config is None:
+            raise RuntimeError("Configuration not loaded. Call load_configuration() first.")
+        
+        # Try to load existing data
+        loaded_data = _load_existing_dataset(self.config)
+        
+        if loaded_data is None:
+            raise RuntimeError(
+                "No existing datasets found. Please run data collection first using "
+                "the data_collection stage of the pipeline or run collect_load_data.py standalone."
+            )
+        
+        self.train_dataset, self.val_dataset = loaded_data
+        
+        # Validate loaded data
+        self._validate_datasets()
+        
+        print(f"Data loaded: {len(self.train_dataset)} training samples, {len(self.val_dataset) if self.val_dataset else 0} validation samples")
+        
+        return self.train_dataset, self.val_dataset
+        
+    def _validate_datasets(self):
+        """Validate that the loaded datasets are properly formatted."""
+        if self.train_dataset is None or len(self.train_dataset) == 0:
+            raise ValueError("No training data was loaded")
+        
+        # Check data integrity by sampling a few items
+        sample_state, sample_action, sample_reward, sample_next_state = self.train_dataset[0]
+        
+        # Validate tensor shapes and types
+        expected_shape = (
+            self.config['data_and_patching']['image_height'],
+            self.config['data_and_patching']['image_width']
+        )
+        
+        if sample_state.shape[-2:] != expected_shape:
+            raise ValueError(f"State shape mismatch. Expected {expected_shape}, got {sample_state.shape[-2:]}")
+            
+        if not isinstance(sample_action, torch.Tensor):
+            raise ValueError("Actions must be torch tensors")
+            
+        if not isinstance(sample_reward, torch.Tensor):
+            raise ValueError("Rewards must be torch tensors")
+            
+    def create_dataloaders(self) -> Tuple[DataLoader, Optional[DataLoader]]:
+        """
+        Create optimized PyTorch DataLoaders from the loaded datasets.
+        
+        Returns:
+            Tuple of (train_dataloader, val_dataloader)
+        """
+        if self.train_dataset is None:
+            raise RuntimeError("No datasets available. Call load_existing_data() first.")
+        
+        # Extract training configuration
+        batch_size = self.batch_size
+        num_workers = 0
+        
+        # Determine optimal DataLoader settings
+        pin_memory = torch.cuda.is_available() 
+        persistent_workers = num_workers > 0
+        
+        # Create training DataLoader
+        self.train_dataloader = DataLoader(
+            self.train_dataset,
+            batch_size=batch_size,
+            shuffle=True,  # Important for training stability
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            persistent_workers=persistent_workers,
+            drop_last=True  # Ensures consistent batch sizes
+        )
+        
+        # Create validation DataLoader if validation data exists
+        self.val_dataloader = None
+        if self.val_dataset and len(self.val_dataset) > 0:
+            self.val_dataloader = DataLoader(
+                self.val_dataset,
+                batch_size=batch_size,
+                shuffle=False,  # No shuffling for validation
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+                persistent_workers=persistent_workers,
+                drop_last=False  # Use all validation data
+            )
+        
+        return self.train_dataloader, self.val_dataloader
+        
+    def run_pipeline(self) -> Tuple[DataLoader, Optional[DataLoader]]:
+        """
+        Execute the data loading pipeline (load existing data only).
+        
+        Returns:
+            Tuple of (train_dataloader, val_dataloader)
+        """
+        
+        # Step 1: Load configuration
+        self.load_configuration()
+        
+        # Step 2: Load existing data
+        self.load_existing_data()        
+        
+        # Step 3: Create DataLoaders
+        train_dataloader, val_dataloader = self.create_dataloaders()
+
+        return train_dataloader, val_dataloader
 
 
 def main():

@@ -22,7 +22,6 @@ import sys
 import time
 from pathlib import Path
 from typing import Tuple, Optional
-import logging
 
 import torch
 import torch.nn as nn
@@ -34,7 +33,7 @@ project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.utils.init_models import init_encoder, init_predictor, init_decoder, load_config
-from src.scripts.collect_load_data import DataCollectionPipeline
+from src.scripts.collect_load_data import DataLoadingPipeline
 from src.utils.set_device import set_device
 
 
@@ -89,28 +88,11 @@ class JEPADecoderTrainer:
         self.checkpoint_dir = Path("weights/jepa_decoder")
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
-        # Setup logging
-        self._setup_logging()
-        
-    def _setup_logging(self):
-        """Configure logging for the trainer."""
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler('training_jepa_decoder.log'),
-                logging.StreamHandler()
-            ]
-        )
-        self.logger = logging.getLogger(__name__)
-        
     def initialize_models(self):
         """
         Initialize encoder, predictor, and decoder models.
         Load pre-trained weights for encoder and predictor and freeze them.
         """
-        self.logger.info("Initializing models...")
-        
         # Initialize all models
         self.encoder = init_encoder(self.config_path).to(self.device)
         self.predictor = init_predictor(self.config_path).to(self.device)
@@ -123,38 +105,22 @@ class JEPADecoderTrainer:
         
         if encoder_path.exists():
             self.encoder.load_state_dict(torch.load(encoder_path, map_location=self.device))
-            self.logger.info(f"Loaded pre-trained encoder from {encoder_path}")
         else:
-            self.logger.warning(f"Pre-trained encoder not found at {encoder_path}. Training from scratch.")
+            print(f"Pre-trained encoder not found at {encoder_path}. Training from scratch.")
             
         if predictor_path.exists():
             self.predictor.load_state_dict(torch.load(predictor_path, map_location=self.device))
-            self.logger.info(f"Loaded pre-trained predictor from {predictor_path}")
         else:
-            self.logger.warning(f"Pre-trained predictor not found at {predictor_path}. Training from scratch.")
+            print(f"Pre-trained predictor not found at {predictor_path}. Training from scratch.")
             
         # Freeze encoder and predictor weights
         for param in self.encoder.parameters():
             param.requires_grad = False
         self.encoder.eval() # Set to eval mode to disable dropout/batchnorm updates
-        self.logger.info("Encoder weights frozen.")
         
         for param in self.predictor.parameters():
             param.requires_grad = False
-        self.predictor.eval() # Set to eval mode
-        self.logger.info("Predictor weights frozen.")
-        
-        self.logger.info(f"Encoder parameters: {sum(p.numel() for p in self.encoder.parameters()):,}")
-        self.logger.info(f"Predictor parameters: {sum(p.numel() for p in self.predictor.parameters()):,}")
-        self.logger.info(f"Decoder parameters: {sum(p.numel() for p in self.decoder.parameters()):,}")
-        
-        total_params = (sum(p.numel() for p in self.encoder.parameters()) +
-                       sum(p.numel() for p in self.predictor.parameters()) +
-                       sum(p.numel() for p in self.decoder.parameters()))
-        self.logger.info(f"Total parameters: {total_params:,}")
-        
-        trainable_params_count = sum(p.numel() for p in self.decoder.parameters() if p.requires_grad)
-        self.logger.info(f"Trainable parameters (Decoder only): {trainable_params_count:,}")
+        self.predictor.eval() # Set to eval mode 
         
     def initialize_optimizer(self):
         """
@@ -167,34 +133,19 @@ class JEPADecoderTrainer:
             weight_decay=self.weight_decay
         )
         
-        self.logger.info(f"Optimizer initialized for Decoder only with lr={self.learning_rate}, weight_decay={self.weight_decay}")
-        
     def load_data(self):
         """
-        Load training and validation data using DataCollectionPipeline.
+        Load training and validation data using DataLoadingPipeline.
         """
-        self.logger.info("Loading data...")
-        
-        # Initialize data collection pipeline
-        pipeline = DataCollectionPipeline(
+        # Initialize data loading pipeline (loads existing data only)
+        pipeline = DataLoadingPipeline(
             batch_size=self.batch_size,
             config_path=self.config_path
         )
 
-        # Run the full pipeline to get dataloaders
-        self.train_dataloader, self.val_dataloader = pipeline.run_full_pipeline()
+        # Run the pipeline to get dataloaders from existing data
+        self.train_dataloader, self.val_dataloader = pipeline.run_pipeline()
         
-        # Update batch size in dataloaders if needed
-        if self.train_dataloader.batch_size != self.batch_size:
-            self.logger.warning(f"Dataloader batch size ({self.train_dataloader.batch_size}) "
-                                f"differs from config batch size ({self.batch_size})")
-            
-        self.logger.info(f"Train batches: {len(self.train_dataloader)}")
-        if self.val_dataloader:
-            self.logger.info(f"Validation batches: {len(self.val_dataloader)}")
-        else:
-            self.logger.info("No validation data available")
-                
     def train_step(self, batch: Tuple[torch.Tensor, ...]) -> float:
         """
         Perform a single training step for the decoder.
@@ -356,14 +307,10 @@ class JEPADecoderTrainer:
             # Also save individual model state dict for easy loading
             torch.save(self.decoder.state_dict(), self.checkpoint_dir / "best_decoder.pth")
             
-            self.logger.info(f"New best validation loss: {val_loss:.6f} - saved decoder checkpoint")
-            
     def train(self):
         """
         Run the complete decoder-only training loop.
         """
-        self.logger.info("Starting JEPA Decoder training...")
-        
         # Initialize everything
         self.initialize_models()
         self.initialize_optimizer()
@@ -378,9 +325,6 @@ class JEPADecoderTrainer:
                 name=f"jepa-decoder-{time.strftime('%Y%m%d-%H%M%S')}",
                 config=self.config
             )
-            self.logger.info("Wandb initialized")
-        else:
-            self.logger.info("Wandb not configured or disabled")
         
         # Training loop
         for epoch in range(self.num_epochs):
@@ -406,21 +350,16 @@ class JEPADecoderTrainer:
                 
             if wandb.run is not None:
                 wandb.log(log_dict)
-            
+                
             # Terminal output (minimal)
             if val_loss is not None:
-                self.logger.info(f"Epoch {epoch+1}/{self.num_epochs} - "
-                               f"Train Reconstruction Loss: {train_loss:.6f}, "
-                               f"Val Reconstruction Loss: {val_loss:.6f}")
+                print(f"Epoch {epoch+1}/{self.num_epochs} - Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
             else:
-                self.logger.info(f"Epoch {epoch+1}/{self.num_epochs} - "
-                               f"Train Reconstruction Loss: {train_loss:.6f}")
-            
+                print(f"Epoch {epoch+1}/{self.num_epochs} - Train Loss: {train_loss:.6f}, Val Loss: N/A")
+                
             # Save checkpoint
             self.save_checkpoint(epoch, train_loss, val_loss)
             
-        self.logger.info("JEPA Decoder training completed!")
-        
         # Close wandb run
         if wandb.run is not None:
             wandb.finish()
