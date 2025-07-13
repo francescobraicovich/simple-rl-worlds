@@ -145,6 +145,8 @@ def create_plots(results: dict, k_values: list[int], output_path: Path):
     plt.style.use('seaborn-v0_8-whitegrid')
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7), sharey=True)
     fig.suptitle('Neighborhood Preservation Analysis: JEPA vs. Encoder-Decoder', fontsize=16, y=0.98)
+    # Use consistent color scheme matching smoothness analysis
+    colors = {ModelType.JEPA: 'royalblue', ModelType.ENCODER_DECODER: 'coral'}
 
     model_types = list(results.keys())
     n_models = len(model_types)
@@ -155,7 +157,7 @@ def create_plots(results: dict, k_values: list[int], output_path: Path):
     ax1.set_title('Trustworthiness', fontsize=12)
     for i, model_type in enumerate(model_types):
         scores = [results[model_type][k]['T'] for k in k_values]
-        ax1.bar(x + i * width - width/2, scores, width, label=model_type.upper())
+        ax1.bar(x + i * width - width/2, scores, width, label=model_type.upper(), color=colors[model_type])
     
     ax1.set_ylabel('Score')
     ax1.set_xlabel('Neighborhood Size (k)')
@@ -168,7 +170,7 @@ def create_plots(results: dict, k_values: list[int], output_path: Path):
     ax2.set_title('Continuity', fontsize=12)
     for i, model_type in enumerate(model_types):
         scores = [results[model_type][k]['C'] for k in k_values]
-        ax2.bar(x + i * width - width/2, scores, width, label=model_type.upper())
+        ax2.bar(x + i * width - width/2, scores, width, label=model_type.upper(), color=colors[model_type])
 
     ax2.set_xlabel('Neighborhood Size (k)')
     ax2.set_xticks(x)
