@@ -15,8 +15,8 @@ data_and_patching:
 # --- Data Collection & Dataset Management ---
 data_collection:
   num_episodes: 5
-  max_steps_per_episode: 20
-  random_action_percentage: 0.0 # Percentage of actions to be random (0.0 = no random actions)
+  max_steps_per_episode: 150
+  random_action_percentage: 0.1 # Percentage of actions to be random (0.0 = no random actions)
   load_path: "assault_rep_4.pth"
   filename: "assault_rep_4.pth"
   validation_split: 0.2
@@ -27,38 +27,38 @@ data_collection:
     learning_rate: 0.0003
     total_train_timesteps: 100 # Timesteps to train PPO before data collection (reduced for testing)
     n_steps: 32       # PPO n_steps parameter
-    batch_size: 256      # PPO batch_size parameter
-    n_epochs: 5         # PPO n_epochs parameter
+    batch_size: 128      # PPO batch_size parameter
+    n_epochs: 6         # PPO n_epochs parameter
     gamma: 0.99         # PPO gamma parameter
     gae_lambda: 0.95    # PPO gae_lambda parameter
     clip_range: 0.3     # PPO clip_range parameter
     additional_log_std_noise: 0.0
     policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
 
-embed_dim: 16 # Dimension of the embedding space for the transformer model
+embed_dim: 128 # Dimension of the embedding space for the transformer model
 
 training:
   main_loops:
-    num_epochs: 10 # Number of epochs for training
-    batch_size: 32 # Batch size for training
+    num_epochs: 5 # Number of epochs for training
+    batch_size: 64 # Batch size for training
     learning_rate: 0.0001 # Learning rate for the optimizer
     weight_decay: 0.0001 # Weight decay for the optimizer
     ema_decay: 0.999 # Exponential moving average decay for model parameters
   jepa_decoder:
-    num_epochs: 10 # Number of epochs for the JEPA decoder training
-    batch_size: 32 # Batch size for the JEPA decoder training
+    num_epochs: 5 # Number of epochs for the JEPA decoder training
+    batch_size: 64 # Batch size for the JEPA decoder training
     learning_rate: 0.0001 # Learning rate for the JEPA decoder optimizer
     weight_decay: 0.0001 # Weight decay for the JEPA decoder optimizer
   reward_predictor:
     versions: "both" # Versions of the reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
-    num_epochs: 10 # Number of epochs for the reward predictor training
-    batch_size: 32 # Batch size for the reward predictor training
+    num_epochs: 20 # Number of epochs for the reward predictor training
+    batch_size: 64 # Batch size for the reward predictor training
     learning_rate: 0.0001 # Learning rate for the reward predictor optimizer
     weight_decay: 0.0001 # Weight decay for the reward predictor optimizer
   dynamics_reward_predictor:
     versions: "both" # Versions of the dynamics reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
-    num_epochs: 10 # Number of epochs for the dynamics reward predictor training
-    batch_size: 32 # Batch size for the dynamics reward predictor training
+    num_epochs: 20 # Number of epochs for the dynamics reward predictor training
+    batch_size: 64 # Batch size for the dynamics reward predictor training
     learning_rate: 0.0001 # Learning rate for the dynamics reward predictor optimizer
     weight_decay: 0.0001 # Weight decay for the dynamics reward predictor optimizer
 
