@@ -53,6 +53,7 @@ def _initialize_environment(config: dict):
 
     # if env_name starts with 'ALE-', we need to strip 
     if env_name.startswith('ALE'):
+        print(f"Detected ALE environment: {env_name}. Registering environment.")
         import ale_py
         gym.register_envs(ale_py)
     print(f"Creating environment: {env_name}")
