@@ -54,6 +54,11 @@ class FullPipelineRunner:
         # Define the training pipeline stages in order
         self.pipeline_stages = [
             {
+                'name': 'model_init',
+                'script': 'init_models_info.py',
+                'description': 'Initialize models and display parameter information'
+            },
+            {
                 'name': 'data_collection',
                 'script': 'collect_load_data.py',
                 'description': 'Collect or load training data using PPO agents'
@@ -221,7 +226,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run complete pipeline (including data collection)
+  # Run complete pipeline (including model initialization and data collection)
   python full_pipeline.py
   
   # Run with custom config
@@ -230,8 +235,14 @@ Examples:
   # Run only specific stages
   python full_pipeline.py --only jepa jepa_decoder
   
+  # Skip model initialization if you just want to see training
+  python full_pipeline.py --skip model_init
+  
   # Skip data collection if data already exists
   python full_pipeline.py --skip data_collection
+  
+  # Run only model initialization to check parameter counts
+  python full_pipeline.py --only model_init
   
   # Run only data collection
   python full_pipeline.py --only data_collection
@@ -251,12 +262,12 @@ Examples:
                        help='Path to config.yaml file')
     
     parser.add_argument('--skip', nargs='+', default=None,
-                       choices=['data_collection', 'encoder_decoder', 'jepa', 'jepa_decoder', 
+                       choices=['model_init', 'data_collection', 'encoder_decoder', 'jepa', 'jepa_decoder', 
                                'reward_predictor', 'dynamics_reward_predictor'],
                        help='Stages to skip during execution')
     
     parser.add_argument('--only', nargs='+', default=None,
-                       choices=['data_collection', 'encoder_decoder', 'jepa', 'jepa_decoder', 
+                       choices=['model_init', 'data_collection', 'encoder_decoder', 'jepa', 'jepa_decoder', 
                                'reward_predictor', 'dynamics_reward_predictor'],
                        help='Run only these stages (ignores --skip)')
     
