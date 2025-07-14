@@ -6,16 +6,16 @@ environment:
 
 data_and_patching:
   image_height: 84
-  image_width: 64
+  image_width: 84
   sequence_length: 6
-  patch_size_h: 8              # Patch size for image preprocessing
-  patch_size_w: 8              # Patch size for image preprocessing
+  patch_size_h: 6              # Patch size for image preprocessing
+  patch_size_w: 6              # Patch size for image preprocessing
   patch_size_t: 2              # Temporal patch size for video data
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 10
-  max_steps_per_episode: 256
+  num_episodes: 50
+  max_steps_per_episode: 1024
   random_action_percentage: 0.15 # Percentage of actions to be random (0.0 = no random actions)
   load_path: "breakout_rep_4.pth"
   filename: "breakout_rep_4.pth"
