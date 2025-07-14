@@ -1,14 +1,34 @@
 import torch
 import torch.nn as nn
 
-# Reuse core building blocks (assumed available in the same package)
-from .encoder import TransformerBlock
+from .encoder import TransformerBlock, MultiHeadCrossAttention
+
+
+class CrossAttentionLayer(nn.Module):
+    """
+    A layer that combines self-attention with cross-attention.
+    """
+    def __init__(self, embed_dim, num_heads, mlp_ratio=4., drop_rate=0., attn_drop_rate=0., drop_path_rate=0.):
+        super().__init__()
+        self.self_attn = TransformerBlock(
+            embed_dim, num_heads, mlp_ratio, drop_rate, attn_drop_rate, drop_path_rate, causal=True
+        )
+        self.cross_attn = MultiHeadCrossAttention(
+            embed_dim, num_heads, attn_drop_rate, drop_rate
+        )
+        self.norm = nn.LayerNorm(embed_dim)
+
+    def forward(self, x, context):
+        x = self.self_attn(x)
+        # Apply cross-attention with a residual connection
+        x = x + self.cross_attn(self.norm(x), context)
+        return x
+
 
 class LatentDynamicsPredictor(nn.Module):
     """
     Temporal Transformer to predict the next frame's latent representation.
-    It takes a sequence of per-frame latent vectors [B, T, E], prepends an action token,
-    and uses causal attention to predict the next frame.
+    Uses cross-attention to condition on an action vector.
     """
     def __init__(
         self,
@@ -26,69 +46,54 @@ class LatentDynamicsPredictor(nn.Module):
         self.embed_dim = embed_dim
         self.frames_per_clip = frames_per_clip
 
-        # Action embedding to be prepended as a separate token
         self.action_embed = nn.Embedding(num_actions, embed_dim)
 
-        # Transformer blocks with causal attention
         dpr = [x.item() for x in torch.linspace(0, predictor_drop_path_rate, predictor_num_layers)]
         self.blocks = nn.ModuleList([
-            TransformerBlock(
+            CrossAttentionLayer(
                 embed_dim=embed_dim,
                 num_heads=predictor_num_heads,
                 mlp_ratio=mlp_ratio,
                 drop_rate=drop_rate,
                 attn_drop_rate=attn_drop_rate,
-                drop_path_rate=dpr[i],
-                causal=True  # Enable causal masking
+                drop_path_rate=dpr[i]
             )
             for i in range(predictor_num_layers)
         ])
         
-        # Prediction head: LayerNorm + Linear
         self.prediction_head = nn.Sequential(
             nn.LayerNorm(embed_dim),
             nn.Linear(embed_dim, embed_dim)
         )
-        # Initialize weights
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
-        # Initialize linear layers
         if isinstance(m, nn.Linear):
             nn.init.xavier_uniform_(m.weight)
             if m.bias is not None:
                 nn.init.zeros_(m.bias)
-        # Initialize conv3d layers
-        elif isinstance(m, nn.Conv3d):
-            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-            if m.bias is not None:
-                nn.init.zeros_(m.bias)
-        # Initialize embeddings
         elif isinstance(m, nn.Embedding):
             nn.init.normal_(m.weight, mean=0.0, std=0.02)
 
     def forward(self, x: torch.Tensor, a: torch.LongTensor) -> torch.Tensor:
         """
         Args:
-            x: Per-frame latent vectors, shape [B, T, E] (from encoder)
+            x: Per-frame latent vectors, shape [B, T, E]
             a: Discrete action indices, shape [B]
         Returns:
             x_pred: Predicted latent vector for the next frame, shape [B, 1, E]
         """
         B, T, E = x.shape
         
-        # 1. Embed action and prepend as the first token
-        a_emb = self.action_embed(a).unsqueeze(1)  # Shape: [B, 1, E]
-        x = torch.cat((a_emb, x), dim=1)  # Shape: [B, T + 1, E]
+        a_emb = self.action_embed(a).unsqueeze(1)  # [B, 1, E]
 
-        # 2. Process with Transformer blocks (using rotary embeddings and causal attention)
+        # Process with cross-attention blocks
         for blk in self.blocks:
-            x = blk(x)
+            x = blk(x, a_emb)
 
-        # 3. Extract the last token for prediction (represents next frame)
-        last_token = x[:, -1:, :]  # Shape: [B, 1, E] - last token after causal attention
+        # Extract the last token for prediction
+        last_token = x[:, -1:, :]  # [B, 1, E]
         
-        # 4. Apply prediction head
-        x_pred = self.prediction_head(last_token)  # Shape: [B, 1, E]
+        x_pred = self.prediction_head(last_token)
         
         return x_pred

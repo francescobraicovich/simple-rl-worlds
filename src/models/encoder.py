@@ -156,6 +156,52 @@ class MultiHeadSelfAttention(nn.Module):
         return out
 
 
+class MultiHeadCrossAttention(nn.Module):
+    """
+    Multi-head cross-attention with Rotary Position Embeddings.
+    Queries from x, keys/values from context.
+    """
+    def __init__(self, embed_dim, num_heads, attn_drop_rate=0., proj_drop_rate=0.):
+        super().__init__()
+        assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+        self.scale = self.head_dim ** -0.5
+
+        self.q_proj = nn.Linear(embed_dim, embed_dim, bias=False)
+        self.kv_proj = nn.Linear(embed_dim, embed_dim * 2, bias=False)
+        self.out_proj = nn.Linear(embed_dim, embed_dim)
+
+        self.attn_drop = nn.Dropout(attn_drop_rate)
+        self.proj_drop = nn.Dropout(proj_drop_rate)
+
+        self.rotary_emb = RotaryEmbedding(self.head_dim)
+
+    def forward(self, x, context):
+        B, N_q, C = x.shape
+        _, N_kv, _ = context.shape
+
+        q = self.q_proj(x).reshape(B, N_q, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+        
+        kv = self.kv_proj(context).reshape(B, N_kv, 2, self.num_heads, self.head_dim)
+        k, v = kv.permute(2, 0, 3, 1, 4)
+
+        cos_q, sin_q = self.rotary_emb(N_q, x.device)
+        q = (q * cos_q) + (rotate_half(q) * sin_q)
+        
+        cos_k, sin_k = self.rotary_emb(N_kv, context.device)
+        k = (k * cos_k) + (rotate_half(k) * sin_k)
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        attn = self.attn_drop(attn)
+
+        out = (attn @ v).transpose(1, 2).reshape(B, N_q, C)
+        out = self.out_proj(out)
+        out = self.proj_drop(out)
+        return out
+
+
 class TransformerBlock(nn.Module):
     """
     Pre-LayerNorm -> MHSA -> DropPath -> Pre-LayerNorm -> MLP -> DropPath
@@ -183,53 +229,62 @@ class TransformerBlock(nn.Module):
 class VideoViT(nn.Module):
     """
     Vision Transformer for grayscale video clips with factorized patch embeddings.
-    (Corrected and Modified Version)
+    Includes additional temporal attention layers for global context.
     """
     def __init__(
         self,
-        # img_h and img_w are not needed for the conv patcher but kept for clarity
         img_h=64, img_w=64, 
-        frames_per_clip=16, # Not used in this implementation but good for context
-        patch_size_h=8, patch_size_w=8, # Removed patch_size_t
+        frames_per_clip=16,
+        patch_size_h=8, patch_size_w=8,
         embed_dim=768,
         mlp_ratio=4.,
         drop_rate=0.,
         attn_drop_rate=0.,
         encoder_num_layers=12,
         encoder_num_heads=12,
-        encoder_drop_path_rate=0.1
+        encoder_drop_path_rate=0.1,
+        encoder_num_temporal_layers=4
     ):
         super().__init__()
-        # Corrected call to FactorizedPatchEmbed
         self.patch_embed = FactorizedPatchEmbed(
             patch_size=(patch_size_h, patch_size_w),
             embed_dim=embed_dim
         )
-        # stochastic depth decay rule
-        dpr = [x.item() for x in torch.linspace(0, encoder_drop_path_rate, encoder_num_layers)]
+        
+        # Spatial transformer blocks
+        dpr_spatial = [x.item() for x in torch.linspace(0, encoder_drop_path_rate, encoder_num_layers)]
         self.blocks = nn.ModuleList([
             TransformerBlock(
                 embed_dim, encoder_num_heads,
                 mlp_ratio, drop_rate,
-                attn_drop_rate, dpr[i]
+                attn_drop_rate, dpr_spatial[i]
             ) for i in range(encoder_num_layers)
         ])
         self.norm = nn.LayerNorm(embed_dim)
-        # Initialize weights
+
+        # Temporal transformer blocks
+        dpr_temporal = [x.item() for x in torch.linspace(0, encoder_drop_path_rate, encoder_num_temporal_layers)]
+        self.temporal_blocks = nn.ModuleList([
+            TransformerBlock(
+                embed_dim, encoder_num_heads,
+                mlp_ratio, drop_rate,
+                attn_drop_rate, dpr_temporal[i],
+                causal=False
+            ) for i in range(encoder_num_temporal_layers)
+        ])
+        self.temporal_norm = nn.LayerNorm(embed_dim)
+
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
-        # Initialize linear layers
         if isinstance(m, nn.Linear):
             nn.init.xavier_uniform_(m.weight)
             if m.bias is not None:
                 nn.init.zeros_(m.bias)
-        # Initialize conv3d layers
         elif isinstance(m, nn.Conv3d):
             nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
             if m.bias is not None:
                 nn.init.zeros_(m.bias)
-        # Initialize embeddings
         elif isinstance(m, nn.Embedding):
             nn.init.normal_(m.weight, mean=0.0, std=0.02)
 
@@ -237,20 +292,22 @@ class VideoViT(nn.Module):
         # x: [B, 1, T, H, W]
         x = self.patch_embed(x)  # [B, T, N_tokens_single_frame, E]
 
-        # Reshape to process all frames as a single batch
         B, T, N, E = x.shape
         x = x.reshape(B * T, N, E)
 
-        # Apply transformer blocks to each frame's tokens independently
+        # Apply spatial transformer blocks to each frame's tokens independently
         for blk in self.blocks:
             x = blk(x)
         x = self.norm(x)
 
-        # Reshape back to per-frame token sequences
         x = x.reshape(B, T, N, E)
         
-        # MODIFICATION: Pool the spatial patch tokens for each frame
-        # (B, T, N, E) -> (B, T, E)
-        x = x.mean(dim=2)
+        # Pool the spatial patch tokens for each frame to get per-frame representations
+        x = x.mean(dim=2)  # [B, T, E]
+        
+        # Apply temporal transformer blocks to learn global context across frames
+        for blk in self.temporal_blocks:
+            x = blk(x)
+        x = self.temporal_norm(x)
         
         return x
