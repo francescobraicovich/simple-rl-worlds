@@ -5,16 +5,16 @@ environment:
   frame_stack_size: 4         # Number of frames to stack (1 = no stacking, 4 = stack 4 frames)
 
 data_and_patching:
-  image_height: 84
-  image_width: 84
+  image_height: 64
+  image_width: 64
   sequence_length: 6
-  patch_size_h: 6              # Patch size for image preprocessing
-  patch_size_w: 6              # Patch size for image preprocessing
+  patch_size_h: 4              # Patch size for image preprocessing
+  patch_size_w: 4              # Patch size for image preprocessing
   patch_size_t: 2              # Temporal patch size for video data
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 50
+  num_episodes: 5
   max_steps_per_episode: 1024
   random_action_percentage: 0.15 # Percentage of actions to be random (0.0 = no random actions)
   load_path: "breakout_rep_4.pth"
@@ -25,7 +25,7 @@ data_collection:
     n_envs: 10 # Number of parallel environments for PPO training (default: CPU count)
     action_repetition_k: 4
     learning_rate: 0.0003
-    total_train_timesteps: 1000000 # Timesteps to train PPO before data collection (reduced for testing)
+    total_train_timesteps: 100 # Timesteps to train PPO before data collection (reduced for testing)
     n_steps: 128       # PPO n_steps parameter
     batch_size: 128      # PPO batch_size parameter
     n_epochs: 6         # PPO n_epochs parameter
