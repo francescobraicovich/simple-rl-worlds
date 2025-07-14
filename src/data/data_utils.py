@@ -4,10 +4,10 @@ import multiprocessing
 import torch
 import gymnasium as gym
 from stable_baselines3 import PPO
-from data.dataset import ExperienceDataset
+from src.data.dataset import ExperienceDataset
 from stable_baselines3.common.vec_env import SubprocVecEnv
-from data.rl_agent import create_ppo_agent, train_ppo_agent, save_ppo_agent
-from data.env_utils import ActionRepeatWrapper, ImagePreprocessingWrapper, FrameStackWrapper
+from src.data.rl_agent import create_ppo_agent, train_ppo_agent, save_ppo_agent
+from src.data.env_utils import ActionRepeatWrapper, ImagePreprocessingWrapper, FrameStackWrapper
 
 def _load_existing_dataset(config: dict):
     """Attempts to load a pre-existing dataset based on the configuration."""
@@ -143,6 +143,7 @@ def _collect_episodes_with_agent(env: gym.Env, agent: PPO, config: dict):
         step_count = 0
         total_reward = 0
         episode_transitions = []
+        action_counts = {}  # Track action frequencies for this episode
 
         while not (terminated or truncated) and step_count < max_steps:
             # Decide whether to use random action or agent
@@ -150,6 +151,10 @@ def _collect_episodes_with_agent(env: gym.Env, agent: PPO, config: dict):
                 action = env.action_space.sample()
             else:
                 action, _ = agent.predict(obs, deterministic=False)
+
+            # Track action frequency
+            action_to_save = int(action)
+            action_counts[action_to_save] = action_counts.get(action_to_save, 0) + 1
 
             # Perform step
             next_obs, reward, terminated, truncated, _ = env.step(action)
@@ -168,8 +173,11 @@ def _collect_episodes_with_agent(env: gym.Env, agent: PPO, config: dict):
             total_reward += reward
             step_count += 1
 
+        # Create action frequency string for display
+        action_freq_str = ", ".join([f"A{action}:{count}" for action, count in sorted(action_counts.items())])
+        
         all_episodes_data.append(episode_transitions)
-        print(f"Episode {i+1}/{num_episodes} finished. Steps: {step_count}, Reward: {total_reward:.2f}")
+        print(f"Episode {i+1}/{num_episodes} finished. Steps: {step_count}, Reward: {total_reward:.2f}, Actions: [{action_freq_str}]")
     return all_episodes_data
 
 
@@ -300,12 +308,14 @@ def collect_ppo_episodes(config):
     Returns:
         tuple: A tuple containing the training ExperienceDataset and validation ExperienceDataset.
     """
+
+    # 0. Validate action space if needed
+    #check_action_space(config)
+
     # 1. Attempt to load an existing dataset
     loaded_data = _load_existing_dataset(config)
     if loaded_data:
         return loaded_data
-
-    # --- If no data was loaded, proceed with collection ---
     
     # 2. Initialize a single, wrapped environment for collection
     # We create this first to determine the correct render_mode for the training envs
@@ -329,3 +339,18 @@ def collect_ppo_episodes(config):
         _save_new_dataset(train_dataset, val_dataset, config)
     
     return train_dataset, val_dataset
+
+
+def check_action_space(config):
+
+    env, render_mode = _initialize_environment(config)
+    models_config = config.get('models', {})
+    predictor_config = models_config.get('predictor', {})
+    num_actions_predictor = predictor_config.get('num_actions', None)
+
+    # Check if the number of actions is the same as the action space
+    if num_actions_predictor is not None:
+        if env.action_space.n != num_actions_predictor:
+            raise ValueError(f"Mismatch between environment action space ({env.action_space.n}) and predictor num_actions ({num_actions_predictor}).\n Please update the config under 'models.predictor.num_actions'.")
+        else:
+            print(f"Action space check passed: {env.action_space.n} actions match predictor config.")
