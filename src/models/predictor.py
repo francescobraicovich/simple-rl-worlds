@@ -14,7 +14,7 @@ class CrossAttentionLayer(nn.Module):
             embed_dim, num_heads, mlp_ratio, drop_rate, attn_drop_rate, drop_path_rate, causal=True
         )
         self.cross_attn = MultiHeadCrossAttention(
-            embed_dim, num_heads, attn_drop_rate, drop_rate
+            embed_dim, num_heads, attn_drop_rate, drop_rate, causal=True
         )
         self.norm = nn.LayerNorm(embed_dim)
 
@@ -79,13 +79,13 @@ class LatentDynamicsPredictor(nn.Module):
         """
         Args:
             x: Per-frame latent vectors, shape [B, T, E]
-            a: Discrete action indices, shape [B]
+            a: Discrete action indices, shape [B, T]
         Returns:
             x_pred: Predicted latent vector for the next frame, shape [B, 1, E]
         """
         B, T, E = x.shape
         
-        a_emb = self.action_embed(a).unsqueeze(1)  # [B, 1, E]
+        a_emb = self.action_embed(a)  # [B, T, E]
 
         # Process with cross-attention blocks
         for blk in self.blocks:
