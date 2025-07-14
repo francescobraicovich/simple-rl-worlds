@@ -6,12 +6,12 @@ from typing import Tuple, Optional
 import torch
 from torch.utils.data import DataLoader
 
-# Add src to path for imports
-sys.path.append(str(Path(__file__).parent.parent))
+# Add project root to path for imports (two levels up from scripts)
+sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from utils.config_utils import load_config
-from data.data_utils import collect_ppo_episodes, _load_existing_dataset
-from data.dataset import ExperienceDataset
+from src.utils.config_utils import load_config
+from src.data.data_utils import collect_ppo_episodes, _load_existing_dataset
+from src.data.dataset import ExperienceDataset
 
 
 class DataCollectionPipeline:
