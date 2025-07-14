@@ -6,7 +6,7 @@ from ..models.encoder import VideoViT
 from ..models.predictor import LatentDynamicsPredictor
 from ..models.decoder import HybridConvTransformerDecoder
 from ..models.reward_predictor import RewardPredictor
-
+from ..data.data_utils import _initialize_environment
 
 def load_config(config_path: str = None) -> Dict[str, Any]:
     """
@@ -74,6 +74,10 @@ def init_predictor(config_path: str = None) -> LatentDynamicsPredictor:
         Initialized LatentDynamicsPredictor model.
     """
     config = load_config(config_path)
+
+    enc, render_mode = _initialize_environment(config)
+    num_actions = enc.action_space.n
+    print(f"Environment action space: {num_actions} actions")
     
     # Extract relevant configuration parameters
     predictor_config = config['models']['predictor']
@@ -84,7 +88,7 @@ def init_predictor(config_path: str = None) -> LatentDynamicsPredictor:
     predictor = LatentDynamicsPredictor(
         frames_per_clip=data_config['sequence_length'],
         embed_dim=embed_dim,
-        num_actions=predictor_config['num_actions'],
+        num_actions= num_actions,
         predictor_num_layers=predictor_config['num_layers'],
         predictor_num_heads=predictor_config['num_heads'],
         mlp_ratio=predictor_config['mlp_ratio'],
