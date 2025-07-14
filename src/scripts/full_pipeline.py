@@ -144,12 +144,15 @@ class FullPipelineRunner:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
+                bufsize=1,  # Line buffering
+                env={**os.environ, 'PYTHONUNBUFFERED': '1'},  # Force unbuffered output
                 cwd=project_root
             )
             
             # Stream output in real-time
             for line in iter(process.stdout.readline, ''):
                 print(line, end='')  # Print each line to the console
+                sys.stdout.flush()  # Force immediate output
                 
             process.stdout.close()
             return_code = process.wait()
