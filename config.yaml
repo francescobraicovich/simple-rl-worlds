@@ -1,5 +1,5 @@
 environment:
-  name: "ALE/Assault-v5" # Simple environment for testing (was "ALE/Assault-v5")
+  name: "ALE/Pong-v5" # Simple environment for testing (was "ALE/Assault-v5")
   
   # Image preprocessing parameters
   frame_stack_size: 4         # Number of frames to stack (1 = no stacking, 4 = stack 4 frames)
@@ -14,18 +14,18 @@ data_and_patching:
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 100
+  num_episodes: 200
   max_steps_per_episode: 1024
-  random_action_percentage: 0.1 # Percentage of actions to be random (0.0 = no random actions)
-  load_path: "assault_rep_4.pth"
-  filename: "assault_rep_4.pth"
-  validation_split: 0.2
+  random_action_percentage: 0.2 # Percentage of actions to be random (0.0 = no random actions)
+  load_path: "pong_rep_4.pth"
+  filename: "pong_rep_4.pth"
+  validation_split: 0.15
   ppo_agent:
     load: false # Whether to load a pre-trained PPO agent
     n_envs: 10 # Number of parallel environments for PPO training (default: CPU count)
     action_repetition_k: 4
     learning_rate: 0.0003
-    total_train_timesteps: 3000000 # Timesteps to train PPO before data collection (reduced for testing)
+    total_train_timesteps: 5000000 # Timesteps to train PPO before data collection (reduced for testing)
     n_steps: 32       # PPO n_steps parameter
     batch_size: 128      # PPO batch_size parameter
     n_epochs: 6         # PPO n_epochs parameter
@@ -39,43 +39,43 @@ embed_dim: 64 # Dimension of the embedding space for the transformer model
 
 training:
   main_loops:
-    num_epochs: 15 # Number of epochs for training
-    batch_size: 64 # Batch size for training
+    num_epochs: 30 # Number of epochs for training
+    batch_size: 256 # Batch size for training
     learning_rate: 0.0001 # Learning rate for the optimizer
     weight_decay: 0.0001 # Weight decay for the optimizer
     ema_decay: 0.999 # Exponential moving average decay for model parameters
-    gradient_clipping: 1.0 # Maximum norm for gradient clipping
+    gradient_clipping: 0.5 # Maximum norm for gradient clipping
   jepa_decoder:
-    num_epochs: 15 # Number of epochs for the JEPA decoder training
-    batch_size: 64 # Batch size for the JEPA decoder training
+    num_epochs: 30 # Number of epochs for the JEPA decoder training
+    batch_size: 256 # Batch size for the JEPA decoder training
     learning_rate: 0.0001 # Learning rate for the JEPA decoder optimizer
     weight_decay: 0.0001 # Weight decay for the JEPA decoder optimizer
-    gradient_clipping: 1.0 # Maximum norm for JEPA decoder gradient clipping
+    gradient_clipping: 0.5 # Maximum norm for JEPA decoder gradient clipping
   reward_predictor:
     versions: "both" # Versions of the reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
-    num_epochs: 20 # Number of epochs for the reward predictor training
-    batch_size: 64 # Batch size for the reward predictor training
+    num_epochs: 40 # Number of epochs for the reward predictor training
+    batch_size: 256 # Batch size for the reward predictor training
     learning_rate: 0.0001 # Learning rate for the reward predictor optimizer
     weight_decay: 0.0001 # Weight decay for the reward predictor optimizer
-    gradient_clipping: 1.0 # Maximum norm for reward predictor gradient clipping
+    gradient_clipping: 0.5 # Maximum norm for reward predictor gradient clipping
   dynamics_reward_predictor:
     versions: "both" # Versions of the dynamics reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
-    num_epochs: 20 # Number of epochs for the dynamics reward predictor training
-    batch_size: 64 # Batch size for the dynamics reward predictor training
+    num_epochs: 40 # Number of epochs for the dynamics reward predictor training
+    batch_size: 256 # Batch size for the dynamics reward predictor training
     learning_rate: 0.0001 # Learning rate for the dynamics reward predictor optimizer
     weight_decay: 0.0001 # Weight decay for the dynamics reward predictor optimizer
-    gradient_clipping: 1.0 # Maximum norm for gradient clipping
+    gradient_clipping: 0.5 # Maximum norm for gradient clipping
 
 models:
   encoder:
-    num_layers: 6
-    num_heads: 2
+    num_layers: 8
+    num_heads: 4
     mlp_ratio: 4.0
     dropout: 0.1
     attention_dropout: 0.1
     predictor_drop_path_rate: 0.1
   predictor:
-    num_actions: 18
+    num_actions: 6
     num_layers: 4
     num_heads: 2
     mlp_ratio: 4.0
