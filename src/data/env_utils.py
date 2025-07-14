@@ -62,6 +62,7 @@ class ImagePreprocessingWrapper(gym.ObservationWrapper):
         if self.grayscale:
             transforms.append(T.Grayscale(num_output_channels=1))
         transforms.append(T.Resize(self.img_size))
+        transforms.append(T.Lambda(lambda img: T.functional.adjust_contrast(img, 2.0)))
         self.transform = T.Compose(transforms)
         # Determine channels count
         obs_shape = env.observation_space.shape
