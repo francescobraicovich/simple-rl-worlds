@@ -26,6 +26,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import wandb
+from sklearn.metrics import r2_score
+import numpy as np
 
 # Set MPS fallback for unsupported operations and add project root to path
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
@@ -156,7 +158,7 @@ class DynamicsRewardPredictorTrainer:
         self.train_dataloader, self.val_dataloader = pipeline.run_pipeline()
         
                 
-    def train_step(self, batch: Tuple[torch.Tensor, ...]) -> float:
+    def train_step(self, batch: Tuple[torch.Tensor, ...]) -> Tuple[float, torch.Tensor, torch.Tensor]:
         """
         Perform a single training step using dynamics prediction.
         
@@ -164,7 +166,7 @@ class DynamicsRewardPredictorTrainer:
             batch: Tuple containing (state, next_state, action, reward)
             
         Returns:
-            Loss value for this batch
+            Tuple of (loss_value, predicted_rewards, target_rewards)
         """
         state, next_state, action, reward = batch
 
@@ -211,9 +213,9 @@ class DynamicsRewardPredictorTrainer:
             )
         self.optimizer.step()
         
-        return loss.item()
+        return loss.item(), predicted_reward.detach().cpu(), reward.detach().cpu()
         
-    def validate_step(self, batch: Tuple[torch.Tensor, ...]) -> float:
+    def validate_step(self, batch: Tuple[torch.Tensor, ...]) -> Tuple[float, torch.Tensor, torch.Tensor]:
         """
         Perform a single validation step using dynamics prediction.
         
@@ -221,7 +223,7 @@ class DynamicsRewardPredictorTrainer:
             batch: Tuple containing (state, next_state, action, reward)
             
         Returns:
-            Loss value for this batch
+            Tuple of (loss_value, predicted_rewards, target_rewards)
         """
         state, next_state, action, reward = batch
 
@@ -254,38 +256,48 @@ class DynamicsRewardPredictorTrainer:
             # Compute loss
             loss = self.criterion(predicted_reward, reward)
             
-        return loss.item()
+        return loss.item(), predicted_reward.cpu(), reward.cpu()
         
-    def train_epoch(self) -> float:
+    def train_epoch(self) -> Tuple[float, float]:
         """
         Train for one epoch.
         
         Returns:
-            Average training loss for the epoch
+            Tuple of (average_training_loss, r2_score)
         """
         # Set reward predictor to training mode (encoder/predictor remain in eval)
         self.reward_predictor.train()
         
         total_loss = 0.0
         num_batches = len(self.train_dataloader)
+        all_predictions = []
+        all_targets = []
         
         for batch_idx, batch in enumerate(self.train_dataloader):
-            loss = self.train_step(batch)
+            loss, predictions, targets = self.train_step(batch)
             total_loss += loss
+            all_predictions.append(predictions)
+            all_targets.append(targets)
             
             # Log batch loss to wandb (minimal terminal output)
             if wandb.run is not None:
                 wandb.log({"batch_loss": loss, "batch": batch_idx})
                 
         avg_loss = total_loss / num_batches
-        return avg_loss
         
-    def validate_epoch(self) -> Optional[float]:
+        # Calculate R² score
+        all_predictions = torch.cat(all_predictions, dim=0).numpy()
+        all_targets = torch.cat(all_targets, dim=0).numpy()
+        r2 = r2_score(all_targets, all_predictions)
+        
+        return avg_loss, r2
+        
+    def validate_epoch(self) -> Optional[Tuple[float, float]]:
         """
         Validate for one epoch.
         
         Returns:
-            Average validation loss for the epoch, or None if no validation data
+            Tuple of (average_validation_loss, r2_score) or None if no validation data
         """
         if self.val_dataloader is None:
             return None
@@ -294,13 +306,23 @@ class DynamicsRewardPredictorTrainer:
         
         total_loss = 0.0
         num_batches = len(self.val_dataloader)
+        all_predictions = []
+        all_targets = []
         
         for batch in self.val_dataloader:
-            loss = self.validate_step(batch)
+            loss, predictions, targets = self.validate_step(batch)
             total_loss += loss
+            all_predictions.append(predictions)
+            all_targets.append(targets)
             
         avg_loss = total_loss / num_batches
-        return avg_loss
+        
+        # Calculate R² score
+        all_predictions = torch.cat(all_predictions, dim=0).numpy()
+        all_targets = torch.cat(all_targets, dim=0).numpy()
+        r2 = r2_score(all_targets, all_predictions)
+        
+        return avg_loss, r2
         
     def save_checkpoint(self, epoch: int, train_loss: float, val_loss: Optional[float]):
         """
@@ -366,10 +388,11 @@ class DynamicsRewardPredictorTrainer:
             epoch_start_time = time.time()
             
             # Train
-            train_loss = self.train_epoch()
+            train_loss, train_r2 = self.train_epoch()
             
             # Validate
-            val_loss = self.validate_epoch()
+            val_results = self.validate_epoch()
+            val_loss, val_r2 = val_results if val_results is not None else (None, None)
             
             epoch_time = time.time() - epoch_start_time
             
@@ -377,12 +400,14 @@ class DynamicsRewardPredictorTrainer:
             log_dict = {
                 "epoch": epoch,
                 "train_loss": train_loss,
+                "train_r2": train_r2,
                 "epoch_time": epoch_time,
                 "learning_rate": self.optimizer.param_groups[0]['lr'],
                 "approach": self.approach
             }
             if val_loss is not None:
                 log_dict["val_loss"] = val_loss
+                log_dict["val_r2"] = val_r2
                 
             if wandb.run is not None:
                 wandb.log(log_dict)
@@ -390,10 +415,10 @@ class DynamicsRewardPredictorTrainer:
             # Terminal output (minimal)
             if val_loss is not None:
                 print(f"Epoch {epoch+1}/{self.num_epochs} - "
-                               f"Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}")
+                               f"Train Loss: {train_loss:.6f}, Train R²: {train_r2:.4f}, Val Loss: {val_loss:.6f}, Val R²: {val_r2:.4f}")
             else:
                 print(f"Epoch {epoch+1}/{self.num_epochs} - "
-                               f"Train Loss: {train_loss:.6f}")
+                               f"Train Loss: {train_loss:.6f}, Train R²: {train_r2:.4f}")
             
             # Save checkpoint
             self.save_checkpoint(epoch, train_loss, val_loss)
