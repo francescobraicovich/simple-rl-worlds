@@ -152,15 +152,8 @@ class JEPATrainer:
         # Encode current state with main encoder
         z_state = self.encoder(state)  # [B, N_tokens, embed_dim]
         
-        # For JEPA, we need the action from the sequence
-        # The dataset returns action sequences, we'll use the last action
-        if action.dim() > 1:
-            action_for_prediction = action[:, -1]  # Use last action in sequence
-        else:
-            action_for_prediction = action
-            
-        # Predict next latent state
-        z_next_pred = self.predictor(z_state, action_for_prediction)
+        # Predict next latent state using the full action sequence
+        z_next_pred = self.predictor(z_state, action)
         
         # Encode ground-truth next state with target encoder (no gradients)
         with torch.no_grad():
@@ -205,14 +198,8 @@ class JEPATrainer:
             # Encode current state
             z_state = self.encoder(state)
             
-            # For JEPA, we need the action from the sequence
-            if action.dim() > 1:
-                action_for_prediction = action[:, -1]  # Use last action in sequence
-            else:
-                action_for_prediction = action
-                
-            # Predict next latent state
-            z_next_pred = self.predictor(z_state, action_for_prediction)
+            # Predict next latent state using full action sequence
+            z_next_pred = self.predictor(z_state, action)
             
             # Encode ground-truth next state with target encoder
             z_next_target = self.target_encoder(next_state)
