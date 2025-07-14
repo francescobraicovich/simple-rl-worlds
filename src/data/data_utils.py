@@ -199,36 +199,39 @@ def _create_and_split_datasets(episodes_data: list, config: dict):
     print(f"\nSplitting {len(episodes_data)} collected episodes into {len(train_episodes)} train and {len(val_episodes)} validation.")
 
     def flatten_episodes(episodes):
-        states = []
-        actions = []
-        rewards = []
-        stop_episodes = []
-
+        """
+        Flattens a list of episode transitions into separate lists of states, actions, rewards, and termination flags.
+        This function correctly aligns s_t, a_t, r_t with s_{t+1}.
+        - states[t] = s_t
+        - actions[t] = a_t (action taken from s_t)
+        - rewards[t] = r_t (reward received after a_t)
+        - stop_episodes[t] = done (True if s_{t+1} is terminal)
+        The final state of an episode is included in the states list, but there is no corresponding action or reward.
+        """
+        states, actions, rewards, stop_episodes = [], [], [], []
         for episode in episodes:
-            for idx, (s, a, r, ns, se) in enumerate(episode):
-                # if it is the last transition of the episode, make se True
+            if not episode:
+                continue
 
+            # The 'states' list will contain all observations, from s_0 to s_T.
+            # The 'actions', 'rewards', and 'stop_episodes' lists will have one fewer element, corresponding to transitions.
+            
+            # Add the initial observation
+            s0 = episode[0][0] # (s, a, r, ns, done)
+            # Extract the last frame from the stack for the state
+            states.append(s0.unsqueeze(0)[:, -1, :, :].unsqueeze(0))
 
-                s = s.unsqueeze(0)  # Add channel dimension
-                state = s[:, -1, :, :]
-                a = torch.tensor(a, dtype=torch.int32)
-                r = torch.tensor(r, dtype=torch.float32)
-                states.append(state.unsqueeze(0))
-                actions.append(a)
-                rewards.append(r)
-                if idx == len(episode) - 1:
-                    se = True
-                stop_episodes.append(se)
-
-                if se:
-                    actions.append(a)  # Append action for the last transition
-                    rewards.append(r)  # Append reward for the last transition
-                    ns.unsqueeze_(0)  # Add channel dimension for next state
-                    next_state = ns[:, -1, :, :]
-                    states.append(next_state.unsqueeze(0))
-
-                #assert False
-
+            for transition in episode:
+                _obs, action, reward, next_obs, done = transition
+                
+                # The next state from the transition becomes the current state in the next step of the lists
+                states.append(next_obs.unsqueeze(0)[:, -1, :, :].unsqueeze(0))
+                
+                # Store the action, reward, and done flag for the transition that *led* to this state
+                actions.append(torch.tensor(action, dtype=torch.int32))
+                rewards.append(torch.tensor(reward, dtype=torch.float32))
+                stop_episodes.append(done)
+                
         return states, actions, rewards, stop_episodes
 
     train_s, train_a, train_r, train_se = flatten_episodes(train_episodes)
@@ -236,7 +239,6 @@ def _create_and_split_datasets(episodes_data: list, config: dict):
 
     sequence_length = config['data_and_patching'].get('sequence_length')
     
-    # Data is already preprocessed, so transform is None
     train_dataset = ExperienceDataset(train_s, train_a, train_r, train_se, sequence_length=sequence_length)
     val_dataset = ExperienceDataset(val_s, val_a, val_r, val_se, sequence_length=sequence_length)
 
@@ -244,6 +246,7 @@ def _create_and_split_datasets(episodes_data: list, config: dict):
     print(f"Created validation dataset with {len(val_dataset)} transitions.")
     
     return train_dataset, val_dataset
+
 
 
 def _save_new_dataset(train_dataset, val_dataset, config: dict):
