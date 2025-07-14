@@ -22,6 +22,7 @@ def create_ppo_agent(vec_env: VecEnv, ppo_config: dict, device: str = 'mps', loa
         gamma=ppo_config.get('gamma'),
         gae_lambda=ppo_config.get('gae_lambda'),
         clip_range=ppo_config.get('clip_range'),
+        ent_coef=ppo_config.get('ent_coef', 0.01),  # Add entropy coefficient for exploration
         tensorboard_log=None,
         verbose=1,
         device=device,
