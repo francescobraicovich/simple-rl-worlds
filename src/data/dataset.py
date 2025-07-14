@@ -2,46 +2,44 @@ import torch
 from torch.utils.data import Dataset
 
 class ExperienceDataset(Dataset):
-    def __init__(self, states, actions, rewards, stop_episodes, sequence_length=None):
+    def __init__(self, states, actions, rewards, stop_episodes, sequence_length):
+        assert sequence_length is not None and sequence_length > 0
 
+        print(f'Length of states: {len(states)}')
+        print(f'Length of actions: {len(actions)}')
+        print(f'Length of rewards: {len(rewards)}')
+        # states: list of [C, T_i, H, W] tensors; actions, rewards, stop_episodes: length-N lists/vectors
         self.sequence_length = sequence_length
 
-        self.states = states
-        self.states = torch.cat(states, dim=1)
-        self.actions = torch.stack(actions)
-        self.rewards = torch.stack(rewards)
-        self.stop_episodes = stop_episodes
+        # concatenate along temporal dim
+        self.states = torch.cat(states, dim=1)  # shape [C, total_T, H, W]
+        self.actions = torch.stack(actions)     # shape [total_T, ...]
+        self.rewards = torch.stack(rewards)     # shape [total_T, ...]
+        self.stop_episodes = torch.tensor(stop_episodes, dtype=torch.bool)  # shape [total_T]
+
         self.valid_start_indices = self.compute_valid_start_indices()
 
     def compute_valid_start_indices(self):
-        valid_start_indices = []
-        for i in range(len(self.stop_episodes) - self.sequence_length):
-            valid = True
-            for j in range(i, i + self.sequence_length):
-                if self.stop_episodes[j]:
-                    valid = False
-                    break
-            if valid:
-                valid_start_indices.append(i)
-
-        return valid_start_indices
+        N = len(self.stop_episodes)
+        valid = []
+        # we need [start, start+seq_len) all non‐terminal, and also start+seq_len < N
+        for start in range(0, N - self.sequence_length):
+            window = self.stop_episodes[start : start + self.sequence_length + 1]
+            # all entries in [start, start+seq_len) must be False, and the next one must also exist
+            if not window.any():
+                valid.append(start)
+        return valid
 
     def __len__(self):
-            # only as many as there are valid starts
-            return len(self.valid_start_indices)
+        return len(self.valid_start_indices)
 
     def __getitem__(self, idx):
-        # map `idx` → true start index
         start = self.valid_start_indices[idx]
+        end = start + self.sequence_length
 
-        state = self.states[:, start:start + self.sequence_length, :, :]
-        next_state = self.states[:, start + self.sequence_length + 1, :, :].unsqueeze(1)
-        action = self.actions[start:start + self.sequence_length]
-        reward = self.rewards[start:start + self.sequence_length]
+        state      = self.states[:, start:end, :, :]            # [C, seq_len, H, W]
+        next_state = self.states[:, end,    :, :].unsqueeze(1)   # [C, 1, H, W]
+        action     = self.actions[start:end]                     # [seq_len, ...]
+        reward     = self.rewards[start:end]                     # [seq_len, ...]
 
-        # Assert all outputs are tensors
-        assert isinstance(state, torch.Tensor), "State must be a tensor"
-        assert isinstance(next_state, torch.Tensor), "Next state must be a tensor"
-        assert isinstance(action, torch.Tensor), "Action must be a tensor"
-        assert isinstance(reward, torch.Tensor), "Reward must be a tensor"
         return state, next_state, action, reward
