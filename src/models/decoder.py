@@ -79,25 +79,25 @@ class MultiHeadCrossAttention(nn.Module):
         return feat + out
 
 
-class ResidualConvBlock3D(nn.Module):
+class ResidualConvBlock2D(nn.Module):
     """
-    Residual 3D convolutional block (Conv3D -> Norm -> GELU).
+    Residual 2D convolutional block (Conv2D -> Norm -> GELU).
     """
     def __init__(self, channels):
         super().__init__()
-        self.conv = nn.Conv3d(channels, channels, kernel_size=3, padding=1)
+        self.conv = nn.Conv2d(channels, channels, kernel_size=3, padding=1)
         self.norm = nn.LayerNorm(channels)
         self.act = nn.GELU()
 
     def forward(self, x):
-        # x: [B, C, T, H, W]
+        # x: [B, C, H, W]
         out = self.conv(x)
         # Move channel dim to last for LayerNorm
-        B, C, T, H, W = out.shape
-        out = out.permute(0, 2, 3, 4, 1).reshape(-1, C)
+        B, C, H, W = out.shape
+        out = out.permute(0, 2, 3, 1).reshape(-1, C)
         out = self.norm(out)
         out = self.act(out)
-        out = out.reshape(B, T, H, W, C).permute(0, 4, 1, 2, 3)
+        out = out.reshape(B, H, W, C).permute(0, 3, 1, 2)
         return x + out
 
 
@@ -108,11 +108,11 @@ class UpsampleBlock(nn.Module):
     def __init__(self, decoder_embed_dim, num_heads,
                  attn_drop_rate, proj_drop_rate, drop_path_rate):
         super().__init__()
-        # Double spatial resolution
-        self.upsample = nn.Upsample(scale_factor=(1, 2, 2), mode='trilinear', align_corners=False)
-        self.conv = nn.Conv3d(decoder_embed_dim, decoder_embed_dim, kernel_size=3, padding=1)
+        # Double spatial resolution (2D upsampling since temporal dim is always 1)
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False)
+        self.conv = nn.Conv2d(decoder_embed_dim, decoder_embed_dim, kernel_size=3, padding=1)
         # Residual conv block
-        self.res_conv = ResidualConvBlock3D(decoder_embed_dim)
+        self.res_conv = ResidualConvBlock2D(decoder_embed_dim)
         # Cross-attention infusion
         self.cross_attn = MultiHeadCrossAttention(
             embed_dim_q=decoder_embed_dim,
@@ -124,11 +124,19 @@ class UpsampleBlock(nn.Module):
         )
 
     def forward(self, feat, tokens):
-        feat = self.upsample(feat)
-        feat = self.conv(feat)
-        feat = self.res_conv(feat)
-        feat = self.cross_attn(feat, tokens)
-        return feat
+        # feat: [B, C, T, H, W] -> squeeze temporal dim since it's always 1
+        B, C, T, H, W = feat.shape
+        assert T == 1, f"Expected temporal dimension to be 1, got {T}"
+        feat_2d = feat.squeeze(2)  # [B, C, H, W]
+        
+        feat_2d = self.upsample(feat_2d)
+        feat_2d = self.conv(feat_2d)
+        feat_2d = self.res_conv(feat_2d)
+        
+        # Add temporal dimension back for cross-attention
+        feat_3d = feat_2d.unsqueeze(2)  # [B, C, 1, H, W]
+        feat_3d = self.cross_attn(feat_3d, tokens)
+        return feat_3d
 
 
 class HybridConvTransformerDecoder(nn.Module):
@@ -251,8 +259,8 @@ class HybridConvTransformerDecoder(nn.Module):
             ) for i in range(self.num_upsampling_blocks)
         ])
 
-        # Final conv to 1 channel
-        self.final_conv = nn.Conv3d(
+        # Final conv to 1 channel (2D since temporal dimension is always 1)
+        self.final_conv = nn.Conv2d(
             decoder_embed_dim, 1,
             kernel_size=1, stride=1
         )
@@ -284,6 +292,10 @@ class HybridConvTransformerDecoder(nn.Module):
         for block in self.blocks:
             feat = block(feat, projected_tokens)
 
-        # Final reconstruction
-        recon = self.final_conv(feat)
+        # Final reconstruction - convert to 2D for final conv, then back to 3D
+        B, C, T, H, W = feat.shape
+        assert T == 1, f"Expected temporal dimension to be 1, got {T}"
+        feat_2d = feat.squeeze(2)  # [B, C, H, W]
+        recon_2d = self.final_conv(feat_2d)  # [B, 1, H, W]
+        recon = recon_2d.unsqueeze(2)  # [B, 1, 1, H, W]
         return recon
