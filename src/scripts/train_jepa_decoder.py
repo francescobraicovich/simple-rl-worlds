@@ -171,14 +171,8 @@ class JEPADecoderTrainer:
             # 1. Encode current state to latent representation
             z_state = self.encoder(state)  # [B, N_tokens, embed_dim]
             
-            # 2. Predict next latent state using current latent state and action
-            # The dataset returns action sequences, we'll use the last action
-            if action.dim() > 1:
-                action_for_prediction = action[:, -1]  # Use last action in sequence
-            else:
-                action_for_prediction = action
-                
-            z_next_pred = self.predictor(z_state.detach(), action_for_prediction) # Detach z_state
+            # 2. Predict next latent state using current latent state and full action sequence
+            z_next_pred = self.predictor(z_state.detach(), action) # Detach z_state
 
         # 3. Decode predicted latent state to reconstruct next frame
         next_state_reconstructed = self.decoder(z_next_pred.detach()) # Detach z_next_pred
@@ -220,13 +214,8 @@ class JEPADecoderTrainer:
             # 1. Encode current state
             z_state = self.encoder(state)
             
-            # 2. Predict next latent state
-            if action.dim() > 1:
-                action_for_prediction = action[:, -1]  # Use last action in sequence
-            else:
-                action_for_prediction = action
-                
-            z_next_pred = self.predictor(z_state, action_for_prediction)
+            # 2. Predict next latent state using full action sequence
+            z_next_pred = self.predictor(z_state, action)
             
             # 3. Decode predicted latent state
             next_state_reconstructed = self.decoder(z_next_pred)
