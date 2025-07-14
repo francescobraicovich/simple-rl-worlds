@@ -173,10 +173,6 @@ class DynamicsRewardPredictorTrainer:
         next_state = next_state.to(self.device)
         action = action.to(self.device)
 
-        # Take the last action value
-        action = action[:, -1]
-        action = action.to(self.device)
-
         # Take the last reward value 
         reward = reward[:, -1]
         reward = reward.to(self.device)
@@ -188,7 +184,7 @@ class DynamicsRewardPredictorTrainer:
         with torch.no_grad():
             z_state = self.encoder(state)          # [B, N_tokens, embed_dim]
             
-            # Predict next latent state using the dynamics model (predictor)
+            # Predict next latent state using the dynamics model (predictor) with full action sequence
             z_predicted_next_state = self.predictor(z_state, action)  # [B, N_tokens, embed_dim]
         
         # Predict reward using current latent state and predicted next latent state
@@ -234,10 +230,6 @@ class DynamicsRewardPredictorTrainer:
         next_state = next_state.to(self.device)
         action = action.to(self.device)
 
-        # Take the last action value
-        action = action[:, -1]
-        action = action.to(self.device)
-
         # Take the last reward value
         reward = reward[:, -1]
         reward = reward.to(self.device)
@@ -246,7 +238,7 @@ class DynamicsRewardPredictorTrainer:
             # Encode current state
             z_state = self.encoder(state)
             
-            # Predict next latent state using the dynamics model (predictor)
+            # Predict next latent state using the dynamics model (predictor) with full action sequence
             z_predicted_next_state = self.predictor(z_state, action)
             
             # Predict reward using current latent state and predicted next latent state
