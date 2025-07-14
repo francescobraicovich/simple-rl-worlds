@@ -51,16 +51,25 @@ def _initialize_environment(config: dict):
     # Get environment name from config
     env_name = config['environment']['name']
 
+    ppo_config = config.get('ppo_agent', {})
+    action_repetition_k = ppo_config.get('action_repetition_k', 1)
+
     # if env_name starts with 'ALE-', we need to strip 
-    if env_name.startswith('ALE'):
+    is_ale = env_name.startswith('ALE/')
+    if is_ale:
         print(f"Detected ALE environment: {env_name}. Registering environment.")
         import ale_py
         gym.register_envs(ale_py)
     print(f"Creating environment: {env_name}")
     # Determine the correct render mode
     render_mode = 'rgb_array'
+    
     try:
-        env = gym.make(env_name, render_mode=render_mode)
+        if is_ale:
+            # For ALE environments, we can use 'rgb_array' directly
+            env = gym.make(env_name, render_mode=render_mode, repeat_action_probability=0.0, frameskip=action_repetition_k)
+        else:
+            env = gym.make(env_name, render_mode=render_mode)
     except Exception as e:
         print(f"Could not create env with render_mode='rgb_array' ({e}). Trying render_mode=None.")
         render_mode = None
@@ -73,9 +82,7 @@ def _initialize_environment(config: dict):
     env = ImagePreprocessingWrapper(env, img_size, grayscale=True)
 
     # Apply action repetition wrapper if configured
-    ppo_config = config.get('ppo_agent', {})
-    action_repetition_k = ppo_config.get('action_repetition_k', 1)
-    if action_repetition_k > 1:
+    if action_repetition_k > 1 and not is_ale:
         print(f"Applying ActionRepeatWrapper with k={action_repetition_k}.")
         env = ActionRepeatWrapper(env, action_repetition_k)
 
@@ -183,69 +190,73 @@ def _collect_episodes_with_agent(env: gym.Env, agent: PPO, config: dict):
 
 def _create_and_split_datasets(episodes_data: list, config: dict):
     """Shuffles, splits, and converts raw episode data into ExperienceDataset objects."""
+    # ── 1. Handle the degenerate “no data” case ───────────────────────────────
+    sequence_length = config['data_and_patching'].get('sequence_length')
     if not episodes_data:
         print("Warning: No data was collected. Returning empty datasets.")
-        sequence_length = config['data_and_patching'].get('sequence_length')
-        return ExperienceDataset([], [], [], [], sequence_length=sequence_length), ExperienceDataset([], [], [], [], sequence_length=sequence_length)
+        empty = ExperienceDataset([], [], [], [], sequence_length=sequence_length)
+        return empty, empty
+    
+    PAD_ACTION = -1
+    PAD_REWARD = -100.0
 
+    # ── 2. Train / validation split at episode granularity ────────────────────
     random.shuffle(episodes_data)
-    
     split_ratio = config['data_collection']['validation_split']
-    split_idx = int(len(episodes_data) * (1.0 - split_ratio))
-    
-    train_episodes = episodes_data[:split_idx]
-    val_episodes = episodes_data[split_idx:]
-    
-    print(f"\nSplitting {len(episodes_data)} collected episodes into {len(train_episodes)} train and {len(val_episodes)} validation.")
+    split_idx   = int(len(episodes_data) * (1.0 - split_ratio))
+    train_eps   = episodes_data[:split_idx]
+    val_eps     = episodes_data[split_idx:]
 
+    print(f"\nSplitting {len(episodes_data)} collected episodes into "
+          f"{len(train_eps)} train and {len(val_eps)} validation.")
+
+
+    # ── 3. Helper: flatten a list of episodes into four parallel lists ────────
     def flatten_episodes(episodes):
         """
-        Flattens a list of episode transitions into separate lists of states, actions, rewards, and termination flags.
-        This function correctly aligns s_t, a_t, r_t with s_{t+1}.
-        - states[t] = s_t
-        - actions[t] = a_t (action taken from s_t)
-        - rewards[t] = r_t (reward received after a_t)
-        - stop_episodes[t] = done (True if s_{t+1} is terminal)
-        The final state of an episode is included in the states list, but there is no corresponding action or reward.
+        Returns: states, actions, rewards, stop_episodes
+        where every list has identical length.
         """
-        states, actions, rewards, stop_episodes = [], [], [], []
-        for episode in episodes:
-            if not episode:
+        states, actions, rewards, done_flags = [], [], [], []
+
+        for ep in episodes:
+            if not ep:     # skip empty or truncated episodes
                 continue
 
-            # The 'states' list will contain all observations, from s_0 to s_T.
-            # The 'actions', 'rewards', and 'stop_episodes' lists will have one fewer element, corresponding to transitions.
-            
-            # Add the initial observation
-            s0 = episode[0][0] # (s, a, r, ns, done)
-            # Extract the last frame from the stack for the state
-            states.append(s0.unsqueeze(0)[:, -1, :, :].unsqueeze(0))
+            for (obs, act, rew, next_obs, done) in ep:
+                # 3.1 Current *state*  s_t  (last frame of the stack)
+                st = obs.unsqueeze(0)[:, -1, :, :].unsqueeze(1)   # [C,1,H,W]
+                states.append(st)
 
-            for transition in episode:
-                _obs, action, reward, next_obs, done = transition
-                
-                # The next state from the transition becomes the current state in the next step of the lists
-                states.append(next_obs.unsqueeze(0)[:, -1, :, :].unsqueeze(0))
-                
-                # Store the action, reward, and done flag for the transition that *led* to this state
-                actions.append(torch.tensor(action, dtype=torch.int32))
-                rewards.append(torch.tensor(reward, dtype=torch.float32))
-                stop_episodes.append(done)
-                
-        return states, actions, rewards, stop_episodes
+                # 3.2 Transition data that *led* to next_obs
+                actions.append(torch.tensor(act, dtype=torch.int32))
+                rewards.append(torch.tensor(rew, dtype=torch.float32))
+                done_flags.append(bool(done))          # may be True on last step
 
-    train_s, train_a, train_r, train_se = flatten_episodes(train_episodes)
-    val_s, val_a, val_r, val_se = flatten_episodes(val_episodes)
+            # 3.3 Append terminal next-state and padding transition -------------
+            terminal_state = ep[-1][3].unsqueeze(0)[:, -1, :, :].unsqueeze(1)
+            states.append(terminal_state)
 
-    sequence_length = config['data_and_patching'].get('sequence_length')
-    
-    train_dataset = ExperienceDataset(train_s, train_a, train_r, train_se, sequence_length=sequence_length)
-    val_dataset = ExperienceDataset(val_s, val_a, val_r, val_se, sequence_length=sequence_length)
+            actions.append(torch.tensor(PAD_ACTION, dtype=torch.int32))
+            rewards.append(torch.tensor(PAD_REWARD, dtype=torch.float32))
+            done_flags.append(True)   # sentinel forcing ‘done’ at boundary
 
-    print(f"Created training dataset with {len(train_dataset)} transitions.")
-    print(f"Created validation dataset with {len(val_dataset)} transitions.")
-    
-    return train_dataset, val_dataset
+        return states, actions, rewards, done_flags
+
+
+    # ── 4. Convert to ExperienceDataset objects ───────────────────────────────
+    train_s, train_a, train_r, train_d = flatten_episodes(train_eps)
+    val_s,   val_a,   val_r,   val_d   = flatten_episodes(val_eps)
+
+    train_ds = ExperienceDataset(train_s, train_a, train_r, train_d,
+                                 sequence_length=sequence_length)
+    val_ds   = ExperienceDataset(val_s,   val_a,   val_r,   val_d,
+                                 sequence_length=sequence_length)
+
+    print(f"Created training dataset with {len(train_ds)} valid start indices.")
+    print(f"Created validation dataset with {len(val_ds)} valid start indices.")
+
+    return train_ds, val_ds
 
 
 
