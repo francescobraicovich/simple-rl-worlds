@@ -161,12 +161,13 @@ class MultiHeadCrossAttention(nn.Module):
     Multi-head cross-attention with Rotary Position Embeddings.
     Queries from x, keys/values from context.
     """
-    def __init__(self, embed_dim, num_heads, attn_drop_rate=0., proj_drop_rate=0.):
+    def __init__(self, embed_dim, num_heads, attn_drop_rate=0., proj_drop_rate=0., causal=False):
         super().__init__()
         assert embed_dim % num_heads == 0, "embed_dim must be divisible by num_heads"
         self.num_heads = num_heads
         self.head_dim = embed_dim // num_heads
         self.scale = self.head_dim ** -0.5
+        self.causal = causal
 
         self.q_proj = nn.Linear(embed_dim, embed_dim, bias=False)
         self.kv_proj = nn.Linear(embed_dim, embed_dim * 2, bias=False)
@@ -193,6 +194,14 @@ class MultiHeadCrossAttention(nn.Module):
         k = (k * cos_k) + (rotate_half(k) * sin_k)
 
         attn = (q @ k.transpose(-2, -1)) * self.scale
+        
+        # Apply causal mask if needed (queries can only attend to keys at earlier or same positions)
+        if self.causal:
+            # For cross-attention, we assume queries and keys have the same sequence length
+            # and we want query at position i to only attend to keys at positions 0 to i
+            mask = torch.tril(torch.ones(N_q, N_kv, device=x.device, dtype=torch.bool))
+            attn = attn.masked_fill(~mask, float('-inf'))
+        
         attn = attn.softmax(dim=-1)
         attn = self.attn_drop(attn)
 
