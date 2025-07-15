@@ -26,6 +26,8 @@ from typing import List
 
 # Set MPS fallback for unsupported operations
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
+# Force unbuffered output for immediate print statement flushing
+os.environ['PYTHONUNBUFFERED'] = '1'
 
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent
@@ -128,6 +130,8 @@ class FullPipelineRunner:
         script_path = self.scripts_dir / script_name
         
         if not script_path.exists():
+            print(f"Script not found: {script_path}")
+            sys.stdout.flush()
             return False
             
         # Prepare command
@@ -167,6 +171,7 @@ class FullPipelineRunner:
                 
         except Exception as e:
             print(f"Error while running script {script_name}: {e}")
+            sys.stdout.flush()
             return False
             
     def run_pipeline(self, fail_fast: bool = True) -> bool:
@@ -180,11 +185,14 @@ class FullPipelineRunner:
             True if all stages completed successfully, False if any stage failed
         """
         if self.only_stages:
-            pass
+            print(f"Running only specified stages: {', '.join(self.only_stages)}")
+            sys.stdout.flush()
         elif self.skip_stages:
-            pass
+            print(f"Skipping stages: {', '.join(self.skip_stages)}")
+            sys.stdout.flush()
         else:
-            pass
+            print("Running complete pipeline")
+            sys.stdout.flush()
             
         pipeline_start_time = time.time()
         successful_stages = []
@@ -193,29 +201,46 @@ class FullPipelineRunner:
         for stage in self.pipeline_stages:
 
             print(f"\nRunning stage: {stage['name']}")
+            sys.stdout.flush()
             stage_name = stage['name']
             script_name = stage['script']
             description = stage['description']
             
             if not self._should_run_stage(stage_name):
+                print(f"Skipping stage: {stage_name}")
+                sys.stdout.flush()
                 continue
                 
             success = self._run_script(script_name, stage_name)
             
             if success:
                 successful_stages.append(stage_name)
+                print(f"✓ Stage '{stage_name}' completed successfully")
+                sys.stdout.flush()
             else:
                 failed_stages.append(stage_name)
+                print(f"✗ Stage '{stage_name}' failed")
+                sys.stdout.flush()
                 
                 if fail_fast:
+                    print("Pipeline stopped due to failure (fail-fast mode)")
+                    sys.stdout.flush()
                     break
                     
         pipeline_end_time = time.time()
         total_duration = pipeline_end_time - pipeline_start_time
         
         if failed_stages:
+            print(f"\nPipeline completed with failures. Failed stages: {', '.join(failed_stages)}")
+            print(f"Successful stages: {', '.join(successful_stages)}")
+            print(f"Total pipeline duration: {total_duration:.2f} seconds")
+            sys.stdout.flush()
             return False
         else:
+            print(f"\n✓ Pipeline completed successfully!")
+            print(f"All stages completed: {', '.join(successful_stages)}")
+            print(f"Total pipeline duration: {total_duration:.2f} seconds")
+            sys.stdout.flush()
             return True
             
     def list_stages(self):
