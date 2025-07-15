@@ -46,20 +46,22 @@ def init_encoder(config_path: str = None) -> VideoViT:
     encoder_config = config['models']['encoder']
     embed_dim = config['embed_dim']
     
-    encoder = VideoViT(
-        img_h=data_config['image_height'],
-        img_w=data_config['image_width'],
-        frames_per_clip=data_config['sequence_length'],
-        patch_size_h=data_config['patch_size_h'],
-        patch_size_w=data_config['patch_size_w'],
-        embed_dim=embed_dim,
-        mlp_ratio=encoder_config['mlp_ratio'],
-        drop_rate=encoder_config['dropout'],
-        attn_drop_rate=encoder_config['attention_dropout'],
-        encoder_num_layers=encoder_config['num_layers'],
-        encoder_num_heads=encoder_config['num_heads'],
-        encoder_drop_path_rate=encoder_config['predictor_drop_path_rate']
-    )
+    #encoder = VideoViT(
+    #    img_h=data_config['image_height'],
+    #    img_w=data_config['image_width'],
+    #    frames_per_clip=data_config['sequence_length'],
+    #    patch_size_h=data_config['patch_size_h'],
+    #    patch_size_w=data_config['patch_size_w'],
+    #    embed_dim=embed_dim,
+    #    mlp_ratio=encoder_config['mlp_ratio'],
+    #    drop_rate=encoder_config['dropout'],
+    #    attn_drop_rate=encoder_config['attention_dropout'],
+    #    encoder_num_layers=encoder_config['num_layers'],
+    #    encoder_num_heads=encoder_config['num_heads'],
+    #    encoder_drop_path_rate=encoder_config['predictor_drop_path_rate']
+    #)
+
+    encoder = ConvEncoder()
     
     return encoder
 
@@ -100,18 +102,20 @@ def init_predictor(config_path: str = None) -> LatentDynamicsPredictor:
 
     data_config = config['data_and_patching']
 
-    predictor = LatentDynamicsPredictor(
-        frames_per_clip=data_config['sequence_length'],
-        embed_dim=embed_dim,
-        num_actions= num_actions,
-        predictor_num_layers=predictor_config['num_layers'],
-        predictor_num_heads=predictor_config['num_heads'],
-        mlp_ratio=predictor_config['mlp_ratio'],
-        drop_rate=predictor_config['dropout'],
-        attn_drop_rate=predictor_config['attention_dropout'],
-        predictor_drop_path_rate=predictor_config['predictor_drop_path_rate']
-    )
-    
+    #predictor = LatentDynamicsPredictor(
+    #    frames_per_clip=data_config['sequence_length'],
+    #    embed_dim=embed_dim,
+    #    num_actions= num_actions,
+    #    predictor_num_layers=predictor_config['num_layers'],
+    #    predictor_num_heads=predictor_config['num_heads'],
+    #    mlp_ratio=predictor_config['mlp_ratio'],
+    #    drop_rate=predictor_config['dropout'],
+    #    attn_drop_rate=predictor_config['attention_dropout'],
+    #    predictor_drop_path_rate=predictor_config['predictor_drop_path_rate']
+    #)
+
+    predictor = MLPHistoryPredictor()
+
     return predictor
 
 
@@ -132,33 +136,21 @@ def init_decoder(config_path: str = None) -> HybridConvTransformerDecoder:
     decoder_config = config['models']['decoder']
     embed_dim = config['embed_dim']
     
-    decoder = HybridConvTransformerDecoder(
-        img_h=data_config['image_height'],
-        img_w=data_config['image_width'],
-        embed_dim=embed_dim,
-        drop_rate=decoder_config['dropout'],
-        attn_drop_rate=decoder_config['attention_dropout'],
-        decoder_embed_dim=embed_dim,  # Use same embed_dim for decoder
-        decoder_num_heads=decoder_config['num_heads'],
-        decoder_drop_path_rate=decoder_config['decoder_drop_path_rate'],
-        patch_size_h=data_config['patch_size_h'],
-        patch_size_w=data_config['patch_size_w']
-    )
-    
-    return decoder
+    #decoder = HybridConvTransformerDecoder(
+    #    img_h=data_config['image_height'],
+    #    img_w=data_config['image_width'],
+    #    embed_dim=embed_dim,
+    #    drop_rate=decoder_config['dropout'],
+    #    attn_drop_rate=decoder_config['attention_dropout'],
+    #    decoder_embed_dim=embed_dim,  # Use same embed_dim for decoder
+    #    decoder_num_heads=decoder_config['num_heads'],
+    #    decoder_drop_path_rate=decoder_config['decoder_drop_path_rate'],
+    #    patch_size_h=data_config['patch_size_h'],
+    #    patch_size_w=data_config['patch_size_w']
+    #)
 
-
-def init_conv_decoder(config_path: str = None) -> ConvDecoder:
-    """
-    Initialize the ConvDecoder model.
-    
-    Args:
-        config_path: Path to config.yaml file (not used, but kept for consistency).
-    
-    Returns:
-        Initialized ConvDecoder model.
-    """
     decoder = ConvDecoder()
+    
     return decoder
 
 
@@ -190,66 +182,3 @@ def init_reward_predictor(config_path: str = None) -> RewardPredictor:
     )
     
     return reward_predictor
-
-
-def init_mlp_predictor() -> MLPHistoryPredictor:
-    """
-    Initialize the MLPHistoryPredictor model with default configuration.
-    
-    Returns:
-        Initialized MLPHistoryPredictor model.
-    """
-    return MLPHistoryPredictor(**MLPHistoryPredictor.default_config)
-
-
-def init_mlp_predictor_from_config(config_path: str = None) -> MLPHistoryPredictor:
-    """
-    Initialize the MLPHistoryPredictor model with configuration from file.
-    
-    Args:
-        config_path: Path to config.yaml file. If None, uses default location.
-    
-    Returns:
-        Initialized MLPHistoryPredictor model with config-based parameters.
-    """
-    if config_path is None:
-        config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config.yaml')
-    
-    config = load_config(config_path)
-    
-    # Extract relevant parameters from config
-    predictor_config = config.get('models', {}).get('predictor', {})
-    data_config = config.get('data_and_patching', {})
-    
-    return MLPHistoryPredictor(
-        frames_per_clip=data_config.get('frames_per_clip', 6),
-        latent_dim=config.get('embed_dim', 128),
-        num_actions=predictor_config.get('num_actions', 18),
-        config_path=config_path
-    )
-
-
-def init_mlp_predictor_from_encoder_output(
-    encoder_output: torch.Tensor,
-    config_path: str = None,
-    **kwargs
-) -> MLPHistoryPredictor:
-    """
-    Initialize MLPHistoryPredictor by inferring dimensions from encoder output.
-    
-    Args:
-        encoder_output: Tensor of shape [B, T, E] from encoder
-        config_path: Path to config.yaml file for num_actions
-        **kwargs: Additional arguments for MLPHistoryPredictor
-    
-    Returns:
-        Initialized MLPHistoryPredictor model with inferred dimensions.
-    """
-    if config_path is None:
-        config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config.yaml')
-    
-    return MLPHistoryPredictor.from_encoder_output(
-        encoder_output=encoder_output,
-        config_path=config_path,
-        **kwargs
-    )
