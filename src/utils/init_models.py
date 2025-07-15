@@ -2,7 +2,7 @@ import yaml
 import os
 from typing import Dict, Any
 
-from ..models.encoder import VideoViT
+from ..models.encoder import VideoViT, ConvEncoder
 from ..models.predictor import LatentDynamicsPredictor
 from ..models.decoder import HybridConvTransformerDecoder
 from ..models.reward_predictor import RewardPredictor
@@ -60,6 +60,20 @@ def init_encoder(config_path: str = None) -> VideoViT:
         encoder_drop_path_rate=encoder_config['predictor_drop_path_rate']
     )
     
+    return encoder
+
+
+def init_conv_encoder(config_path: str = None) -> ConvEncoder:
+    """
+    Initialize the ConvEncoder model.
+    
+    Args:
+        config_path: Path to config.yaml file (not used, but kept for consistency).
+    
+    Returns:
+        Initialized ConvEncoder model.
+    """
+    encoder = ConvEncoder()
     return encoder
 
 
