@@ -14,8 +14,8 @@ data_and_patching:
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 150
-  max_steps_per_episode: 2000
+  num_episodes: 10
+  max_steps_per_episode: 5
   random_action_percentage: 0.15 # Percentage of actions to be random (0.0 = no random actions)
   load_path: "assault_rep_8.pth"
   filename: "assault_rep_8.pth"
@@ -25,9 +25,9 @@ data_collection:
     n_envs: 10 # Number of parallel environments for PPO training (default: CPU count)
     action_repetition_k: 8
     learning_rate: 0.0003
-    total_train_timesteps: 3000000 # Timesteps to train PPO before data collection (reduced for testing)
+    total_train_timesteps: 10000 # Timesteps to train PPO before data collection (reduced for testing)
     n_steps: 128       # PPO n_steps parameter
-    batch_size: 128      # PPO batch_size parameter
+    batch_size: 4      # PPO batch_size parameter
     n_epochs: 6         # PPO n_epochs parameter
     gamma: 0.99         # PPO gamma parameter
     gae_lambda: 0.95    # PPO gae_lambda parameter
