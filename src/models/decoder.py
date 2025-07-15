@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from .encoder import RotaryEmbedding, rotate_half, DropPath
 
@@ -299,3 +299,140 @@ class HybridConvTransformerDecoder(nn.Module):
         recon_2d = self.final_conv(feat_2d)  # [B, 1, H, W]
         recon = recon_2d.unsqueeze(2)  # [B, 1, 1, H, W]
         return recon
+
+
+class ConvDecoder(nn.Module):
+    """
+    Convolutional decoder for reconstructing 64x64 grayscale images from latent vectors.
+    
+    Architecture:
+    - Input: [B, 1, embed_dim] latent vector from predictor
+    - Linear layer: latent_dim → 256 × 4 × 4
+    - 4 ConvTranspose2d layers with SiLU + LayerNorm
+    - Output: [B, 1, 1, 64, 64] reconstructed frame
+    """
+    
+    def __init__(self):
+        super().__init__()
+        
+        # Default configuration
+        default_config = {
+            'latent_dim': 64,
+            'initial_size': 4,  # 4x4 initial spatial size
+            'conv_channels': [256, 128, 64, 32, 1],  # Channel progression
+            'activation': 'silu'
+        }
+        
+        self.config = default_config
+        
+        # Extract configuration
+        self.latent_dim = self.config['latent_dim']
+        initial_size = self.config['initial_size']
+        conv_channels = self.config['conv_channels']
+        
+        # Get activation function
+        if self.config['activation'].lower() == 'silu':
+            activation_fn = nn.SiLU
+        elif self.config['activation'].lower() == 'relu':
+            activation_fn = nn.ReLU
+        elif self.config['activation'].lower() == 'gelu':
+            activation_fn = nn.GELU
+        else:
+            activation_fn = nn.SiLU  # Default fallback
+        
+        # Initial linear layer: latent_dim → 256 × 4 × 4
+        self.initial_linear = nn.Linear(
+            self.latent_dim, 
+            conv_channels[0] * initial_size * initial_size
+        )
+        
+        # Store initial spatial size and first channel count
+        self.initial_size = initial_size
+        self.initial_channels = conv_channels[0]
+        
+        # Build transpose convolution layers with LayerNorm
+        self.conv_transpose_layers = nn.ModuleList()
+        self.layer_norms = nn.ModuleList()
+        
+        for i in range(len(conv_channels) - 1):
+            in_channels = conv_channels[i]
+            out_channels = conv_channels[i + 1]
+            
+            # Transpose convolution layer
+            conv_transpose = nn.ConvTranspose2d(
+                in_channels, out_channels,
+                kernel_size=4, stride=2, padding=1
+            )
+            self.conv_transpose_layers.append(conv_transpose)
+            
+            # LayerNorm for all layers except the final one
+            if i < len(conv_channels) - 2:  # Not the final layer
+                self.layer_norms.append(nn.LayerNorm(out_channels))
+            else:
+                self.layer_norms.append(None)  # No norm for final layer
+        
+        # Activation function
+        self.activation = activation_fn()
+        
+        # Initialize weights
+        self.apply(self._init_weights)
+    
+    def _init_weights(self, m: nn.Module) -> None:
+        """Initialize model weights."""
+        if isinstance(m, (nn.ConvTranspose2d, nn.Conv2d)):
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.ones_(m.weight)
+            nn.init.zeros_(m.bias)
+    
+    def forward(self, latent_token: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through the decoder.
+        
+        Args:
+            latent_token: Input tensor of shape [B, 1, embed_dim]
+            
+        Returns:
+            Reconstructed image of shape [B, 1, 1, 64, 64]
+        """
+        # Input shape: [B, 1, embed_dim]
+        B, T, E = latent_token.shape
+        assert T == 1, f"Expected single token, got {T} tokens"
+        assert E == self.latent_dim, f"Expected embed_dim {self.latent_dim}, got {E}"
+        
+        # Squeeze token dimension: [B, 1, embed_dim] → [B, embed_dim]
+        x = latent_token.squeeze(1)
+        
+        # Linear layer: [B, embed_dim] → [B, 256*4*4]
+        x = self.initial_linear(x)
+        
+        # Reshape to feature map: [B, 256*4*4] → [B, 256, 4, 4]
+        x = x.reshape(B, self.initial_channels, self.initial_size, self.initial_size)
+        
+        # Pass through transpose convolution layers
+        for i, (conv_transpose, layer_norm) in enumerate(zip(self.conv_transpose_layers, self.layer_norms)):
+            # Apply transpose convolution
+            x = conv_transpose(x)
+            
+            # Apply activation (for all layers)
+            if i < len(self.conv_transpose_layers) - 1:  # Not the final layer
+                x = self.activation(x)
+                
+                # Apply LayerNorm if available
+                if layer_norm is not None:
+                    # Reshape for LayerNorm: [B, C, H, W] → [B, H, W, C]
+                    C, H, W = x.shape[1], x.shape[2], x.shape[3]
+                    x = x.permute(0, 2, 3, 1)  # [B, H, W, C]
+                    x = layer_norm(x)          # Apply LayerNorm on channel dimension
+                    x = x.permute(0, 3, 1, 2)  # Back to [B, C, H, W]
+        
+        # Add temporal dimension: [B, 1, 64, 64] → [B, 1, 1, 64, 64]
+        output = x.unsqueeze(2)
+        
+        return output
