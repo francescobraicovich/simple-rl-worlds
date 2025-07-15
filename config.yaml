@@ -7,25 +7,25 @@ environment:
 data_and_patching:
   image_height: 64
   image_width: 64
-  sequence_length: 6
+  sequence_length: 4
   patch_size_h: 4              # Patch size for image preprocessing
   patch_size_w: 4              # Patch size for image preprocessing
   patch_size_t: 2              # Temporal patch size for video data
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 10
-  max_steps_per_episode: 5
+  num_episodes: 40
+  max_steps_per_episode: 1000
   random_action_percentage: 0.15 # Percentage of actions to be random (0.0 = no random actions)
-  load_path: "assault_rep_8.pth"
-  filename: "assault_rep_8.pth"
+  load_path: "pong_rep_8.pth"
+  filename: "pong_rep_8.pth"
   validation_split: 0.15
   ppo_agent:
-    load: true # Whether to load a pre-trained PPO agent
+    load: False # Whether to load a pre-trained PPO agent
     n_envs: 10 # Number of parallel environments for PPO training (default: CPU count)
-    action_repetition_k: 8
+    action_repetition_k: 6
     learning_rate: 0.0003
-    total_train_timesteps: 10000 # Timesteps to train PPO before data collection (reduced for testing)
+    total_train_timesteps: 50000 # Timesteps to train PPO before data collection (reduced for testing)
     n_steps: 128       # PPO n_steps parameter
     batch_size: 4      # PPO batch_size parameter
     n_epochs: 6         # PPO n_epochs parameter
@@ -40,18 +40,18 @@ embed_dim: 64 # Dimension of the embedding space for the transformer model
 
 training:
   main_loops:
-    num_epochs: 12 # Number of epochs for training
+    num_epochs: 20 # Number of epochs for training
     batch_size: 64 # Batch size for training
     learning_rate: 0.0001 # Learning rate for the optimizer
     weight_decay: 0.0001 # Weight decay for the optimizer
     ema_decay: 0.999 # Exponential moving average decay for model parameters
-    gradient_clipping: 0.5 # Maximum norm for gradient clipping
+    gradient_clipping: 1.0 # Maximum norm for gradient clipping
   jepa_decoder:
-    num_epochs: 12 # Number of epochs for the JEPA decoder training
+    num_epochs: 20 # Number of epochs for the JEPA decoder training
     batch_size: 64 # Batch size for the JEPA decoder training
     learning_rate: 0.0001 # Learning rate for the JEPA decoder optimizer
     weight_decay: 0.0001 # Weight decay for the JEPA decoder optimizer
-    gradient_clipping: 0.5 # Maximum norm for JEPA decoder gradient clipping
+    gradient_clipping: 1.0 # Maximum norm for JEPA decoder gradient clipping
   reward_predictor:
     versions: "both" # Versions of the reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
     num_epochs: 20 # Number of epochs for the reward predictor training

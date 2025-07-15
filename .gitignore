@@ -192,3 +192,5 @@ cython_debug/
 
 slurm-*.out
 run_job.slurm
+
+/paper
