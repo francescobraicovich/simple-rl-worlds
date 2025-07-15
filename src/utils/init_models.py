@@ -3,10 +3,11 @@ import os
 from typing import Dict, Any
 
 from ..models.encoder import VideoViT, ConvEncoder
-from ..models.predictor import LatentDynamicsPredictor
-from ..models.decoder import HybridConvTransformerDecoder
+from ..models.predictor import LatentDynamicsPredictor, MLPHistoryPredictor
+from ..models.decoder import HybridConvTransformerDecoder, ConvDecoder
 from ..models.reward_predictor import RewardPredictor
 from ..data.data_utils import _initialize_environment
+import torch
 
 def load_config(config_path: str = None) -> Dict[str, Any]:
     """
@@ -147,6 +148,20 @@ def init_decoder(config_path: str = None) -> HybridConvTransformerDecoder:
     return decoder
 
 
+def init_conv_decoder(config_path: str = None) -> ConvDecoder:
+    """
+    Initialize the ConvDecoder model.
+    
+    Args:
+        config_path: Path to config.yaml file (not used, but kept for consistency).
+    
+    Returns:
+        Initialized ConvDecoder model.
+    """
+    decoder = ConvDecoder()
+    return decoder
+
+
 def init_reward_predictor(config_path: str = None) -> RewardPredictor:
     """
     Initialize the RewardPredictor model from configuration.
@@ -175,3 +190,66 @@ def init_reward_predictor(config_path: str = None) -> RewardPredictor:
     )
     
     return reward_predictor
+
+
+def init_mlp_predictor() -> MLPHistoryPredictor:
+    """
+    Initialize the MLPHistoryPredictor model with default configuration.
+    
+    Returns:
+        Initialized MLPHistoryPredictor model.
+    """
+    return MLPHistoryPredictor(**MLPHistoryPredictor.default_config)
+
+
+def init_mlp_predictor_from_config(config_path: str = None) -> MLPHistoryPredictor:
+    """
+    Initialize the MLPHistoryPredictor model with configuration from file.
+    
+    Args:
+        config_path: Path to config.yaml file. If None, uses default location.
+    
+    Returns:
+        Initialized MLPHistoryPredictor model with config-based parameters.
+    """
+    if config_path is None:
+        config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config.yaml')
+    
+    config = load_config(config_path)
+    
+    # Extract relevant parameters from config
+    predictor_config = config.get('models', {}).get('predictor', {})
+    data_config = config.get('data_and_patching', {})
+    
+    return MLPHistoryPredictor(
+        frames_per_clip=data_config.get('frames_per_clip', 6),
+        latent_dim=config.get('embed_dim', 128),
+        num_actions=predictor_config.get('num_actions', 18),
+        config_path=config_path
+    )
+
+
+def init_mlp_predictor_from_encoder_output(
+    encoder_output: torch.Tensor,
+    config_path: str = None,
+    **kwargs
+) -> MLPHistoryPredictor:
+    """
+    Initialize MLPHistoryPredictor by inferring dimensions from encoder output.
+    
+    Args:
+        encoder_output: Tensor of shape [B, T, E] from encoder
+        config_path: Path to config.yaml file for num_actions
+        **kwargs: Additional arguments for MLPHistoryPredictor
+    
+    Returns:
+        Initialized MLPHistoryPredictor model with inferred dimensions.
+    """
+    if config_path is None:
+        config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'config.yaml')
+    
+    return MLPHistoryPredictor.from_encoder_output(
+        encoder_output=encoder_output,
+        config_path=config_path,
+        **kwargs
+    )
