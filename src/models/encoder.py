@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from typing import Dict, Any, Optional
 
 
 class RotaryEmbedding(nn.Module):
@@ -320,3 +321,162 @@ class VideoViT(nn.Module):
         x = self.temporal_norm(x)
         
         return x
+
+
+class ConvEncoder(nn.Module):
+    """
+    Convolutional encoder
+    
+    Architecture:
+    - Input: (B, 1, T, 64, 64) -> squeeze(1) -> (B, T, 64, 64)
+    - 4 conv layers: 1→32→64→128→256 channels
+    - Each conv: kernel_size=4, stride=2, padding=1, SiLU + LayerNorm
+    - Final linear layer maps to latent_dim
+    - Output: (B, T, latent_dim)
+    """
+    
+    def __init__(self):
+        super().__init__()
+        
+        # Default configuration
+        default_config = {
+            'latent_dim': 1024,
+            'input_channels': 1,
+            'conv_channels': [32, 64, 128, 256],
+            'activation': 'silu'
+        }
+        
+        self.config = default_config
+        
+        # Extract configuration
+        self.latent_dim = self.config['latent_dim']
+        input_channels = self.config['input_channels']
+        conv_channels = self.config['conv_channels']
+        
+        # Get activation function
+        if self.config['activation'].lower() == 'silu':
+            activation_fn = nn.SiLU
+        elif self.config['activation'].lower() == 'relu':
+            activation_fn = nn.ReLU
+        elif self.config['activation'].lower() == 'gelu':
+            activation_fn = nn.GELU
+        else:
+            activation_fn = nn.SiLU  # Default fallback
+        
+        # Build CNN layers with LayerNorm after each conv
+        self.conv_layers = nn.ModuleList()
+        self.layer_norms = nn.ModuleList()
+        in_channels = input_channels
+        
+        for out_channels in conv_channels:
+            # Conv layer
+            conv = nn.Conv2d(
+                in_channels, out_channels,
+                kernel_size=4, stride=2, padding=1
+            )
+            self.conv_layers.append(conv)
+            
+            # LayerNorm for this layer's output channels
+            # LayerNorm will be applied across the spatial dimensions
+            self.layer_norms.append(nn.LayerNorm(out_channels))
+            
+            in_channels = out_channels
+        
+        # Activation function
+        self.activation = activation_fn()
+        
+        # Calculate flattened size after convolutions
+        # Input: 64x64, after 4 conv layers with stride=2: 64/2^4 = 4x4
+        final_spatial_size = 64 // (2 ** len(conv_channels))  # 4x4
+        flattened_size = conv_channels[-1] * final_spatial_size * final_spatial_size
+        
+        # Add LayerNorm before the final linear layer
+        self.final_norm = nn.LayerNorm(flattened_size)
+        
+        # Final linear layer to latent dimension
+        self.fc = nn.Linear(flattened_size, self.latent_dim)
+        
+        # Initialize weights
+        self.apply(self._init_weights)
+    
+    def _init_weights(self, m: nn.Module) -> None:
+        """Initialize model weights."""
+        if isinstance(m, nn.Conv2d):
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.ones_(m.weight)
+            nn.init.zeros_(m.bias)
+    
+    def encode_single_frame(self, frame: torch.Tensor) -> torch.Tensor:
+        """
+        Encode a single frame through the CNN.
+        
+        Args:
+            frame: Single frame tensor of shape (64, 64)
+            
+        Returns:
+            Latent vector of shape (latent_dim,)
+        """
+        # Add channel dimension: (64, 64) -> (1, 64, 64)
+        x = frame.unsqueeze(0)
+        
+        # Pass through each conv layer with LayerNorm
+        for conv, layer_norm in zip(self.conv_layers, self.layer_norms):
+            # Apply convolution
+            x = conv(x)  # Shape: (C, H, W)
+            
+            # Apply activation
+            x = self.activation(x)
+            
+            # Apply LayerNorm: reshape from (C, H, W) to (H, W, C) for LayerNorm
+            C, H, W = x.shape
+            x = x.permute(1, 2, 0)  # (H, W, C)
+            x = layer_norm(x)       # Apply LayerNorm on channel dimension
+            x = x.permute(2, 0, 1)  # Back to (C, H, W)
+        
+        # Flatten spatial dimensions
+        x = x.flatten()  # Shape: (C*H*W,)
+        
+        # Apply final layer normalization
+        x = self.final_norm(x)
+        
+        # Map to latent dimension
+        latent = self.fc(x)  # Shape: (latent_dim,)
+        
+        return latent
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through the encoder.
+        
+        Args:
+            x: Input tensor of shape (B, 1, T, 64, 64)
+            
+        Returns:
+            Latent vectors of shape (B, T, latent_dim)
+        """
+        # Input shape: (B, 1, T, 64, 64)
+        B, C, T, H, W = x.shape
+        assert C == 1, f"Expected 1 channel, got {C}"
+        assert H == 64 and W == 64, f"Expected 64x64 images, got {H}x{W}"
+        
+        # Squeeze channel dimension: (B, 1, T, 64, 64) -> (B, T, 64, 64)
+        x = x.squeeze(1)
+        
+        # Use vmap to process each frame independently
+        # vmap over batch and time dimensions
+        def process_batch(batch_frames):
+            # batch_frames: (T, 64, 64)
+            return torch.vmap(self.encode_single_frame)(batch_frames)
+        
+        # Apply vmap over batch dimension
+        latents = torch.vmap(process_batch)(x)  # Shape: (B, T, latent_dim)
+        
+        return latents
+
