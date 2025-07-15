@@ -41,28 +41,28 @@ embed_dim: 64 # Dimension of the embedding space for the transformer model
 training:
   main_loops:
     num_epochs: 100 # Number of epochs for training
-    batch_size: 64 # Batch size for training
+    batch_size: 128 # Batch size for training
     learning_rate: 0.0001 # Learning rate for the optimizer
     weight_decay: 0.0001 # Weight decay for the optimizer
     ema_decay: 0.999 # Exponential moving average decay for model parameters
     gradient_clipping: 1.0 # Maximum norm for gradient clipping
   jepa_decoder:
     num_epochs: 100 # Number of epochs for the JEPA decoder training
-    batch_size: 64 # Batch size for the JEPA decoder training
+    batch_size: 128 # Batch size for the JEPA decoder training
     learning_rate: 0.0001 # Learning rate for the JEPA decoder optimizer
     weight_decay: 0.0001 # Weight decay for the JEPA decoder optimizer
     gradient_clipping: 1.0 # Maximum norm for JEPA decoder gradient clipping
   reward_predictor:
     versions: "both" # Versions of the reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
     num_epochs: 100 # Number of epochs for the reward predictor training
-    batch_size: 64 # Batch size for the reward predictor training
+    batch_size: 128 # Batch size for the reward predictor training
     learning_rate: 0.0001 # Learning rate for the reward predictor optimizer
     weight_decay: 0.0001 # Weight decay for the reward predictor optimizer
     gradient_clipping: 0.5 # Maximum norm for reward predictor gradient clipping
   dynamics_reward_predictor:
     versions: "both" # Versions of the dynamics reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
     num_epochs: 100 # Number of epochs for the dynamics reward predictor training
-    batch_size: 64 # Batch size for the dynamics reward predictor training
+    batch_size: 128 # Batch size for the dynamics reward predictor training
     learning_rate: 0.0001 # Learning rate for the dynamics reward predictor optimizer
     weight_decay: 0.0001 # Weight decay for the dynamics reward predictor optimizer
     gradient_clipping: 0.5 # Maximum norm for gradient clipping
