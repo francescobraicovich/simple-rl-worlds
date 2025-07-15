@@ -340,7 +340,7 @@ class ConvEncoder(nn.Module):
         
         # Default configuration
         default_config = {
-            'latent_dim': 1024,
+            'latent_dim': 64,
             'input_channels': 1,
             'conv_channels': [32, 64, 128, 256],
             'activation': 'silu'
