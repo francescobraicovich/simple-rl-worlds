@@ -108,9 +108,9 @@ class MLPHistoryPredictor(nn.Module):
     
     # Default configuration
     default_config = {
-        'frames_per_clip': 6,
-        'latent_dim': 128,
-        'num_actions': 18,
+        'frames_per_clip': 4,
+        'latent_dim': 64,
+        'num_actions': 7,
         'hidden_sizes': [512, 512],
         'activation': 'silu',
         'dropout_rate': 0.1
@@ -231,6 +231,10 @@ class MLPHistoryPredictor(nn.Module):
             x_pred: Predicted latent vector for the next frame, shape [B, 1, E]
         """
         B, T, E = x.shape
+
+        # ensure a is long tensor
+        if not a.is_floating_point():
+            a = a.long()
         
         # Validate input dimensions
         if T != self.frames_per_clip:
