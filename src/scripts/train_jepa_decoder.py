@@ -35,6 +35,7 @@ sys.path.insert(0, str(project_root))
 from src.utils.init_models import init_encoder, init_predictor, init_decoder, load_config
 from src.scripts.collect_load_data import DataLoadingPipeline
 from src.utils.set_device import set_device
+from src.utils.scheduler_utils import create_lr_scheduler, step_scheduler, get_current_lr
 
 
 class JEPADecoderTrainer:
@@ -61,7 +62,7 @@ class JEPADecoderTrainer:
         self.config = load_config(config_path)
         
         # Training parameters
-        self.training_config = self.config['training']['main_loops']
+        self.training_config = self.config['training']['jepa_decoder']
         self.num_epochs = self.training_config['num_epochs']
         self.batch_size = self.training_config['batch_size']
         self.learning_rate = self.training_config['learning_rate']
@@ -78,6 +79,7 @@ class JEPADecoderTrainer:
         
         # Training components
         self.optimizer = None
+        self.lr_scheduler = None
         self.criterion = nn.L1Loss()  # Mean Absolute Error for reconstruction
         
         # Data
@@ -125,7 +127,7 @@ class JEPADecoderTrainer:
         
     def initialize_optimizer(self):
         """
-        Initialize the AdamW optimizer only for the decoder's trainable parameters.
+        Initialize the AdamW optimizer and learning rate scheduler only for the decoder's trainable parameters.
         """
         # Only pass decoder parameters to the optimizer
         self.optimizer = optim.AdamW(
@@ -133,6 +135,19 @@ class JEPADecoderTrainer:
             lr=self.learning_rate,
             weight_decay=self.weight_decay
         )
+        
+        # Initialize learning rate scheduler if configured
+        scheduler_config = self.training_config.get('lr_scheduler', {})
+        self.lr_scheduler = create_lr_scheduler(
+            self.optimizer, 
+            scheduler_config, 
+            self.num_epochs
+        )
+        
+        if self.lr_scheduler is not None:
+            print(f"Initialized {scheduler_config.get('type', 'cosine')} learning rate scheduler")
+        else:
+            print("No learning rate scheduler configured")
         
     def load_data(self):
         """
@@ -355,6 +370,11 @@ class JEPADecoderTrainer:
                 
             # Save checkpoint
             self.save_checkpoint(epoch, train_loss, val_loss)
+            
+            # Step learning rate scheduler
+            if self.lr_scheduler is not None:
+                # Use validation loss for plateau scheduler, otherwise step normally
+                step_scheduler(self.lr_scheduler, val_loss)
             
         # Close wandb run
         if wandb.run is not None:
