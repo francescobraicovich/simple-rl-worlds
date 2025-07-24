@@ -113,6 +113,16 @@ wandb:
     Follow the prompts to authenticate. If `enabled` is `true` but you are not logged in and no `entity` is specified, wandb might run in anonymous mode or prompt you to log in.
 
 
+## Representation Quality Evaluation
+
+This project includes comprehensive evaluation metrics to assess the quality of learned representations:
+
+- **Smoothness Analysis**: Measures local Lipschitz continuity and geometric smoothness
+- **Robustness Analysis**: Tests stability under Gaussian noise perturbations  
+- **Neighborhood Preservation**: Evaluates local structure preservation using trustworthiness and continuity
+- **Manifold Dimension**: Analyzes intrinsic dimensionality using participation ratio and 2-NN estimation
+- **Geometry Analysis**: Evaluates geometric properties including uniformity on hypersphere, clustering quality, and neighborhood consistency
+
 ## Implemented Architectures
 
 This project provides implementations of the following world model architectures:
