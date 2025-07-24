@@ -102,6 +102,35 @@ This analysis provides insights into the intrinsic dimensionality and complexity
 - **Participation Ratio:** A higher PR is generally better, as it indicates that the model is using all the dimensions of the latent space effectively.
 - **Intrinsic Dimension:** A lower intrinsic dimension is often desirable, as it suggests that the model has learned a more compact and efficient representation of the data.
 
+### 2.5. Geometry Analysis (`analyse_geometry.py`)
+
+**Purpose:**
+This analysis evaluates the geometric properties of learned representations, providing insights into their structural organization and distribution in the latent space.
+
+**Methodology:**
+- **Uniformity on Hypersphere:** Measures how uniformly distributed the normalized representations are on the unit hypersphere using the formula `uniformity = log(mean(exp(-t * D²)))` where t=2.0. Lower values indicate more uniform distribution.
+- **Silhouette Score:** Evaluates clustering quality and separation in the representation space using k-means clustering (when no labels are provided) or provided labels.
+- **Clustering Quality:** Assesses how well representations cluster using k-means with configurable number of clusters. Returns normalized mutual information (NMI) if labels exist, plus inertia and cluster balance metrics.
+- **k-NN Label Consistency:** Measures neighborhood coherence using k-nearest neighbors classification accuracy on a train/test split (only applicable when labels are available).
+
+**Why it Matters:**
+Geometric properties reveal important characteristics of the learned representations:
+- **Uniform Distribution:** Well-distributed representations avoid clustering artifacts and may generalize better.
+- **Good Clustering:** Clear separation between different states or behaviors indicates structured representations.
+- **Neighborhood Coherence:** Consistent local neighborhoods suggest smooth, meaningful latent spaces.
+- **Balanced Clusters:** Even distribution across clusters indicates the model isn't biased toward specific patterns.
+
+**Output:**
+- `geometry_analysis.png`: A comprehensive plot with six panels showing uniformity, silhouette score, clustering quality (NMI), clustering inertia, cluster balance, and k-NN accuracy, plus a summary comparison table.
+
+**Interpretation:**
+- **Uniformity:** Lower values indicate better distribution on the hypersphere
+- **Silhouette Score:** Higher values (closer to 1.0) indicate better-separated clusters
+- **NMI Score:** Higher values indicate better alignment between learned and true structure
+- **Clustering Inertia:** Lower values indicate tighter, more cohesive clusters
+- **Cluster Balance:** Lower values indicate more evenly distributed clusters
+- **k-NN Accuracy:** Higher values indicate more consistent local neighborhoods
+
 ---
 
 ## 3. How to Run the Evaluations
@@ -116,6 +145,17 @@ This analysis provides insights into the intrinsic dimensionality and complexity
     python src/scripts/representation_metrics/analyse_robustness.py
     python src/scripts/representation_metrics/analyse_neighborhood_preservation.py
     python src/scripts/representation_metrics/analyse_manifold_dimension.py
+    python src/scripts/representation_metrics/analyse_geometry.py
     ```
 
-3.  **View the Results:** The output plots will be saved in the `evaluation_plots/` directory.
+    Or run all metrics at once:
+    ```bash
+    python src/scripts/run_representation_metrics.py
+    ```
+
+3.  **View the Results:** The output plots will be saved in the `evaluation_plots/` directory:
+    - `evaluation_plots/smoothness_analysis/`
+    - `evaluation_plots/robustness_analysis/`
+    - `evaluation_plots/neighborhood_preservation/`
+    - `evaluation_plots/manifold_dimension/`
+    - `evaluation_plots/geometry_analysis/`
