@@ -6,6 +6,7 @@ from ..models.encoder import VideoViT, ConvEncoder
 from ..models.predictor import LatentDynamicsPredictor, MLPHistoryPredictor
 from ..models.decoder import HybridConvTransformerDecoder, ConvDecoder
 from ..models.reward_predictor import RewardPredictor
+from ..models.vicreg import VICRegLoss
 from ..data.data_utils import _initialize_environment
 import torch
 
@@ -181,4 +182,20 @@ def init_reward_predictor(config_path: str = None) -> RewardPredictor:
         activation=reward_predictor_config.get('activation', 'relu')
     )
     
-    return reward_predictor
+    return reward_predictor 
+
+def init_vicreg(config_path: str = None) -> VICRegLoss:
+    config = load_config(config_path)
+    vicreg_config = config['models']['vicreg']
+    use_vicreg = vicreg_config.get('active')
+    if not use_vicreg:
+        return None
+    vicreg = VICRegLoss(
+        sim_coeff=vicreg_config.get('lambda_i'),
+        cov_coeff=vicreg_config.get('lambda_s'),
+        std_coeff=vicreg_config.get('lambda_v'),
+        proj_hidden_dim=vicreg_config.get('proj_hidden_dim'),
+        proj_output_dim=vicreg_config.get('proj_output_dim'),
+        representation_dim=config['embed_dim'],
+    )
+    return vicreg
