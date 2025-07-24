@@ -14,6 +14,8 @@ The analysis suite includes:
 3. Smoothness Analysis - Measures representation smoothness by correlating
    pixel-space and latent-space distances
 4. Robustness Analysis - Tests stability under Gaussian noise perturbations
+5. Geometry Analysis - Evaluates geometric properties including uniformity on
+   hypersphere, clustering quality, and neighborhood consistency
 
 Each analysis generates publication-ready visualizations and detailed metrics.
 """
@@ -83,6 +85,11 @@ class RepresentationMetricsRunner:
                 'name': 'robustness',
                 'script': 'representation_metrics/analyse_robustness.py',
                 'description': 'Test representation stability under Gaussian noise perturbations'
+            },
+            {
+                'name': 'geometry',
+                'script': 'representation_metrics/analyse_geometry.py',
+                'description': 'Evaluate geometric properties including uniformity on hypersphere, clustering quality, and neighborhood consistency'
             }
         ]
         
@@ -222,6 +229,7 @@ class RepresentationMetricsRunner:
             logger.info("   • evaluation_plots/manifold_dimension/")
             logger.info("   • evaluation_plots/smoothness_analysis/")
             logger.info("   • evaluation_plots/robustness_analysis/")
+            logger.info("   • evaluation_plots/geometry_analysis/")
             return False
         else:
             logger.info("🎉 All analyses completed successfully!")
@@ -231,6 +239,7 @@ class RepresentationMetricsRunner:
             logger.info("   • evaluation_plots/manifold_dimension/")
             logger.info("   • evaluation_plots/smoothness_analysis/")
             logger.info("   • evaluation_plots/robustness_analysis/")
+            logger.info("   • evaluation_plots/geometry_analysis/")
             return True
             
     def list_analyses(self):
@@ -275,11 +284,11 @@ Examples:
                        help='Path to config.yaml file')
     
     parser.add_argument('--skip', nargs='+', default=None,
-                       choices=['neighborhood_preservation', 'manifold_dimension', 'smoothness', 'robustness'],
+                       choices=['neighborhood_preservation', 'manifold_dimension', 'smoothness', 'robustness', 'geometry'],
                        help='Analyses to skip during execution')
     
     parser.add_argument('--only', nargs='+', default=None,
-                       choices=['neighborhood_preservation', 'manifold_dimension', 'smoothness', 'robustness'],
+                       choices=['neighborhood_preservation', 'manifold_dimension', 'smoothness', 'robustness', 'geometry'],
                        help='Run only these analyses (ignores --skip)')
     
     parser.add_argument('--no-fail-fast', action='store_true',
