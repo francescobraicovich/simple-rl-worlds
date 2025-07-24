@@ -47,12 +47,35 @@ training:
     ema_decay: 0.999 # Exponential moving average decay for model parameters
     gradient_clipping: 1.0 # Maximum norm for gradient clipping
     reward_loss: true # Whether to use reward loss during training
+    # Learning rate scheduler configuration
+    lr_scheduler:
+      enabled: true # Whether to use learning rate scheduling
+      type: "cosine" # Type of scheduler: "cosine", "step", "exponential", "plateau"
+      # Cosine annealing parameters
+      cosine_T_max: 50 # Maximum number of iterations for cosine annealing (typically num_epochs)
+      cosine_eta_min: 0.000001 # Minimum learning rate for cosine annealing
+      # Step scheduler parameters  
+      step_size: 20 # Period of learning rate decay for step scheduler
+      step_gamma: 0.5 # Multiplicative factor of learning rate decay for step scheduler
+      # Exponential scheduler parameters
+      exp_gamma: 0.95 # Multiplicative factor for exponential decay
+      # ReduceLROnPlateau parameters
+      plateau_mode: "min" # Mode for plateau scheduler: "min" or "max"
+      plateau_factor: 0.5 # Factor by which learning rate is reduced
+      plateau_patience: 10 # Number of epochs with no improvement to wait
+      plateau_threshold: 0.0001 # Threshold for measuring improvement
   jepa_decoder:
     num_epochs: 50 # Number of epochs for the JEPA decoder training
     batch_size: 128 # Batch size for the JEPA decoder training
     learning_rate: 0.0001 # Learning rate for the JEPA decoder optimizer
     weight_decay: 0.0001 # Weight decay for the JEPA decoder optimizer
     gradient_clipping: 1.0 # Maximum norm for JEPA decoder gradient clipping
+    # Learning rate scheduler configuration
+    lr_scheduler:
+      enabled: true # Whether to use learning rate scheduling
+      type: "cosine" # Type of scheduler: "cosine", "step", "exponential", "plateau"
+      cosine_T_max: 50 # Maximum number of iterations for cosine annealing
+      cosine_eta_min: 0.000001 # Minimum learning rate for cosine annealing
   reward_predictor:
     versions: "both" # Versions of the reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
     num_epochs: 100 # Number of epochs for the reward predictor training
@@ -60,6 +83,12 @@ training:
     learning_rate: 0.0001 # Learning rate for the reward predictor optimizer
     weight_decay: 0.0001 # Weight decay for the reward predictor optimizer
     gradient_clipping: 0.5 # Maximum norm for reward predictor gradient clipping
+    # Learning rate scheduler configuration
+    lr_scheduler:
+      enabled: true # Whether to use learning rate scheduling
+      type: "cosine" # Type of scheduler: "cosine", "step", "exponential", "plateau"
+      cosine_T_max: 100 # Maximum number of iterations for cosine annealing
+      cosine_eta_min: 0.000001 # Minimum learning rate for cosine annealing
   dynamics_reward_predictor:
     versions: "both" # Versions of the dynamics reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
     num_epochs: 50 # Number of epochs for the dynamics reward predictor training
@@ -67,6 +96,12 @@ training:
     learning_rate: 0.0001 # Learning rate for the dynamics reward predictor optimizer
     weight_decay: 0.0001 # Weight decay for the dynamics reward predictor optimizer
     gradient_clipping: 0.5 # Maximum norm for gradient clipping
+    # Learning rate scheduler configuration
+    lr_scheduler:
+      enabled: true # Whether to use learning rate scheduling
+      type: "cosine" # Type of scheduler: "cosine", "step", "exponential", "plateau"
+      cosine_T_max: 50 # Maximum number of iterations for cosine annealing
+      cosine_eta_min: 0.000001 # Minimum learning rate for cosine annealing
 
 models:
   encoder:
