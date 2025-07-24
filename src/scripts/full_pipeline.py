@@ -8,9 +8,8 @@ in the correct order:
 1. train_encoder_decoder.py - End-to-end training of encoder, predictor, and decoder
 2. train_jepa.py - Self-supervised training of encoder and predictor using JEPA
 3. train_jepa_decoder.py - Training decoder using pre-trained JEPA encoder/predictor
-4. train_reward_predictor.py - Training reward predictors for both approaches
-5. train_dynamics_reward_predictor.py - Training dynamics-based reward predictors
-6. run_representation_metrics.py - Comprehensive representation metrics analysis
+4. train_dynamics_reward_predictor.py - Training dynamics-based reward predictors
+5. run_representation_metrics.py - Comprehensive representation metrics analysis
 
 Each script is executed as a subprocess with proper error handling and logging.
 The pipeline can be configured to run specific stages or the complete sequence.
@@ -80,11 +79,6 @@ class FullPipelineRunner:
                 'name': 'jepa_decoder',
                 'script': 'train_jepa_decoder.py',
                 'description': 'Training decoder using pre-trained JEPA encoder/predictor'
-            },
-            {
-                'name': 'reward_predictor',
-                'script': 'train_reward_predictor.py',
-                'description': 'Training reward predictors for both approaches'
             },
             {
                 'name': 'dynamics_reward_predictor',
@@ -285,7 +279,7 @@ Examples:
   python full_pipeline.py --only representation_metrics
   
   # Skip specific stages
-  python full_pipeline.py --skip encoder_decoder reward_predictor
+  python full_pipeline.py --skip encoder_decoder dynamics_reward_predictor
   
   # Continue on failures instead of stopping
   python full_pipeline.py --no-fail-fast
@@ -300,12 +294,12 @@ Examples:
     
     parser.add_argument('--skip', nargs='+', default=None,
                        choices=['model_init', 'data_collection', 'encoder_decoder', 'jepa', 'jepa_decoder', 
-                               'reward_predictor', 'dynamics_reward_predictor', 'representation_metrics'],
+                               'dynamics_reward_predictor', 'representation_metrics'],
                        help='Stages to skip during execution')
     
     parser.add_argument('--only', nargs='+', default=None,
                        choices=['model_init', 'data_collection', 'encoder_decoder', 'jepa', 'jepa_decoder', 
-                               'reward_predictor', 'dynamics_reward_predictor', 'representation_metrics'],
+                               'dynamics_reward_predictor', 'representation_metrics'],
                        help='Run only these stages (ignores --skip)')
     
     parser.add_argument('--no-fail-fast', action='store_true',

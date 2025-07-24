@@ -112,3 +112,77 @@ class RewardPredictor(nn.Module):
         reward = self.mlp_head(current_cls)
         
         return reward
+
+
+class MLPRewardPredictor(nn.Module):
+    """
+    A simpler MLP-based reward predictor that takes two representations as input
+    and outputs a reward prediction.
+    """
+    def __init__(self, latent_dim, sequence_length, hidden_dims=None, dropout=0.1):
+        super(MLPRewardPredictor, self).__init__()
+        self.latent_dim = latent_dim
+        self.sequence_length = sequence_length
+        self.dropout = dropout
+        
+        # Default hidden dimensions if not provided
+        if hidden_dims is None:
+            hidden_dims = [latent_dim, latent_dim // 2]
+        
+        # Input dimension is (sequence_length + 1) * latent_dim (concatenated flattened representations)
+        input_dim = (sequence_length + 1) * latent_dim
+        
+        # Build MLP layers
+        layers = []
+        prev_dim = input_dim
+        
+        for hidden_dim in hidden_dims:
+            layers.append(nn.Linear(prev_dim, hidden_dim))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(dropout))
+            prev_dim = hidden_dim
+        
+        # Final output layer (single reward value)
+        layers.append(nn.Linear(prev_dim, 1))
+        
+        self.mlp = nn.Sequential(*layers)
+        
+        # Initialize weights
+        self._init_weights()
+    
+    def _init_weights(self):
+        """Initialize weights using Xavier/Glorot initialization for linear layers."""
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                # Xavier/Glorot uniform initialization
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    # Initialize bias to zero
+                    nn.init.constant_(module.bias, 0.0)
+    
+    def forward(self, x1, x2):
+        """
+        Forward pass through the MLP reward predictor.
+        
+        Args:
+            x1: First representation tensor of shape (batch_size, sequence_length, latent_dim)
+            x2: Second representation tensor of shape (batch_size, 1, latent_dim)
+        
+        Returns:
+            reward: Predicted reward tensor of shape (batch_size, 1)
+        """
+        
+        # Flatten x1 from [B, sequence_length, latent_dim] to [B, sequence_length * latent_dim]
+        x1_flattened = x1.view(x1.size(0), -1)
+        
+        # Flatten x2 from [B, 1, latent_dim] to [B, latent_dim]
+        x2_flattened = x2.view(x2.size(0), -1)
+        
+        # Concatenate the flattened representations
+        combined = torch.cat([x1_flattened, x2_flattened], dim=-1)
+        
+        # Pass through MLP to get reward prediction
+        reward = self.mlp(combined)
+        
+        return reward
+

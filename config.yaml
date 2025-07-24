@@ -14,11 +14,11 @@ data_and_patching:
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 30
+  num_episodes: 50
   max_steps_per_episode: 3000
   random_action_percentage: 0.2 # Percentage of actions to be random (0.0 = no random actions)
-  load_path: "pong_rep_8.pth"
-  filename: "pong_rep_8.pth"
+  load_path: "assault_rep_8.pth"
+  filename: "assault_rep_8.pth"
   validation_split: 0.15
   ppo_agent:
     load: False # Whether to load a pre-trained PPO agent
@@ -36,11 +36,11 @@ data_collection:
     additional_log_std_noise: 0.0
     policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
 
-embed_dim: 64 # Dimension of the embedding space for the transformer model
+latent_dim: 64 # Dimension of the embedding space for the transformer model
 
 training:
   main_loops:
-    num_epochs: 150 # Number of epochs for training
+    num_epochs: 50 # Number of epochs for training
     batch_size: 128 # Batch size for training
     learning_rate: 0.0001 # Learning rate for the optimizer
     weight_decay: 0.0001 # Weight decay for the optimizer
@@ -62,7 +62,7 @@ training:
     gradient_clipping: 0.5 # Maximum norm for reward predictor gradient clipping
   dynamics_reward_predictor:
     versions: "both" # Versions of the dynamics reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
-    num_epochs: 100 # Number of epochs for the dynamics reward predictor training
+    num_epochs: 50 # Number of epochs for the dynamics reward predictor training
     batch_size: 128 # Batch size for the dynamics reward predictor training
     learning_rate: 0.0001 # Learning rate for the dynamics reward predictor optimizer
     weight_decay: 0.0001 # Weight decay for the dynamics reward predictor optimizer
@@ -70,34 +70,25 @@ training:
 
 models:
   encoder:
-    num_layers: 6
-    num_heads: 4
-    mlp_ratio: 4.0
-    dropout: 0.1
-    attention_dropout: 0.1
-    predictor_drop_path_rate: 0.1
+    conv_channels: [32, 64, 128, 256]
+    activation: "silu"
+    dropout_rate: 0
+   
   predictor:
-    num_actions: 6
-    num_layers: 4
-    num_heads: 2
-    mlp_ratio: 4.0
-    dropout: 0.1
-    attention_dropout: 0.1
-    predictor_drop_path_rate: 0.1
+    hidden_sizes: [512, 512]
+    activation: "silu"
+    dropout_rate: 0.15
+    
   decoder:
-    num_heads: 4
-    dropout: 0.1
-    attention_dropout: 0.1
-    decoder_drop_path_rate: 0.1
+    initial_size: 4
+    conv_channels: [256, 128, 64, 32, 1]
+    activation: "silu"
+    dropout_rate: 0
+
   reward_predictor:
-    internal_embedding_dim: 128
-    num_heads: 8
-    num_attention_layers: 3
-    mlp_hidden_layers: [256, 128, 64]
-    dropout: 0.1
-    attention_dropout: 0.1
-    use_layer_norm: true
-    activation: "gelu"
+    hidden_sizes: [256, 256]
+    dropout: 0.15
+    
   vicreg:
     active: false  # Whether to use VICReg loss for JEPA
     lambda_v: 25.0  # Weight for variance loss
@@ -109,7 +100,7 @@ models:
 
 # Wandb configuration for experiment tracking
 wandb:
-  enabled: false  # Set to true to enable wandb logging
+  enabled: true  # Set to true to enable wandb logging
   project: "simple-rl-worlds"
   entity: null  # Set to your wandb username/team
   tags: []  # Add tags for organizing experiments
