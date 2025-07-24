@@ -2,13 +2,12 @@ import yaml
 import os
 from typing import Dict, Any
 
-from ..models.encoder import VideoViT, ConvEncoder
-from ..models.predictor import LatentDynamicsPredictor, MLPHistoryPredictor
-from ..models.decoder import HybridConvTransformerDecoder, ConvDecoder
-from ..models.reward_predictor import RewardPredictor
+from ..models.encoder import ConvEncoder
+from ..models.predictor import MLPHistoryPredictor
+from ..models.decoder import ConvDecoder
+from ..models.reward_predictor import MLPRewardPredictor
 from ..models.vicreg import VICRegLoss
 from ..data.data_utils import _initialize_environment
-import torch
 
 def load_config(config_path: str = None) -> Dict[str, Any]:
     """
@@ -30,58 +29,35 @@ def load_config(config_path: str = None) -> Dict[str, Any]:
     return config
 
 
-def init_encoder(config_path: str = None) -> VideoViT:
+def init_encoder(config_path: str = None) -> ConvEncoder:
     """
-    Initialize the VideoViT encoder model from configuration.
-    
+    Initialize the ConvEncoder model from configuration.
+
     Args:
         config_path: Path to config.yaml file. If None, uses default location.
     
     Returns:
-        Initialized VideoViT encoder model.
+        Initialized ConvEncoder model.
     """
     config = load_config(config_path)
     
-    # Extract relevant configuration parameters
-    data_config = config['data_and_patching']
     encoder_config = config['models']['encoder']
-    embed_dim = config['embed_dim']
-    
-    #encoder = VideoViT(
-    #    img_h=data_config['image_height'],
-    #    img_w=data_config['image_width'],
-    #    frames_per_clip=data_config['sequence_length'],
-    #    patch_size_h=data_config['patch_size_h'],
-    #    patch_size_w=data_config['patch_size_w'],
-    #    embed_dim=embed_dim,
-    #    mlp_ratio=encoder_config['mlp_ratio'],
-    #    drop_rate=encoder_config['dropout'],
-    #    attn_drop_rate=encoder_config['attention_dropout'],
-    #    encoder_num_layers=encoder_config['num_layers'],
-    #    encoder_num_heads=encoder_config['num_heads'],
-    #    encoder_drop_path_rate=encoder_config['predictor_drop_path_rate']
-    #)
+    latent_dim = config['latent_dim']
 
-    encoder = ConvEncoder()
+
+    encoder = ConvEncoder(
+        latent_dim=latent_dim,
+        input_channels=1,
+        conv_channels=encoder_config['conv_channels'],
+        activation=encoder_config['activation'],
+        dropout_rate=encoder_config['dropout_rate']
+    )
     
     return encoder
 
 
-def init_conv_encoder(config_path: str = None) -> ConvEncoder:
-    """
-    Initialize the ConvEncoder model.
-    
-    Args:
-        config_path: Path to config.yaml file (not used, but kept for consistency).
-    
-    Returns:
-        Initialized ConvEncoder model.
-    """
-    encoder = ConvEncoder()
-    return encoder
 
-
-def init_predictor(config_path: str = None) -> LatentDynamicsPredictor:
+def init_predictor(config_path: str = None) -> MLPHistoryPredictor:
     """
     Initialize the LatentDynamicsPredictor model from configuration.
     
@@ -93,34 +69,29 @@ def init_predictor(config_path: str = None) -> LatentDynamicsPredictor:
     """
     config = load_config(config_path)
 
-    enc, render_mode = _initialize_environment(config)
-    num_actions = enc.action_space.n
-    print(f"Environment action space: {num_actions} actions")
+    env, render_mode = _initialize_environment(config)
+    num_actions = env.action_space.n
+
+    data_config = config['data_and_patching']
+    sequence_length = data_config['sequence_length']
     
     # Extract relevant configuration parameters
     predictor_config = config['models']['predictor']
-    embed_dim = config['embed_dim']
+    latent_dim = config['latent_dim']
 
-    data_config = config['data_and_patching']
-
-    #predictor = LatentDynamicsPredictor(
-    #    frames_per_clip=data_config['sequence_length'],
-    #    embed_dim=embed_dim,
-    #    num_actions= num_actions,
-    #    predictor_num_layers=predictor_config['num_layers'],
-    #    predictor_num_heads=predictor_config['num_heads'],
-    #    mlp_ratio=predictor_config['mlp_ratio'],
-    #    drop_rate=predictor_config['dropout'],
-    #    attn_drop_rate=predictor_config['attention_dropout'],
-    #    predictor_drop_path_rate=predictor_config['predictor_drop_path_rate']
-    #)
-
-    predictor = MLPHistoryPredictor()
+    predictor = MLPHistoryPredictor(
+        frames_per_clip=sequence_length,
+        latent_dim=latent_dim,
+        num_actions=num_actions,
+        hidden_sizes=predictor_config['hidden_sizes'],
+        activation=predictor_config['activation'],
+        dropout_rate=predictor_config['dropout_rate']
+    )
 
     return predictor
 
 
-def init_decoder(config_path: str = None) -> HybridConvTransformerDecoder:
+def init_decoder(config_path: str = None) -> ConvDecoder:
     """
     Initialize the HybridConvTransformerDecoder model from configuration.
     
@@ -133,29 +104,20 @@ def init_decoder(config_path: str = None) -> HybridConvTransformerDecoder:
     config = load_config(config_path)
     
     # Extract relevant configuration parameters
-    data_config = config['data_and_patching']
     decoder_config = config['models']['decoder']
-    embed_dim = config['embed_dim']
     
-    #decoder = HybridConvTransformerDecoder(
-    #    img_h=data_config['image_height'],
-    #    img_w=data_config['image_width'],
-    #    embed_dim=embed_dim,
-    #    drop_rate=decoder_config['dropout'],
-    #    attn_drop_rate=decoder_config['attention_dropout'],
-    #    decoder_embed_dim=embed_dim,  # Use same embed_dim for decoder
-    #    decoder_num_heads=decoder_config['num_heads'],
-    #    decoder_drop_path_rate=decoder_config['decoder_drop_path_rate'],
-    #    patch_size_h=data_config['patch_size_h'],
-    #    patch_size_w=data_config['patch_size_w']
-    #)
-
-    decoder = ConvDecoder()
+    decoder = ConvDecoder(
+        latent_dim=config['latent_dim'],  # Use global latent_dim from config
+        initial_size=decoder_config['initial_size'],
+        conv_channels=decoder_config['conv_channels'],
+        activation=decoder_config['activation'],
+        dropout_rate=decoder_config['dropout_rate']
+    )
     
     return decoder
 
 
-def init_reward_predictor(config_path: str = None) -> RewardPredictor:
+def init_reward_predictor(config_path: str = None) -> MLPRewardPredictor:
     """
     Initialize the RewardPredictor model from configuration.
     
@@ -170,16 +132,11 @@ def init_reward_predictor(config_path: str = None) -> RewardPredictor:
     # Extract relevant configuration parameters
     reward_predictor_config = config['models']['reward_predictor']
     
-    reward_predictor = RewardPredictor(
-        embedding_dim=config['embed_dim'],
-        internal_embedding_dim=reward_predictor_config['internal_embedding_dim'],
-        num_heads=reward_predictor_config['num_heads'],
-        num_attention_layers=reward_predictor_config.get('num_attention_layers', 1),
-        mlp_hidden_layers=reward_predictor_config.get('mlp_hidden_layers', None),
-        dropout=reward_predictor_config.get('dropout', 0.1),
-        attention_dropout=reward_predictor_config.get('attention_dropout', 0.1),
-        use_layer_norm=reward_predictor_config.get('use_layer_norm', True),
-        activation=reward_predictor_config.get('activation', 'relu')
+    reward_predictor = MLPRewardPredictor(
+        latent_dim=config['latent_dim'],
+        sequence_length=config['data_and_patching']['sequence_length'],
+        hidden_dims=reward_predictor_config.get('hidden_sizes'),
+        dropout=reward_predictor_config.get('dropout')
     )
     
     return reward_predictor 
