@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from typing import Dict, Any, Optional
 
 
 class RotaryEmbedding(nn.Module):
@@ -335,18 +334,20 @@ class ConvEncoder(nn.Module):
     - Output: (B, T, latent_dim)
     """
     
-    def __init__(self):
+    def __init__(self, latent_dim=64, input_channels=1, conv_channels=None, activation='silu', dropout_rate=0.0):
         super().__init__()
         
-        # Default configuration
-        default_config = {
-            'latent_dim': 64,
-            'input_channels': 1,
-            'conv_channels': [32, 64, 128, 256],
-            'activation': 'silu'
-        }
+        # Use provided parameters or defaults
+        if conv_channels is None:
+            conv_channels = [32, 64, 128, 256]
         
-        self.config = default_config
+        self.config = {
+            'latent_dim': latent_dim,
+            'input_channels': input_channels,
+            'conv_channels': conv_channels,
+            'activation': activation,
+            'dropout_rate': dropout_rate
+        }
         
         # Extract configuration
         self.latent_dim = self.config['latent_dim']
@@ -385,6 +386,9 @@ class ConvEncoder(nn.Module):
         # Activation function
         self.activation = activation_fn()
         
+        # Dropout layer
+        self.dropout = nn.Dropout(self.config['dropout_rate'])
+        
         # Calculate flattened size after convolutions
         # Input: 64x64, after 4 conv layers with stride=2: 64/2^4 = 4x4
         final_spatial_size = 64 // (2 ** len(conv_channels))  # 4x4
@@ -413,44 +417,6 @@ class ConvEncoder(nn.Module):
             nn.init.ones_(m.weight)
             nn.init.zeros_(m.bias)
     
-    def encode_single_frame(self, frame: torch.Tensor) -> torch.Tensor:
-        """
-        Encode a single frame through the CNN.
-        
-        Args:
-            frame: Single frame tensor of shape (64, 64)
-            
-        Returns:
-            Latent vector of shape (latent_dim,)
-        """
-        # Add channel dimension: (64, 64) -> (1, 64, 64)
-        x = frame.unsqueeze(0)
-        
-        # Pass through each conv layer with LayerNorm
-        for conv, layer_norm in zip(self.conv_layers, self.layer_norms):
-            # Apply convolution
-            x = conv(x)  # Shape: (C, H, W)
-            
-            # Apply activation
-            x = self.activation(x)
-            
-            # Apply LayerNorm: reshape from (C, H, W) to (H, W, C) for LayerNorm
-            C, H, W = x.shape
-            x = x.permute(1, 2, 0)  # (H, W, C)
-            x = layer_norm(x)       # Apply LayerNorm on channel dimension
-            x = x.permute(2, 0, 1)  # Back to (C, H, W)
-        
-        # Flatten spatial dimensions
-        x = x.flatten()  # Shape: (C*H*W,)
-        
-        # Apply final layer normalization
-        x = self.final_norm(x)
-        
-        # Map to latent dimension
-        latent = self.fc(x)  # Shape: (latent_dim,)
-        
-        return latent
-    
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Forward pass through the encoder.
@@ -466,17 +432,39 @@ class ConvEncoder(nn.Module):
         assert C == 1, f"Expected 1 channel, got {C}"
         assert H == 64 and W == 64, f"Expected 64x64 images, got {H}x{W}"
         
-        # Squeeze channel dimension: (B, 1, T, 64, 64) -> (B, T, 64, 64)
-        x = x.squeeze(1)
+        # Reshape to process all frames as a batch: (B, 1, T, 64, 64) -> (B*T, 1, 64, 64)
+        x = x.reshape(B * T, C, H, W)
         
-        # Use vmap to process each frame independently
-        # vmap over batch and time dimensions
-        def process_batch(batch_frames):
-            # batch_frames: (T, 64, 64)
-            return torch.vmap(self.encode_single_frame)(batch_frames)
+        # Pass through each conv layer with LayerNorm and Dropout
+        for conv, layer_norm in zip(self.conv_layers, self.layer_norms):
+            # Apply convolution
+            x = conv(x)  # Shape: (B*T, C, H, W)
+            
+            # Apply activation
+            x = self.activation(x)
+            
+            # Apply LayerNorm: reshape from (B*T, C, H, W) to (B*T, H, W, C) for LayerNorm
+            BT, C_out, H_out, W_out = x.shape
+            x = x.permute(0, 2, 3, 1)  # (B*T, H, W, C)
+            x = layer_norm(x)          # Apply LayerNorm on channel dimension
+            x = x.permute(0, 3, 1, 2)  # Back to (B*T, C, H, W)
+            
+            # Apply dropout
+            x = x.permute(0, 2, 3, 1)  # (B*T, H, W, C) for dropout
+            x = self.dropout(x)
+            x = x.permute(0, 3, 1, 2)  # Back to (B*T, C, H, W)
         
-        # Apply vmap over batch dimension
-        latents = torch.vmap(process_batch)(x)  # Shape: (B, T, latent_dim)
+        # Flatten spatial dimensions
+        x = x.flatten(start_dim=1)  # Shape: (B*T, C*H*W)
+        
+        # Apply final layer normalization
+        x = self.final_norm(x)
+        
+        # Map to latent dimension
+        latents = self.fc(x)  # Shape: (B*T, latent_dim)
+        
+        # Reshape back to (B, T, latent_dim)
+        latents = latents.reshape(B, T, self.latent_dim)
         
         return latents
 
