@@ -312,18 +312,27 @@ class ConvDecoder(nn.Module):
     - Output: [B, 1, 1, 64, 64] reconstructed frame
     """
     
-    def __init__(self):
+    def __init__(
+        self,
+        latent_dim: int = 64,
+        initial_size: int = 4,
+        conv_channels: list = None,
+        activation: str = 'silu',
+        dropout_rate: float = 0.0
+    ):
         super().__init__()
         
-        # Default configuration
-        default_config = {
-            'latent_dim': 64,
-            'initial_size': 4,  # 4x4 initial spatial size
-            'conv_channels': [256, 128, 64, 32, 1],  # Channel progression
-            'activation': 'silu'
-        }
+        # Set default conv_channels if not provided
+        if conv_channels is None:
+            conv_channels = [256, 128, 64, 32, 1]
         
-        self.config = default_config
+        self.config = {
+            'latent_dim': latent_dim,
+            'initial_size': initial_size,
+            'conv_channels': conv_channels,
+            'activation': activation,
+            'dropout_rate': dropout_rate
+        }
         
         # Extract configuration
         self.latent_dim = self.config['latent_dim']
@@ -373,6 +382,9 @@ class ConvDecoder(nn.Module):
         
         # Activation function
         self.activation = activation_fn()
+        
+        # Dropout layer
+        self.dropout = nn.Dropout(self.config['dropout_rate'])
         
         # Initialize weights
         self.apply(self._init_weights)
@@ -427,9 +439,13 @@ class ConvDecoder(nn.Module):
                 # Apply LayerNorm if available
                 if layer_norm is not None:
                     # Reshape for LayerNorm: [B, C, H, W] → [B, H, W, C]
-                    C, H, W = x.shape[1], x.shape[2], x.shape[3]
                     x = x.permute(0, 2, 3, 1)  # [B, H, W, C]
                     x = layer_norm(x)          # Apply LayerNorm on channel dimension
+                    x = x.permute(0, 3, 1, 2)  # Back to [B, C, H, W]
+                    
+                    # Apply dropout
+                    x = x.permute(0, 2, 3, 1)  # [B, H, W, C] for dropout
+                    x = self.dropout(x)
                     x = x.permute(0, 3, 1, 2)  # Back to [B, C, H, W]
         
         # Add temporal dimension: [B, 1, 64, 64] → [B, 1, 1, 64, 64]
