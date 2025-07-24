@@ -31,7 +31,7 @@ trained with JEPA and Encoder-Decoder methods.
 -   These metrics complement other representation quality measures
 """
 
-import os
+import torch
 import sys
 from pathlib import Path
 import logging
