@@ -106,40 +106,25 @@ class MLPHistoryPredictor(nn.Module):
     of latent vectors and discrete actions.
     """
     
-    # Default configuration
-    default_config = {
-        'frames_per_clip': 4,
-        'latent_dim': 64,
-        'num_actions': 7,
-        'hidden_sizes': [512, 512],
-        'activation': 'silu',
-        'dropout_rate': 0.1
-    }
-    
     def __init__(
         self,
-        frames_per_clip: int = None,
-        latent_dim: int = None,
-        num_actions: int = None,
+        frames_per_clip: int = 4,
+        latent_dim: int = 64,
+        num_actions: int = 7,
         hidden_sizes: list = None,
         activation: str = 'silu',
         dropout_rate: float = 0.1,
-        config_path: str = None,
     ):
         super().__init__()
         
-        # Load configuration if provided
-        if config_path is not None:
-            from ..utils.config_utils import load_config
-            config = load_config(config_path)
-            config_num_actions = config.get('models', {}).get('predictor', {}).get('num_actions', 18)
-        else:
-            config_num_actions = 18
+        # Set default hidden sizes if not provided
+        if hidden_sizes is None:
+            hidden_sizes = [512, 512]
         
-        # Set parameters with fallback to defaults
-        self.frames_per_clip = frames_per_clip if frames_per_clip is not None else self.default_config['frames_per_clip']
-        self.latent_dim = latent_dim if latent_dim is not None else self.default_config['latent_dim']
-        self.num_actions = num_actions if num_actions is not None else config_num_actions
+        # Set parameters
+        self.frames_per_clip = frames_per_clip
+        self.latent_dim = latent_dim
+        self.num_actions = num_actions
         
         if hidden_sizes is None:
             hidden_sizes = self.default_config['hidden_sizes']
@@ -181,22 +166,20 @@ class MLPHistoryPredictor(nn.Module):
     def from_encoder_output(
         cls,
         encoder_output: torch.Tensor,
-        num_actions: int = None,
+        num_actions: int = 7,
         hidden_sizes: list = None,
         activation: str = 'silu',
         dropout_rate: float = 0.1,
-        config_path: str = None
     ):
         """
         Create MLPHistoryPredictor by automatically inferring dimensions from encoder output.
         
         Args:
             encoder_output: Tensor of shape [B, T, E] from encoder
-            num_actions: Number of discrete actions (if None, will try to load from config)
+            num_actions: Number of discrete actions
             hidden_sizes: List of hidden layer sizes
             activation: Activation function name
             dropout_rate: Dropout rate
-            config_path: Path to config file for num_actions
             
         Returns:
             MLPHistoryPredictor instance with inferred dimensions
@@ -213,7 +196,6 @@ class MLPHistoryPredictor(nn.Module):
             hidden_sizes=hidden_sizes,
             activation=activation,
             dropout_rate=dropout_rate,
-            config_path=config_path
         )
     
     def _init_weights(self, m):
