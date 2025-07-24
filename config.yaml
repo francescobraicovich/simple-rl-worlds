@@ -14,7 +14,7 @@ data_and_patching:
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 50
+  num_episodes: 100
   max_steps_per_episode: 3000
   random_action_percentage: 0.2 # Percentage of actions to be random (0.0 = no random actions)
   load_path: "assault_rep_8.pth"
@@ -98,7 +98,7 @@ training:
     gradient_clipping: 0.5 # Maximum norm for gradient clipping
     # Learning rate scheduler configuration
     lr_scheduler:
-      enabled: true # Whether to use learning rate scheduling
+      enabled: false # Whether to use learning rate scheduling
       type: "cosine" # Type of scheduler: "cosine", "step", "exponential", "plateau"
       cosine_T_max: 50 # Maximum number of iterations for cosine annealing
       cosine_eta_min: 0.000001 # Minimum learning rate for cosine annealing
@@ -112,7 +112,7 @@ models:
   predictor:
     hidden_sizes: [512, 512]
     activation: "silu"
-    dropout_rate: 0.15
+    dropout_rate: 0.1
     
   decoder:
     initial_size: 4
@@ -122,7 +122,7 @@ models:
 
   reward_predictor:
     hidden_sizes: [256, 256]
-    dropout: 0.15
+    dropout: 0.1
     
   vicreg:
     active: false  # Whether to use VICReg loss for JEPA
