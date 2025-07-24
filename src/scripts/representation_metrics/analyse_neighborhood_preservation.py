@@ -1,33 +1,7 @@
 #!/usr/bin/env python3
 """
-Representation Neighborhood Preservation Analysis: JEPA vs. Encoder-Decoder
-
-This script evaluates how well the local neighborhood structure of the original
-state space is preserved in the learned latent space. It uses the well-established
-Trustworthiness and Continuity metrics, now with rigorous statistical validation.
-
-**Methodology:**
-1.  **Core Comparison:** The analysis directly compares the encoders from the JEPA
-    and Encoder-Decoder training approaches.
-2.  **Metrics (Van der Maaten et al., 2008):**
-    -   **Trustworthiness (T):** Measures the fraction of points in a latent
-        neighborhood that are *not* true neighbors. A high score (near 1.0)
-        indicates that the model does not create false, untrustworthy neighbors.
-    -   **Continuity (C):** Measures the fraction of points from a true neighborhood
-        that are missing from the latent neighborhood. A high score (near 1.0)
-        indicates that the model does not break apart the original structure.
-3.  **Statistical Rigor:**
-    -   **Bootstrapping:** The analysis is performed over multiple bootstrap samples
-        of the data. This provides a robust estimate of the mean and standard
-        deviation for each metric, ensuring that the comparison is statistically
-        meaningful.
-4.  **k-NN:** The metrics are computed for multiple neighborhood sizes (k-values)
-    using an efficient implementation from scikit-learn.
-
-**Output:**
--   A single PNG image (`neighborhood_preservation.png`) with bar charts for
-    Trustworthiness and Continuity scores, including error bars (std. dev.).
--   A summary table of the metrics (mean ± std. dev.) printed to the console.
+Neighborhood Preservation Analysis (JEPA vs. Encoder-Decoder)
+  — uses sklearn.manifold.trustworthiness and vectorized continuity
 """
 
 import sys
@@ -40,10 +14,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 from tqdm import tqdm
+
+from sklearn.manifold import trustworthiness
 from sklearn.neighbors import NearestNeighbors
+from sklearn.metrics import pairwise_distances
 from sklearn.utils import resample
 
-# Add project root to path
+# -------------------------------------------------------------------
+# add project root to path so `src` imports work
 project_root = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -51,275 +29,195 @@ from src.utils.init_models import init_encoder
 from src.scripts.collect_load_data import DataLoadingPipeline
 from src.utils.set_device import set_device
 
-# --- Configuration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 class ModelType:
     JEPA = "jepa"
     ENCODER_DECODER = "encoder_decoder"
 
+
 def load_model(model_type: str, config_path: str, device: torch.device) -> torch.nn.Module:
-    """Loads a pre-trained encoder for a given model type."""
-    logging.info(f"Loading {model_type} encoder...")
+    logging.info(f"Loading {model_type} encoder…")
     encoder = init_encoder(config_path).to(device)
-    weights_path = project_root / "weights" / model_type / "best_encoder.pth"
-    
-    if not weights_path.exists():
-        raise FileNotFoundError(f"Could not find weights for {model_type} at {weights_path}")
-        
-    encoder.load_state_dict(torch.load(weights_path, map_location=device))
+    weights = project_root / "weights" / model_type / "best_encoder.pth"
+    if not weights.exists():
+        raise FileNotFoundError(f"Missing weights at {weights}")
+    encoder.load_state_dict(torch.load(weights, map_location=device))
     encoder.eval()
-    logging.info(f"Successfully loaded {model_type} encoder from {weights_path}")
     return encoder
 
+
 @torch.no_grad()
-def get_reps(encoder: torch.nn.Module, state: torch.Tensor) -> torch.Tensor:
+def get_latent_reps(encoder: torch.nn.Module, states: torch.Tensor, device: torch.device) -> np.ndarray:
     """
-    Computes the L2-normalized latent representation phi(s) for a given state s.
-    
-    The L2 normalization ensures scale-invariant comparisons between different
-    models by projecting all representations onto the unit hypersphere.
+    states: Tensor of shape (B, C, T, H, W)
+    returns: (B, D) numpy array of L2‐normalized embeddings
     """
-    representations = encoder(state)[:, -1, :]
-    # Apply L2 normalization to ensure scale-invariant comparisons
-    return torch.nn.functional.normalize(representations, p=2, dim=1)
+    states = states.to(device)
+    out = encoder(states)           # now B×something×D
+    reps = out[:, -1, :]            # take last time slice
+    reps = torch.nn.functional.normalize(reps, p=2, dim=1)
+    return reps.cpu().numpy()
 
-def get_all_states(dataloader: torch.utils.data.DataLoader) -> torch.Tensor:
-    """Collects all states from the dataloader."""
-    all_states = []
-    for batch in dataloader:
-        state, _, _, _ = batch
-        all_states.append(state)
-    return torch.cat(all_states, dim=0)
 
-def compute_ranks(dist_matrix: np.ndarray) -> np.ndarray:
-    """Computes the rank of each point in the distance matrix."""
-    return np.argsort(np.argsort(dist_matrix, axis=1, kind='stable'), axis=1, kind='stable')
-
-def compute_trustworthiness_continuity(
-    X_true: np.ndarray, X_latent: np.ndarray, k: int
-) -> tuple[float, float]:
+def compute_continuity(X_true: np.ndarray, X_latent: np.ndarray, k: int) -> float:
     """
-    Computes Trustworthiness and Continuity with statistical rigor.
-    This implementation is inspired by scikit-learn's internal functions.
+    Vectorized Continuity: fraction of true neighbors missing in latent.
     """
-    n_samples = X_true.shape[0]
-    
-    # Find k-NN in both spaces
-    nbrs_true = NearestNeighbors(n_neighbors=k, algorithm='auto').fit(X_true)
-    true_knn_indices = nbrs_true.kneighbors(return_distance=False)
-    
-    nbrs_latent = NearestNeighbors(n_neighbors=k, algorithm='auto').fit(X_latent)
-    latent_knn_indices = nbrs_latent.kneighbors(return_distance=False)
+    n = X_true.shape[0]
+    # get the k‐NN indices (0…n−1) in each space
+    nbrs_t = NearestNeighbors(n_neighbors=k).fit(X_true)
+    nbrs_l = NearestNeighbors(n_neighbors=k).fit(X_latent)
+    idx_t = nbrs_t.kneighbors(return_distance=False)
+    idx_l = nbrs_l.kneighbors(return_distance=False)
 
-    # Compute full distance matrices and ranks (computationally intensive part)
-    true_dists = np.sum((X_true[:, np.newaxis, :] - X_true[np.newaxis, :, :]) ** 2, axis=2)
-    latent_dists = np.sum((X_latent[:, np.newaxis, :] - X_latent[np.newaxis, :, :]) ** 2, axis=2)
-    
-    true_ranks = compute_ranks(true_dists)
-    latent_ranks = compute_ranks(latent_dists)
+    # build boolean adjacency matrices
+    A_t = np.zeros((n, n), bool)
+    A_l = np.zeros((n, n), bool)
+    A_t[np.arange(n)[:,None], idx_t] = True
+    A_l[np.arange(n)[:,None], idx_l] = True
 
-    # --- Trustworthiness ---
-    trust_penalty = 0.0
-    for i in range(n_samples):
-        # Intruders are points in the latent neighborhood but not in the true one
-        intruders = np.setdiff1d(latent_knn_indices[i], true_knn_indices[i])
-        if intruders.size > 0:
-            # Penalty is based on the rank of these intruders in the *true* space
-            ranks = true_ranks[i, intruders]
-            trust_penalty += np.sum(ranks - k)
-            
-    # --- Continuity ---
-    cont_penalty = 0.0
-    for i in range(n_samples):
-        # Extrusions are points in the true neighborhood but not in the latent one
-        extrusions = np.setdiff1d(true_knn_indices[i], latent_knn_indices[i])
-        if extrusions.size > 0:
-            # Penalty is based on the rank of these extrusions in the *latent* space
-            ranks = latent_ranks[i, extrusions]
-            cont_penalty += np.sum(ranks - k)
+    # “extrusions” = in true but not in latent
+    extr_mask = A_t & ~A_l
 
-    # Normalization factor
-    norm_factor = (2 / (n_samples * k * (2 * n_samples - 3 * k - 1)))
-    
-    trustworthiness = 1.0 - (norm_factor * trust_penalty)
-    continuity = 1.0 - (norm_factor * cont_penalty)
-    
-    return trustworthiness, continuity
+    # compute ranks in latent space
+    d_lat = pairwise_distances(X_latent, metric="sqeuclidean")
+    ranks_lat = np.argsort(np.argsort(d_lat, axis=1), axis=1)
 
-def run_analysis_for_sample(
+    # penalty = sum(rank−k) over extrusions
+    diffs = np.maximum(0, ranks_lat - k)
+    penalty = diffs[extr_mask].sum()
+
+    norm = 2.0 / (n * k * (2 * n - 3*k - 1))
+    return 1.0 - norm * penalty
+
+
+def run_bootstrap_analysis(
     encoder: torch.nn.Module,
-    states_sample: torch.Tensor,
+    all_states: torch.Tensor,
     k_values: list[int],
-    device: torch.device,
+    n_boot: int,
+    sample_size: int,
+    device: torch.device
 ) -> dict:
-    """Runs the full T&C analysis for a single sample of data."""
-    results = {k: {} for k in k_values}
-    
-    # Flatten states for true space distance calculation
-    states_sample_flat = states_sample.cpu().numpy().reshape(states_sample.size(0), -1)
-    
-    # Get latent representations
-    with torch.no_grad():
-        latent_reps = get_reps(encoder, states_sample.to(device)).cpu().numpy()
-        
+    """
+    Returns {k: {"T_mean":…, "T_std":…, "C_mean":…, "C_std":…}, …}
+    """
+    stats = {k: {"T": [], "C": []} for k in k_values}
+
+    for i in tqdm(range(n_boot), desc="Bootstraps"):
+        # --- 1) sample raw states as a 5D tensor ---
+        sample = resample(all_states, n_samples=sample_size, random_state=i)
+
+        # --- 2) get latent reps (shape B×D) and flatten true states (B×(C·T·H·W)) ---
+        X_lat = get_latent_reps(encoder, sample, device)
+        X_true = sample.cpu().numpy().reshape(sample.size(0), -1)
+
+        # --- 3) for each k compute T & C ---
+        for k in k_values:
+            T = trustworthiness(X_true, X_lat, n_neighbors=k)
+            C = compute_continuity(X_true, X_lat, k)
+            stats[k]["T"].append(T)
+            stats[k]["C"].append(C)
+
+    # aggregate
+    results = {}
     for k in k_values:
-        T, C = compute_trustworthiness_continuity(states_sample_flat, latent_reps, k)
-        results[k]['T'] = T
-        results[k]['C'] = C
-        
+        results[k] = {
+            "T_mean": np.mean(stats[k]["T"]),
+            "T_std":  np.std(stats[k]["T"]),
+            "C_mean": np.mean(stats[k]["C"]),
+            "C_std":  np.std(stats[k]["C"]),
+        }
     return results
 
-def create_plots(results: dict, k_values: list[int], output_path: Path):
-    """Generates and saves the final analysis plots with error bars."""
-    plt.style.use('seaborn-v0_8-whitegrid')
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7), sharey=True)
-    fig.suptitle('Neighborhood Preservation Analysis (with Bootstrap Error)', fontsize=16, y=0.98)
-    colors = {ModelType.JEPA: 'royalblue', ModelType.ENCODER_DECODER: 'coral'}
 
-    model_types = list(results.keys())
+def create_plots(results: dict, k_values: list[int], out_png: Path):
+    fig, (ax1, ax2) = plt.subplots(1,2, figsize=(14,6), sharey=True)
     x = np.arange(len(k_values))
     width = 0.35
+    colors = {ModelType.JEPA: "royalblue", ModelType.ENCODER_DECODER: "coral"}
 
-    # --- Plot 1: Trustworthiness ---
-    ax1.set_title('Trustworthiness', fontsize=12)
-    for i, model_type in enumerate(model_types):
-        means = [results[model_type][k]['T_mean'] for k in k_values]
-        stds = [results[model_type][k]['T_std'] for k in k_values]
-        ax1.bar(x + i * width - width/2, means, width, yerr=stds, capsize=5,
-                label=model_type.upper(), color=colors[model_type])
-    
-    ax1.set_ylabel('Score')
-    ax1.set_xlabel('Neighborhood Size (k)')
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(k_values)
-    ax1.legend()
-    ax1.set_ylim(0, 1.05)
+    for i, model in enumerate(results):
+        Ts = [results[model][k]["T_mean"] for k in k_values]
+        Ts_std = [results[model][k]["T_std"]  for k in k_values]
+        Cs = [results[model][k]["C_mean"] for k in k_values]
+        Cs_std = [results[model][k]["C_std"]  for k in k_values]
 
-    # --- Plot 2: Continuity ---
-    ax2.set_title('Continuity', fontsize=12)
-    for i, model_type in enumerate(model_types):
-        means = [results[model_type][k]['C_mean'] for k in k_values]
-        stds = [results[model_type][k]['C_std'] for k in k_values]
-        ax2.bar(x + i * width - width/2, means, width, yerr=stds, capsize=5,
-                label=model_type.upper(), color=colors[model_type])
+        ax1.bar(x + i*width, Ts,  width, yerr=Ts_std,  capsize=4, label=model.upper(), color=colors[model])
+        ax2.bar(x + i*width, Cs,  width, yerr=Cs_std,  capsize=4, label=model.upper(), color=colors[model])
 
-    ax2.set_xlabel('Neighborhood Size (k)')
-    ax2.set_xticks(x)
-    ax2.set_xticklabels(k_values)
-    ax2.legend()
+    ax1.set_title("Trustworthiness")
+    ax1.set_xticks(x); ax1.set_xticklabels(k_values)
+    ax1.set_ylim(0,1.05); ax1.set_xlabel("k"); ax1.set_ylabel("Score"); ax1.legend()
 
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_path, dpi=300)
-    logging.info(f"Analysis plots saved to {output_path}")
+    ax2.set_title("Continuity")
+    ax2.set_xticks(x); ax2.set_xticklabels(k_values)
+    ax2.set_xlabel("k"); ax2.legend()
 
-def save_csv_data(results: dict, k_values: list[int], output_dir: Path):
-    """Saves analysis results as CSV files."""
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # --- 1. Summary Statistics CSV ---
-    summary_data = []
-    for model_type in results:
+    plt.tight_layout()
+    out_png.parent.mkdir(exist_ok=True, parents=True)
+    plt.savefig(out_png, dpi=300)
+    logging.info(f"Saved plot to {out_png}")
+
+
+def save_summary_csv(results: dict, k_values: list[int], out_dir: Path) -> Path:
+    rows = []
+    for model in results:
         for k in k_values:
-            scores = results[model_type][k]
-            summary_data.append({
-                'Model': model_type.upper(),
-                'Neighborhood_Size_k': k,
-                'Trustworthiness_Mean': scores['T_mean'],
-                'Trustworthiness_Std': scores['T_std'],
-                'Continuity_Mean': scores['C_mean'],
-                'Continuity_Std': scores['C_std']
+            r = results[model][k]
+            rows.append({
+                "Model": model.upper(),
+                "k": k,
+                "Trust_mean": r["T_mean"],
+                "Trust_std":  r["T_std"],
+                "Cont_mean":  r["C_mean"],
+                "Cont_std":   r["C_std"],
             })
-    
-    summary_df = pd.DataFrame(summary_data)
-    summary_csv_path = output_dir / "neighborhood_preservation_summary.csv"
-    summary_df.to_csv(summary_csv_path, index=False)
-    logging.info(f"Summary statistics saved to {summary_csv_path}")
-    
-    return summary_csv_path
+    df = pd.DataFrame(rows)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "neighborhood_preservation_summary.csv"
+    df.to_csv(path, index=False)
+    logging.info(f"Saved CSV to {path}")
+    return path
+
 
 def main():
-    """Main function to run the analysis."""
     config_path = str(project_root / "config.yaml")
     device = set_device()
 
-    # --- 1. Configuration ---
-    k_values = [5, 10, 15] # Adjusted for computational cost
-    n_bootstraps = 10 # Number of bootstrap samples
-    sample_size = 200 # Sample size for each bootstrap run (critical for performance)
+    # load data
+    data_pipe = DataLoadingPipeline(batch_size=128, config_path=config_path)
+    _, val_loader = data_pipe.run_pipeline()
+    all_states = torch.cat([b[0] for b in val_loader], dim=0)  # shape (N, C, T, H, W)
 
-    # --- 2. Load Data ---
-    logging.info("Loading validation data...")
-    data_pipeline = DataLoadingPipeline(batch_size=128, config_path=config_path)
-    _, val_dataloader = data_pipeline.run_pipeline()
-    if val_dataloader is None:
-        logging.error("Validation dataloader not found. Cannot proceed.")
-        return
+    k_values = [5,10,15]
+    n_boot    = 10
+    sample_sz = 200
 
-    logging.info("Collecting all validation states...")
-    all_states = get_all_states(val_dataloader)
-    logging.info(f"Found {len(all_states)} total states.")
+    final = {}
+    for model in (ModelType.JEPA, ModelType.ENCODER_DECODER):
+        enc = load_model(model, config_path, device)
+        final[model] = run_bootstrap_analysis(enc, all_states, k_values, n_boot, sample_sz, device)
 
-    # --- 3. Analyze Models with Bootstrapping ---
-    final_results = {ModelType.JEPA: {}, ModelType.ENCODER_DECODER: {}}
-
-    for model_type in [ModelType.JEPA, ModelType.ENCODER_DECODER]:
-        encoder = load_model(model_type, config_path, device)
-        
-        # Store scores from all bootstrap runs
-        bootstrap_scores = defaultdict(lambda: {'T': [], 'C': []})
-        
-        desc = f"Bootstrapping {model_type.upper()}"
-        for i in tqdm(range(n_bootstraps), desc=desc):
-            # Resample data for this bootstrap iteration
-            states_sample = resample(all_states, n_samples=sample_size, random_state=i)
-            
-            # Run analysis on the sample
-            sample_results = run_analysis_for_sample(encoder, states_sample, k_values, device)
-            
-            # Collect scores
-            for k in k_values:
-                bootstrap_scores[k]['T'].append(sample_results[k]['T'])
-                bootstrap_scores[k]['C'].append(sample_results[k]['C'])
-        
-        # Compute mean and std dev from bootstrap runs
-        for k in k_values:
-            final_results[model_type][k] = {
-                'T_mean': np.mean(bootstrap_scores[k]['T']),
-                'T_std': np.std(bootstrap_scores[k]['T']),
-                'C_mean': np.mean(bootstrap_scores[k]['C']),
-                'C_std': np.std(bootstrap_scores[k]['C']),
-            }
-
-    # --- 4. Print Summary Table ---
-    print("\n" + "="*70)
-    print("Neighborhood Preservation Analysis Summary (Mean ± Std. Dev.)".center(70))
-    print("="*70)
-    header = f"{'k':<5}{'Model':<20}{'Trustworthiness':<25}{'Continuity':<25}"
-    print(header)
-    print("-"*70)
+    # print summary
+    print("\n" + "="*60)
+    print("k   MODEL               Trustworthiness (μ±σ)     Continuity (μ±σ)")
+    print("-"*60)
     for k in k_values:
-        for model_type in final_results:
-            scores = final_results[model_type][k]
-            t_str = f"{scores['T_mean']:.4f} ± {scores['T_std']:.4f}"
-            c_str = f"{scores['C_mean']:.4f} ± {scores['C_std']:.4f}"
-            row = f"{k:<5}{model_type.upper():<20}{t_str:<25}{c_str:<25}"
-            print(row)
-        if k != k_values[-1]:
-            print("-"*30)
-    print("="*70 + "\n")
+        for model in final:
+            r = final[model][k]
+            print(f"{k:<4}{model.upper():<20}"
+                  f"{r['T_mean']:.4f}±{r['T_std']:.4f}        "
+                  f"{r['C_mean']:.4f}±{r['C_std']:.4f}")
+        print("-"*60)
+    print("\n")
 
-    # --- 5. Generate and Save Plots ---
-    output_dir = project_root / "evaluation_plots" / "neighborhood_preservation"
-    output_path = output_dir / "neighborhood_preservation.png"
-    create_plots(final_results, k_values, output_path)
-    
-    # --- 6. Save CSV Data ---
-    summary_csv = save_csv_data(final_results, k_values, output_dir)
-    
-    print(f"Analysis complete. View results at: {output_path}")
-    print(f"Summary data saved to: {summary_csv}")
+    # plots & CSV
+    out_dir = project_root / "evaluation_plots" / "neighborhood_preservation"
+    create_plots(final, k_values, out_dir / "neighborhood_preservation.png")
+    save_summary_csv(final, k_values, out_dir)
+
 
 if __name__ == "__main__":
     main()
