@@ -14,11 +14,11 @@ data_and_patching:
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 100
+  num_episodes: 30
   max_steps_per_episode: 3000
   random_action_percentage: 0.2 # Percentage of actions to be random (0.0 = no random actions)
-  load_path: "assault_rep_8.pth"
-  filename: "assault_rep_8.pth"
+  load_path: "pong_rep_8.pth"
+  filename: "pong_rep_8.pth"
   validation_split: 0.15
   ppo_agent:
     load: False # Whether to load a pre-trained PPO agent
@@ -36,7 +36,7 @@ data_collection:
     additional_log_std_noise: 0.0
     policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
 
-embed_dim: 96 # Dimension of the embedding space for the transformer model
+embed_dim: 64 # Dimension of the embedding space for the transformer model
 
 training:
   main_loops:
@@ -46,6 +46,7 @@ training:
     weight_decay: 0.0001 # Weight decay for the optimizer
     ema_decay: 0.999 # Exponential moving average decay for model parameters
     gradient_clipping: 1.0 # Maximum norm for gradient clipping
+    reward_loss: true # Whether to use reward loss during training
   jepa_decoder:
     num_epochs: 50 # Number of epochs for the JEPA decoder training
     batch_size: 128 # Batch size for the JEPA decoder training
@@ -97,11 +98,18 @@ models:
     attention_dropout: 0.1
     use_layer_norm: true
     activation: "gelu"
+  vicreg:
+    active: false  # Whether to use VICReg loss for JEPA
+    lambda_v: 25.0  # Weight for variance loss
+    lambda_s: 1.0  # Weight for covariance loss
+    lambda_i: 5.0   # Weight for invariance loss
+    proj_hidden_dim: 256 # Hidden dimension of the VICReg projection head
+    proj_output_dim: 32  # Output dimension of the VICReg projection head
 
 
 # Wandb configuration for experiment tracking
 wandb:
-  enabled: true  # Set to true to enable wandb logging
+  enabled: false  # Set to true to enable wandb logging
   project: "simple-rl-worlds"
   entity: null  # Set to your wandb username/team
   tags: []  # Add tags for organizing experiments
