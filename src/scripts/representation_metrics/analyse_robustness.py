@@ -11,7 +11,10 @@ Encoder-Decoder methods.
     primary training approaches: JEPA and Encoder-Decoder.
 2.  **Metric:** Robustness is measured by the L2 distance between the latent
     representation of a clean state `s` and its noisy counterpart `s̃`.
-    -   Metric: E||φ(s̃) - φ(s)||_2
+    -   Metric: E||φ_norm(s̃) - φ_norm(s)||_2
+    where φ_norm(s) represents the L2-normalized latent representation.
+    This normalization ensures scale-invariant comparisons between models
+    by projecting all representations onto the unit hypersphere.
     -   A lower value indicates better robustness, meaning the representation is
         more stable under input noise.
 3.  **Noise Injection:** Zero-mean Gaussian noise is added to the input states.
@@ -36,6 +39,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import pandas as pd
 from tqdm import tqdm
 from collections import defaultdict
 
@@ -77,8 +81,15 @@ def add_gaussian_noise(state: torch.Tensor, std_dev: float) -> torch.Tensor:
 
 @torch.no_grad()
 def get_reps(encoder: torch.nn.Module, state: torch.Tensor) -> torch.Tensor:
-    """Computes the latent representation phi(s) for a given state s."""
-    return encoder(state)[:, -1, :]
+    """
+    Computes the L2-normalized latent representation phi(s) for a given state s.
+    
+    The L2 normalization ensures scale-invariant comparisons between different
+    models by projecting all representations onto the unit hypersphere.
+    """
+    representations = encoder(state)[:, -1, :]
+    # Apply L2 normalization to ensure scale-invariant comparisons
+    return torch.nn.functional.normalize(representations, p=2, dim=1)
 
 def compute_robustness(encoder: torch.nn.Module, dataloader: torch.utils.data.DataLoader, noise_levels: list[float], device: torch.device) -> dict:
     """
@@ -129,7 +140,7 @@ def create_plots(results: dict, noise_levels: list[float], fixed_noise_level: fl
                          alpha=0.2, color=colors[model_type])
 
     ax1.set_xlabel('Input Noise Level (Gaussian Std. Dev.)')
-    ax1.set_ylabel('Mean Latent Distance E||φ(s̃) - φ(s)||')
+    ax1.set_ylabel('Mean Normalized Latent Distance E||φ_norm(s̃) - φ_norm(s)||')
     ax1.legend()
     ax1.grid(True, which='both', linestyle='--', linewidth=0.5)
     
@@ -141,12 +152,58 @@ def create_plots(results: dict, noise_levels: list[float], fixed_noise_level: fl
         
     sns.boxplot(data=plot_data, ax=ax2, palette=list(colors.values()))
     ax2.set_xticklabels(labels)
-    ax2.set_ylabel('Latent Distance')
+    ax2.set_ylabel('Normalized Latent Distance')
     
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_path, dpi=300)
     logging.info(f"Analysis plots saved to {output_path}")
+
+def save_csv_data(results: dict, noise_levels: list[float], output_dir: Path):
+    """Saves analysis results as CSV files."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # --- 1. Summary Statistics CSV ---
+    summary_data = []
+    for model_type in results:
+        for level in noise_levels:
+            distances = results[model_type][level]
+            summary_data.append({
+                'Model': model_type.upper(),
+                'Noise_Level': level,
+                'Mean_Distance': np.mean(distances),
+                'Std_Error': np.std(distances) / np.sqrt(len(distances)),
+                'Std_Dev': np.std(distances),
+                'Min_Distance': np.min(distances),
+                'Max_Distance': np.max(distances),
+                'Median_Distance': np.median(distances),
+                'Sample_Count': len(distances)
+            })
+    
+    summary_df = pd.DataFrame(summary_data)
+    summary_csv_path = output_dir / "robustness_summary.csv"
+    summary_df.to_csv(summary_csv_path, index=False)
+    logging.info(f"Summary statistics saved to {summary_csv_path}")
+    
+    # --- 2. Raw Distance Data CSV ---
+    raw_data = []
+    for model_type in results:
+        for level in noise_levels:
+            distances = results[model_type][level]
+            for i, distance in enumerate(distances):
+                raw_data.append({
+                    'Model': model_type.upper(),
+                    'Noise_Level': level,
+                    'Sample_ID': i,
+                    'Distance': distance
+                })
+    
+    raw_df = pd.DataFrame(raw_data)
+    raw_csv_path = output_dir / "robustness_raw_data.csv"
+    raw_df.to_csv(raw_csv_path, index=False)
+    logging.info(f"Raw distance data saved to {raw_csv_path}")
+    
+    return summary_csv_path, raw_csv_path
 
 def main():
     """Main function to run the robustness analysis."""
@@ -188,16 +245,16 @@ def main():
             summary_data[level].append((model_type.upper(), mean_dist, std_err))
 
     # --- 4. Print Summary Table ---
-    print("\n" + "="*60)
-    print("Robustness Analysis Summary".center(60))
-    print("Mean Latent Distance E||φ(s̃) - φ(s)|| (± Std. Error)".center(60))
-    print("="*60)
+    print("\n" + "="*70)
+    print("Robustness Analysis Summary".center(70))
+    print("Mean Normalized Latent Distance E||φ_norm(s̃) - φ_norm(s)|| (± Std. Error)".center(70))
+    print("="*70)
     print(f"{'Noise Level':<15}{'Model':<20}{'Mean Distance':<25}")
-    print("-"*60)
+    print("-"*70)
     for level, stats in summary_data.items():
         for model_name, mean_dist, std_err in stats:
             print(f"{level:<15.2f}{model_name:<20}{mean_dist:.4f} ± {std_err:.4f}")
-        print("-"*60)
+        print("-"*70)
     print()
 
     # --- 5. Generate and Save Plots ---
@@ -205,7 +262,12 @@ def main():
     output_path = output_dir / "robustness_comparison.png"
     create_plots(all_results, noise_levels, fixed_plot_noise_level, output_path)
     
+    # --- 6. Save CSV Data ---
+    summary_csv, raw_csv = save_csv_data(all_results, noise_levels, output_dir)
+    
     print(f"Analysis complete. View results at: {output_path}")
+    print(f"Summary data saved to: {summary_csv}")
+    print(f"Raw data saved to: {raw_csv}")
 
 if __name__ == "__main__":
     main()

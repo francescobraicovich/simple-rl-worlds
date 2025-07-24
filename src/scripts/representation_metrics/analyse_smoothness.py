@@ -13,7 +13,10 @@ methods.
     the distance of two consecutive states in the environment's pixel space
     and their distance in the learned latent space.
     -   Pixel Distance: d_s = ||s_t - s_{t+1}||_2
-    -   Latent Distance: d_z = ||phi(s_t) - phi(s_{t+1})||_2
+    -   Latent Distance: d_z = ||phi_norm(s_t) - phi_norm(s_{t+1})||_2
+    where phi_norm(s) represents the L2-normalized latent representation.
+    This normalization ensures scale-invariant comparisons between models
+    by projecting all representations onto the unit hypersphere.
     A smoother representation space should exhibit a strong, positive correlation
     between these two distances.
 3.  **Data:** The analysis uses pairs of consecutive states (s_t, s_{t+1})
@@ -42,6 +45,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import pandas as pd
 from scipy import stats
 from tqdm import tqdm
 
@@ -84,17 +88,22 @@ def load_model(model_type: str, config_path: str, device: torch.device) -> torch
 @torch.no_grad()
 def get_reps(encoder: torch.nn.Module, state: torch.Tensor) -> torch.Tensor:
     """
-    Computes the latent representation phi(s) for a given state s.
+    Computes the L2-normalized latent representation phi(s) for a given state s.
+    
+    The L2 normalization ensures scale-invariant comparisons between different
+    models by projecting all representations onto the unit hypersphere.
     
     Args:
         encoder: The pre-trained encoder model.
         state: The input state tensor [B, C, T, H, W].
         
     Returns:
-        The latent representation tensor [B, Embedding_Dim].
+        The L2-normalized latent representation tensor [B, Embedding_Dim].
     """
     # The encoder returns [B, T, E], we take the last time step's embedding
-    return encoder(state)[:, -1, :]
+    representations = encoder(state)[:, -1, :]
+    # Apply L2 normalization to ensure scale-invariant comparisons
+    return torch.nn.functional.normalize(representations, p=2, dim=1)
 
 def compute_distances(encoder: torch.nn.Module, dataloader: torch.utils.data.DataLoader, device: torch.device) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -163,7 +172,7 @@ def create_plots(results: dict, output_path: Path):
                  label=f'{model_type.upper()} Fit (Slope={slope:.2f}, R²={r_value**2:.2f})')
 
     ax1.set_xlabel('Pixel-space Distance (L2 Norm)')
-    ax1.set_ylabel('Latent-space Distance (L2 Norm)')
+    ax1.set_ylabel('Normalized Latent-space Distance (L2 Norm)')
     ax1.legend()
     
     # --- Plot 2: Box Plot of Smoothness Ratios ---
@@ -187,6 +196,66 @@ def create_plots(results: dict, output_path: Path):
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_path, dpi=300)
     logging.info(f"Analysis plots saved to {output_path}")
+
+def save_csv_data(results: dict, output_dir: Path):
+    """Saves analysis results as CSV files."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # --- 1. Summary Statistics CSV ---
+    summary_data = []
+    for model_type, data in results.items():
+        slope, intercept, r_value, p_value, std_err = data['regression']
+        
+        # Filter out near-zero pixel distances for ratio statistics
+        valid_indices = data['d_s'] > 1e-6
+        if np.sum(valid_indices) > 0:
+            ratios = data['d_z'][valid_indices] / data['d_s'][valid_indices]
+            mean_ratio = np.mean(ratios)
+            std_ratio = np.std(ratios)
+            median_ratio = np.median(ratios)
+        else:
+            mean_ratio = np.nan
+            std_ratio = np.nan
+            median_ratio = np.nan
+        
+        summary_data.append({
+            'Model': model_type.upper(),
+            'Regression_Slope': slope,
+            'Regression_Intercept': intercept,
+            'R_Value': r_value,
+            'R_Squared': r_value**2,
+            'P_Value': p_value,
+            'Std_Error': std_err,
+            'Mean_Smoothness_Ratio': mean_ratio,
+            'Std_Smoothness_Ratio': std_ratio,
+            'Median_Smoothness_Ratio': median_ratio,
+            'Sample_Count': len(data['d_s'])
+        })
+    
+    summary_df = pd.DataFrame(summary_data)
+    summary_csv_path = output_dir / "smoothness_summary.csv"
+    summary_df.to_csv(summary_csv_path, index=False)
+    logging.info(f"Summary statistics saved to {summary_csv_path}")
+    
+    # --- 2. Raw Distance Data CSV ---
+    raw_data = []
+    for model_type, data in results.items():
+        for i, (d_s, d_z) in enumerate(zip(data['d_s'], data['d_z'])):
+            ratio = d_z / d_s if d_s > 1e-6 else np.nan
+            raw_data.append({
+                'Model': model_type.upper(),
+                'Sample_ID': i,
+                'Pixel_Distance': d_s,
+                'Latent_Distance': d_z,
+                'Smoothness_Ratio': ratio
+            })
+    
+    raw_df = pd.DataFrame(raw_data)
+    raw_csv_path = output_dir / "smoothness_raw_data.csv"
+    raw_df.to_csv(raw_csv_path, index=False)
+    logging.info(f"Raw distance data saved to {raw_csv_path}")
+    
+    return summary_csv_path, raw_csv_path
 
 def main():
     """Main function to run the smoothness analysis."""
@@ -235,7 +304,12 @@ def main():
     output_path = output_dir / "smoothness_comparison.png"
     create_plots(results, output_path)
     
+    # --- 4. Save CSV Data ---
+    summary_csv, raw_csv = save_csv_data(results, output_dir)
+    
     print(f"Analysis complete. View results at: {output_path}")
+    print(f"Summary data saved to: {summary_csv}")
+    print(f"Raw data saved to: {raw_csv}")
 
 if __name__ == "__main__":
     main()

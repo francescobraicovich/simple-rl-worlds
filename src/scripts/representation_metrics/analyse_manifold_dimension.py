@@ -46,6 +46,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import pandas as pd
 from scipy.special import digamma
 from sklearn.neighbors import NearestNeighbors
 from tqdm import tqdm
@@ -89,17 +90,22 @@ def load_model(model_type: str, config_path: str, device: torch.device) -> torch
 @torch.no_grad()
 def get_reps(encoder: torch.nn.Module, state: torch.Tensor) -> torch.Tensor:
     """
-    Computes the latent representation phi(s) for a given state s.
+    Computes the L2-normalized latent representation phi(s) for a given state s.
+    
+    The L2 normalization ensures scale-invariant comparisons between different
+    models by projecting all representations onto the unit hypersphere.
     
     Args:
         encoder: The pre-trained encoder model.
         state: The input state tensor [B, C, T, H, W].
         
     Returns:
-        The latent representation tensor [B, Embedding_Dim].
+        The L2-normalized latent representation tensor [B, Embedding_Dim].
     """
     # The encoder returns [B, T, E], we take the last time step's embedding
-    return encoder(state)[:, -1, :]
+    representations = encoder(state)[:, -1, :]
+    # Apply L2 normalization to ensure scale-invariant comparisons
+    return torch.nn.functional.normalize(representations, p=2, dim=1)
 
 def compute_participation_ratio(representations: np.ndarray) -> float:
     """
@@ -367,6 +373,61 @@ def create_plots(results: dict, output_path: Path):
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     logging.info(f"Analysis plots saved to {output_path}")
 
+def save_csv_data(results: dict, output_dir: Path):
+    """Saves analysis results as CSV files."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # --- 1. Summary Statistics CSV ---
+    summary_data = []
+    for model_type, data in results.items():
+        # Calculate eigenvalue statistics
+        centered_reps = data['representations'] - np.mean(data['representations'], axis=0)
+        cov_matrix = np.cov(centered_reps.T)
+        eigenvalues = np.linalg.eigvals(cov_matrix)
+        eigenvalues = np.real(eigenvalues)
+        eigenvalues = eigenvalues[eigenvalues > 1e-12]
+        
+        summary_data.append({
+            'Model': model_type.upper(),
+            'Nominal_Dimension': data['nominal_dimension'],
+            'Participation_Ratio': data['participation_ratio'],
+            'Intrinsic_Dimension': data['intrinsic_dimension'] if not np.isnan(data['intrinsic_dimension']) else None,
+            'Dimension_Error': data['dimension_error'] if not np.isnan(data['dimension_error']) else None,
+            'Usage_Efficiency_Percent': data['participation_ratio']/data['nominal_dimension']*100,
+            'Max_Eigenvalue': np.max(eigenvalues) if len(eigenvalues) > 0 else 0,
+            'Min_Eigenvalue': np.min(eigenvalues) if len(eigenvalues) > 0 else 0,
+            'Eigenvalue_Count': len(eigenvalues),
+            'Sample_Count': len(data['representations'])
+        })
+    
+    summary_df = pd.DataFrame(summary_data)
+    summary_csv_path = output_dir / "manifold_dimension_summary.csv"
+    summary_df.to_csv(summary_csv_path, index=False)
+    logging.info(f"Summary statistics saved to {summary_csv_path}")
+    
+    # --- 2. Eigenvalues CSV ---
+    eigenvalue_data = []
+    for model_type, data in results.items():
+        centered_reps = data['representations'] - np.mean(data['representations'], axis=0)
+        cov_matrix = np.cov(centered_reps.T)
+        eigenvalues = np.linalg.eigvals(cov_matrix)
+        eigenvalues = np.real(eigenvalues)
+        eigenvalues = np.sort(eigenvalues)[::-1]  # Sort descending
+        
+        for i, eigenval in enumerate(eigenvalues):
+            eigenvalue_data.append({
+                'Model': model_type.upper(),
+                'Eigenvalue_Index': i + 1,
+                'Eigenvalue': eigenval
+            })
+    
+    eigenval_df = pd.DataFrame(eigenvalue_data)
+    eigenval_csv_path = output_dir / "manifold_eigenvalues.csv"
+    eigenval_df.to_csv(eigenval_csv_path, index=False)
+    logging.info(f"Eigenvalue data saved to {eigenval_csv_path}")
+    
+    return summary_csv_path, eigenval_csv_path
+
 def main():
     """Main function to run the manifold dimension analysis."""
     config_path = str(project_root / "config.yaml")
@@ -423,7 +484,12 @@ def main():
     output_path = output_dir / "manifold_dimension_analysis.png"
     create_plots(results, output_path)
     
+    # --- 5. Save CSV Data ---
+    summary_csv, eigenval_csv = save_csv_data(results, output_dir)
+    
     print(f"Analysis complete. View results at: {output_path}")
+    print(f"Summary data saved to: {summary_csv}")
+    print(f"Eigenvalue data saved to: {eigenval_csv}")
 
 if __name__ == "__main__":
     main()
