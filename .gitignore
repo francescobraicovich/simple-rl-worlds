@@ -194,3 +194,5 @@ slurm-*.out
 run_job.slurm
 
 /paper
+
+*copy.py
