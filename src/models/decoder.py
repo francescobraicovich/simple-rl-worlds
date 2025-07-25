@@ -303,13 +303,13 @@ class HybridConvTransformerDecoder(nn.Module):
 
 class ConvDecoder(nn.Module):
     """
-    Convolutional decoder for reconstructing 64x64 grayscale images from latent vectors.
+    Convolutional decoder for reconstructing RGB images from latent vectors.
     
     Architecture:
     - Input: [B, 1, embed_dim] latent vector from predictor
-    - Linear layer: latent_dim → 256 × 4 × 4
-    - 4 ConvTranspose2d layers with SiLU + LayerNorm
-    - Output: [B, 1, 1, 64, 64] reconstructed frame
+    - Linear layer: latent_dim → initial_channels × initial_size × initial_size
+    - Multiple ConvTranspose2d layers with SiLU + LayerNorm
+    - Output: [B, output_channels, 1, height, width] reconstructed frame
     """
     
     def __init__(
@@ -411,7 +411,7 @@ class ConvDecoder(nn.Module):
             latent_token: Input tensor of shape [B, 1, embed_dim]
             
         Returns:
-            Reconstructed image of shape [B, 1, 1, 64, 64]
+            Reconstructed image of shape [B, output_channels, 1, height, width]
         """
         # Input shape: [B, 1, embed_dim]
         B, T, E = latent_token.shape
@@ -421,10 +421,10 @@ class ConvDecoder(nn.Module):
         # Squeeze token dimension: [B, 1, embed_dim] → [B, embed_dim]
         x = latent_token.squeeze(1)
         
-        # Linear layer: [B, embed_dim] → [B, 256*4*4]
+        # Linear layer: [B, embed_dim] → [B, initial_channels*initial_size*initial_size]
         x = self.initial_linear(x)
         
-        # Reshape to feature map: [B, 256*4*4] → [B, 256, 4, 4]
+        # Reshape to feature map: [B, initial_channels*initial_size*initial_size] → [B, initial_channels, initial_size, initial_size]
         x = x.reshape(B, self.initial_channels, self.initial_size, self.initial_size)
         
         # Pass through transpose convolution layers
@@ -448,7 +448,7 @@ class ConvDecoder(nn.Module):
                     x = self.dropout(x)
                     x = x.permute(0, 3, 1, 2)  # Back to [B, C, H, W]
         
-        # Add temporal dimension: [B, 1, 64, 64] → [B, 1, 1, 64, 64]
+        # Add temporal dimension: [B, C, H, W] → [B, C, 1, H, W]
         output = x.unsqueeze(2)
         
         return output
