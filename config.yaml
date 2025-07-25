@@ -142,6 +142,11 @@ models:
     hidden_sizes: [256, 256]
     dropout: 0.1
     
+  jepa_pretrain_predictor:
+    hidden_sizes: [512, 512]
+    activation: "silu"
+    dropout_rate: 0.1
+    
   vicreg:
     active: false  # Whether to use VICReg loss for JEPA
     lambda_v: 25.0  # Weight for variance loss
