@@ -64,16 +64,12 @@ def init_predictor(config_path: str = None) -> MLPHistoryPredictor:
 
     env, render_mode = _initialize_environment(config)
     num_actions = env.action_space.n
-
-    data_config = config['data_and_patching']
-    sequence_length = data_config['sequence_length']
     
     # Extract relevant configuration parameters
     predictor_config = config['models']['predictor']
     latent_dim = config['latent_dim']
 
     predictor = MLPHistoryPredictor(
-        frames_per_clip=sequence_length,
         latent_dim=latent_dim,
         num_actions=num_actions,
         hidden_sizes=predictor_config['hidden_sizes'],
