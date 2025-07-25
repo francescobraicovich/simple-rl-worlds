@@ -8,11 +8,14 @@ data_and_patching:
   image_height: 84
   image_width: 84
   sequence_length: 4
+  patch_size_h: 4              # Patch size for image preprocessing
+  patch_size_w: 4              # Patch size for image preprocessing
+  patch_size_t: 2              # Temporal patch size for video data
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 3
-  max_steps_per_episode: 100
+  num_episodes: 40
+  max_steps_per_episode: 50000
   random_action_percentage: 0.2 # Percentage of actions to be random (0.0 = no random actions)
   load_path: "assault_rep_8.pth"
   filename: "assault_rep_8.pth"
@@ -33,9 +36,33 @@ data_collection:
     additional_log_std_noise: 0.0
     policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
 
-latent_dim: 128 # Dimension of the embedding space for the transformer model
+latent_dim: 512 # Dimension of the embedding space for the transformer model
 
 training:
+  mae_pretraining:
+    num_epochs: 50 # Number of epochs for MAE pretraining
+    batch_size: 128 # Batch size for MAE pretraining
+    learning_rate: 0.0001 # Learning rate for the MAE optimizer
+    weight_decay: 0.0001 # Weight decay for the MAE optimizer
+    gradient_clipping: 10.0 # Maximum norm for gradient clipping
+    mask_ratio: 0.4 # Ratio of patches to mask during training
+    # Learning rate scheduler configuration
+    lr_scheduler:
+      enabled: false # Whether to use learning rate scheduling
+      type: "cosine" # Type of scheduler: "cosine", "step", "exponential", "plateau"
+      # Cosine annealing parameters
+      cosine_T_max: 50 # Maximum number of iterations for cosine annealing (typically num_epochs)
+      cosine_eta_min: 0.000001 # Minimum learning rate for cosine annealing
+      # Step scheduler parameters  
+      step_size: 20 # Period of learning rate decay for step scheduler
+      step_gamma: 0.5 # Multiplicative factor of learning rate decay for step scheduler
+      # Exponential scheduler parameters
+      exp_gamma: 0.95 # Multiplicative factor for exponential decay
+      # ReduceLROnPlateau parameters
+      plateau_mode: "min" # Mode for plateau scheduler: "min" or "max"
+      plateau_factor: 0.5 # Factor by which learning rate is reduced
+      plateau_patience: 10 # Number of epochs with no improvement to wait
+      plateau_threshold: 0.0001 # Threshold for measuring improvement
   main_loops:
     num_epochs: 50 # Number of epochs for training
     batch_size: 128 # Batch size for training
