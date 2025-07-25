@@ -31,10 +31,10 @@ import wandb
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils.init_models import init_encoder, init_predictor, init_decoder, load_config, init_reward_predictor
+from src.utils.init_models import init_encoder, init_predictor, init_decoder, load_config
 from src.scripts.collect_load_data import DataLoadingPipeline
 from src.utils.set_device import set_device
-from src.utils.scheduler_utils import create_lr_scheduler, step_scheduler, get_current_lr
+from src.utils.scheduler_utils import create_lr_scheduler, step_scheduler
 
 
 class EncoderDecoderTrainer:
@@ -74,13 +74,11 @@ class EncoderDecoderTrainer:
         self.encoder = None
         self.predictor = None
         self.decoder = None
-        self.reward_predictor = None
         
         # Training components
         self.optimizer = None
         self.lr_scheduler = None
         self.criterion = nn.L1Loss()  # Mean Absolute Error for reconstruction
-        self.reward_criterion = nn.MSELoss()  # Reward prediction loss
         
         # Data
         self.train_dataloader = None
@@ -90,13 +88,10 @@ class EncoderDecoderTrainer:
         self.best_val_loss = float('inf')
         self.checkpoint_dir = Path("weights/encoder_decoder")
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
-        # Flag for reward predictor usage
-        self.use_reward_predictor = self.config['training'].get('main_loops').get('reward_loss')
         
         # MAE pretraining configuration
         self.load_mae_weights = self.training_config.get('load_mae_weights', False)
-        self.mae_weights_path = self.training_config.get('mae_weights_path', 'weights/mae_pretraining/best_checkpoint.pth')
+        self.mae_weights_path = "weights/mae_pretraining/best_checkpoint.pth"
         self.freeze_encoder = self.training_config.get('freeze_encoder', False)
         self.freeze_decoder = self.training_config.get('freeze_decoder', False)
         
@@ -106,9 +101,6 @@ class EncoderDecoderTrainer:
         self.encoder = init_encoder(self.config_path).to(self.device)
         self.predictor = init_predictor(self.config_path).to(self.device)
         self.decoder = init_decoder(self.config_path).to(self.device)
-
-        if self.use_reward_predictor:
-            self.reward_predictor = init_reward_predictor(self.config_path).to(self.device)
             
         # Load MAE pretrained weights if configured
         if self.load_mae_weights:
@@ -131,11 +123,6 @@ class EncoderDecoderTrainer:
         print(f"Encoder: {encoder_params} parameters ({encoder_trainable} trainable)")
         print(f"Predictor: {predictor_params} parameters ({predictor_trainable} trainable)")  
         print(f"Decoder: {decoder_params} parameters ({decoder_trainable} trainable)")
-        
-        if self.use_reward_predictor:
-            reward_params = sum(p.numel() for p in self.reward_predictor.parameters())
-            reward_trainable = sum(p.numel() for p in self.reward_predictor.parameters() if p.requires_grad)
-            print(f"Reward Predictor: {reward_params} parameters ({reward_trainable} trainable)")
             
     def load_mae_pretrained_weights(self):
         """Load pretrained weights from MAE checkpoint."""
@@ -183,9 +170,6 @@ class EncoderDecoderTrainer:
         trainable_params.extend([p for p in self.encoder.parameters() if p.requires_grad])
         trainable_params.extend([p for p in self.predictor.parameters() if p.requires_grad])
         trainable_params.extend([p for p in self.decoder.parameters() if p.requires_grad])
-        
-        if self.use_reward_predictor:
-            trainable_params.extend([p for p in self.reward_predictor.parameters() if p.requires_grad])
             
         return trainable_params
         
@@ -210,9 +194,6 @@ class EncoderDecoderTrainer:
         else:
             # If frozen, only add parameters that require gradients (should be empty)
             trainable_params.extend([p for p in self.decoder.parameters() if p.requires_grad])
-
-        if self.use_reward_predictor:
-            trainable_params.extend(list(self.reward_predictor.parameters()))
         
         # Filter to only parameters that require gradients
         trainable_params = [p for p in trainable_params if p.requires_grad]
@@ -253,7 +234,7 @@ class EncoderDecoderTrainer:
         # Run the pipeline to get dataloaders from existing data
         self.train_dataloader, self.val_dataloader = pipeline.run_pipeline()
         
-    def train_step(self, batch: Tuple[torch.Tensor, ...]) -> Tuple[float, float, float]:
+    def train_step(self, batch: Tuple[torch.Tensor, ...]) -> Tuple[float, float]:
         """
         Perform a single training step with end-to-end reconstruction.
         
@@ -261,16 +242,16 @@ class EncoderDecoderTrainer:
             batch: Tuple containing (state, next_state, action, reward)
             
         Returns:
-            Tuple of (reconstruction_loss, reward_loss, total_loss) for this batch
+            Tuple of (reconstruction_loss, total_loss) for this batch
         """
-        state, next_state, action, reward = batch
+        state, next_state, action, _ = batch
 
         # Move to device
         state = state.to(self.device)
         next_state = next_state.to(self.device)
+        
+        action = action[:, -1]  # Use only the last action in the sequence
         action = action.to(self.device)
-        reward = reward[:, -1]
-        reward = reward.to(self.device)
         
         # Forward pass through the entire model stack
         self.optimizer.zero_grad()
@@ -290,22 +271,8 @@ class EncoderDecoderTrainer:
         
         # Initialize total loss with reconstruction loss
         total_loss = reconstruction_loss
-        reward_loss = 0.0
         
-        # 5. Add reward prediction loss if enabled
-        if self.use_reward_predictor:
-            # Encode ground-truth next state for reward prediction
-            z_next_target = self.encoder(next_state)
-            
-            # Predict reward using current and ground-truth next latent states
-            reward_pred = self.reward_predictor(z_state, z_next_target)
-            reward_pred = reward_pred.squeeze(-1).squeeze(-1)  # Ensure shape is [B]
-            
-            # Compute reward loss (MSE loss)
-            reward_loss = self.reward_criterion(reward_pred, reward)
-            total_loss += reward_loss
-        
-        # 6. Backward pass through entire model graph
+        # 5. Backward pass through entire model graph
         total_loss.backward()
         # Gradient clipping if configured
         if self.gradient_clipping is not None:
@@ -314,13 +281,9 @@ class EncoderDecoderTrainer:
             torch.nn.utils.clip_grad_norm_(trainable_params, self.gradient_clipping)
         self.optimizer.step()
         
-        # Convert tensor losses to float for consistent return type
-        if isinstance(reward_loss, torch.Tensor):
-            reward_loss = reward_loss.item()
+        return reconstruction_loss.item(), total_loss.item()
         
-        return reconstruction_loss.item(), reward_loss, total_loss.item()
-        
-    def validate_step(self, batch: Tuple[torch.Tensor, ...]) -> Tuple[float, float, float]:
+    def validate_step(self, batch: Tuple[torch.Tensor, ...]) -> Tuple[float, float]:
         """
         Perform a single validation step with end-to-end reconstruction.
         
@@ -328,16 +291,16 @@ class EncoderDecoderTrainer:
             batch: Tuple containing (state, next_state, action, reward)
             
         Returns:
-            Tuple of (reconstruction_loss, reward_loss, total_loss) for this batch
+            Tuple of (reconstruction_loss, total_loss) for this batch
         """
-        state, next_state, action, reward = batch
+        state, next_state, action, _ = batch
 
         # Move to device
         state = state.to(self.device)
         next_state = next_state.to(self.device)
+
+        action = action[:, -1]  # Use only the last action in the sequence
         action = action.to(self.device)
-        reward = reward[:, -1]
-        reward = reward.to(self.device)
         
         with torch.no_grad():
             # 1. Encode current state
@@ -354,49 +317,27 @@ class EncoderDecoderTrainer:
             
             # Initialize total loss with reconstruction loss
             total_loss = reconstruction_loss
-            reward_loss = 0.0
             
-            # 5. Compute reward prediction loss if enabled
-            if self.use_reward_predictor:
-                # Encode ground-truth next state for reward prediction
-                z_next_target = self.encoder(next_state)
-                
-                # Predict reward using current and ground-truth next latent states
-                reward_pred = self.reward_predictor(z_state, z_next_target)
-                reward_pred = reward_pred.squeeze(-1).squeeze(-1)  # Ensure shape is [B]
-                
-                # Compute reward loss (MSE loss)
-                reward_loss = self.reward_criterion(reward_pred, reward)
-                total_loss += reward_loss
-            
-            # Convert tensor losses to float for consistent return type
-            if isinstance(reward_loss, torch.Tensor):
-                reward_loss = reward_loss.item()
-            
-        return reconstruction_loss.item(), reward_loss, total_loss.item()
+        return reconstruction_loss.item(), total_loss.item()
         
-    def train_epoch(self) -> Tuple[float, float, float]:
+    def train_epoch(self) -> Tuple[float, float]:
         """
         Train for one epoch.
         
         Returns:
-            Tuple of (average_reconstruction_loss, average_reward_loss, average_total_loss) for the epoch
+            Tuple of (average_reconstruction_loss, average_total_loss) for the epoch
         """
         self.encoder.train()
         self.predictor.train()
         self.decoder.train()
-        if self.use_reward_predictor:
-            self.reward_predictor.train()
         
         total_reconstruction_loss = 0.0
-        total_reward_loss = 0.0
         total_total_loss = 0.0
         num_batches = len(self.train_dataloader)
         
         for batch_idx, batch in enumerate(self.train_dataloader):
-            reconstruction_loss, reward_loss, batch_total_loss = self.train_step(batch)
+            reconstruction_loss, batch_total_loss = self.train_step(batch)
             total_reconstruction_loss += reconstruction_loss
-            total_reward_loss += reward_loss
             total_total_loss += batch_total_loss
             
             # Log batch loss to wandb (minimal terminal output)
@@ -406,21 +347,18 @@ class EncoderDecoderTrainer:
                     "batch_total_loss": batch_total_loss,
                     "batch": batch_idx
                 }
-                if self.use_reward_predictor:
-                    log_dict["batch_reward_loss"] = reward_loss
                 wandb.log(log_dict)
                 
         avg_reconstruction_loss = total_reconstruction_loss / num_batches
-        avg_reward_loss = total_reward_loss / num_batches
         avg_total_loss = total_total_loss / num_batches
-        return avg_reconstruction_loss, avg_reward_loss, avg_total_loss
+        return avg_reconstruction_loss, avg_total_loss
         
-    def validate_epoch(self) -> Optional[Tuple[float, float, float]]:
+    def validate_epoch(self) -> Optional[Tuple[float, float]]:
         """
         Validate for one epoch.
         
         Returns:
-            Tuple of (average_reconstruction_loss, average_reward_loss, average_total_loss) for the epoch, or None if no validation data
+            Tuple of (average_reconstruction_loss, average_total_loss) for the epoch, or None if no validation data
         """
         if self.val_dataloader is None:
             return None
@@ -428,37 +366,30 @@ class EncoderDecoderTrainer:
         self.encoder.eval()
         self.predictor.eval()
         self.decoder.eval()
-        if self.use_reward_predictor:
-            self.reward_predictor.eval()
         
         total_reconstruction_loss = 0.0
-        total_reward_loss = 0.0
         total_total_loss = 0.0
         num_batches = len(self.val_dataloader)
         
         for batch in self.val_dataloader:
-            reconstruction_loss, reward_loss, batch_total_loss = self.validate_step(batch)
+            reconstruction_loss, batch_total_loss = self.validate_step(batch)
             total_reconstruction_loss += reconstruction_loss
-            total_reward_loss += reward_loss
             total_total_loss += batch_total_loss
             
         avg_reconstruction_loss = total_reconstruction_loss / num_batches
-        avg_reward_loss = total_reward_loss / num_batches
         avg_total_loss = total_total_loss / num_batches
-        return avg_reconstruction_loss, avg_reward_loss, avg_total_loss
+        return avg_reconstruction_loss, avg_total_loss
         
-    def save_checkpoint(self, epoch: int, train_reconstruction_loss: float, train_reward_loss: float, train_total_loss: float,
-                       val_reconstruction_loss: Optional[float], val_reward_loss: Optional[float], val_total_loss: Optional[float]):
+    def save_checkpoint(self, epoch: int, train_reconstruction_loss: float, train_total_loss: float,
+                       val_reconstruction_loss: Optional[float], val_total_loss: Optional[float]):
         """
         Save model checkpoints for all models.
         
         Args:
             epoch: Current epoch number
             train_reconstruction_loss: Training reconstruction loss for this epoch
-            train_reward_loss: Training reward loss for this epoch
             train_total_loss: Training total loss for this epoch
             val_reconstruction_loss: Validation reconstruction loss for this epoch (if available)
-            val_reward_loss: Validation reward loss for this epoch (if available)
             val_total_loss: Validation total loss for this epoch (if available)
         """
         checkpoint = {
@@ -468,17 +399,11 @@ class EncoderDecoderTrainer:
             'decoder_state_dict': self.decoder.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'train_reconstruction_loss': train_reconstruction_loss,
-            'train_reward_loss': train_reward_loss,
             'train_total_loss': train_total_loss,
             'val_reconstruction_loss': val_reconstruction_loss,
-            'val_reward_loss': val_reward_loss,
             'val_total_loss': val_total_loss,
             'config': self.config
         }
-        
-        # Add optional reward predictor state dict if it exists
-        if self.reward_predictor is not None:
-            checkpoint['reward_predictor_state_dict'] = self.reward_predictor.state_dict()
         
         # Save latest checkpoint
         latest_path = self.checkpoint_dir / "latest_checkpoint.pth"
@@ -497,10 +422,6 @@ class EncoderDecoderTrainer:
             torch.save(self.encoder.state_dict(), self.checkpoint_dir / "best_encoder.pth")
             torch.save(self.predictor.state_dict(), self.checkpoint_dir / "best_predictor.pth")
             torch.save(self.decoder.state_dict(), self.checkpoint_dir / "best_decoder.pth")
-            
-            # Save reward predictor if it exists
-            if self.reward_predictor is not None:
-                torch.save(self.reward_predictor.state_dict(), self.checkpoint_dir / "best_reward_predictor.pth")
             
     def train(self):
         """Run the complete end-to-end training loop."""
@@ -546,14 +467,14 @@ class EncoderDecoderTrainer:
             epoch_start_time = time.time()
             
             # Train
-            train_reconstruction_loss, train_reward_loss, train_total_loss = self.train_epoch()
+            train_reconstruction_loss, train_total_loss = self.train_epoch()
             
             # Validate
             val_results = self.validate_epoch()
             if val_results is not None:
-                val_reconstruction_loss, val_reward_loss, val_total_loss = val_results
+                val_reconstruction_loss, val_total_loss = val_results
             else:
-                val_reconstruction_loss, val_reward_loss, val_total_loss = None, None, None
+                val_reconstruction_loss, val_total_loss = None, None
             
             epoch_time = time.time() - epoch_start_time
             
@@ -568,20 +489,13 @@ class EncoderDecoderTrainer:
             if val_reconstruction_loss is not None:
                 log_dict["val_reconstruction_loss"] = val_reconstruction_loss
                 log_dict["val_total_loss"] = val_total_loss
-
-            if self.use_reward_predictor:
-                log_dict.update({
-                    "train_reward_loss": train_reward_loss,
-                })
-                if val_reward_loss is not None:
-                    log_dict["val_reward_loss"] = val_reward_loss
                 
             if wandb.run is not None:
                 wandb.log(log_dict)
             
             # Save checkpoint
-            self.save_checkpoint(epoch, train_reconstruction_loss, train_reward_loss, train_total_loss,
-                               val_reconstruction_loss, val_reward_loss, val_total_loss)
+            self.save_checkpoint(epoch, train_reconstruction_loss, train_total_loss,
+                               val_reconstruction_loss, val_total_loss)
             
             # Step learning rate scheduler
             if self.lr_scheduler is not None:
@@ -593,18 +507,10 @@ class EncoderDecoderTrainer:
                 # Base message with reconstruction and total losses
                 message = f"Epoch {epoch+1}/{self.num_epochs} - Train Recon: {train_reconstruction_loss:.6f}, Val Recon: {val_reconstruction_loss:.6f}, Train Total: {train_total_loss:.6f}, Val Total: {val_total_loss:.6f}"
                 
-                # Add reward losses if enabled
-                if self.use_reward_predictor:
-                    message += f", Train Reward: {train_reward_loss:.6f}, Val Reward: {val_reward_loss:.6f}"
-                
                 print(message)
             else:
                 # Base message for no validation with reconstruction and total losses
                 message = f"Epoch {epoch+1}/{self.num_epochs} - Train Recon: {train_reconstruction_loss:.6f}, Val Recon: N/A, Train Total: {train_total_loss:.6f}, Val Total: N/A"
-                
-                # Add reward loss if enabled
-                if self.use_reward_predictor:
-                    message += f", Train Reward: {train_reward_loss:.6f}, Val Reward: N/A"
                 
                 print(message)
             
