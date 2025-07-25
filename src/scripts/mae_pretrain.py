@@ -81,8 +81,8 @@ class MAETrainer:
         # Training components
         self.optimizer = None
         self.lr_scheduler = None
-        self.criterion = nn.MSELoss()  # Mean Squared Error for reconstruction
-        
+        self.criterion = nn.L1Loss()  # Mean Absolute Error for reconstruction
+
         # Data
         self.train_dataloader = None
         self.val_dataloader = None
