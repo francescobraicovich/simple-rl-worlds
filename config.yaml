@@ -14,8 +14,8 @@ data_and_patching:
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 5
-  max_steps_per_episode: 30
+  num_episodes: 2
+  max_steps_per_episode: 10
   random_action_percentage: 0.2 # Percentage of actions to be random (0.0 = no random actions)
   load_path: "assault_rep_8.pth"
   filename: "assault_rep_8.pth"
@@ -25,7 +25,7 @@ data_collection:
     n_envs: 10 # Number of parallel environments for PPO training (default: CPU count)
     action_repetition_k: 8
     learning_rate: 0.0003
-    total_train_timesteps: 5000 # Timesteps to train PPO before data collection (reduced for testing)
+    total_train_timesteps: 1000 # Timesteps to train PPO before data collection (very small for testing)
     n_steps: 128       # PPO n_steps parameter
     batch_size: 256      # PPO batch_size parameter
     n_epochs: 6         # PPO n_epochs parameter
@@ -40,9 +40,9 @@ latent_dim: 256 # Increased to better utilize ResNet-18 features (was 64)
 
 training:
   main_loops:
-    num_epochs: 50 # Number of epochs for training
+    num_epochs: 2000 # Number of epochs for training (reduced for testing)
     batch_size: 4 # Batch size for training
-    learning_rate: 0.0001 # Learning rate for the optimizer
+    learning_rate: 0.001 # Learning rate for the optimizer (higher for faster convergence)
     weight_decay: 0.0001 # Weight decay for the optimizer
     ema_decay: 0.999 # Exponential moving average decay for model parameters
     gradient_clipping: 1.0 # Maximum norm for gradient clipping
