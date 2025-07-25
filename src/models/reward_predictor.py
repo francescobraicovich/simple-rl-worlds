@@ -130,7 +130,7 @@ class MLPRewardPredictor(nn.Module):
             hidden_dims = [latent_dim, latent_dim // 2]
         
         # Input dimension is (sequence_length + 1) * latent_dim (concatenated flattened representations)
-        input_dim = (sequence_length + 1) * latent_dim
+        input_dim = 2 * latent_dim
         
         # Build MLP layers
         layers = []
@@ -165,21 +165,16 @@ class MLPRewardPredictor(nn.Module):
         Forward pass through the MLP reward predictor.
         
         Args:
-            x1: First representation tensor of shape (batch_size, sequence_length, latent_dim)
-            x2: Second representation tensor of shape (batch_size, 1, latent_dim)
+            x1: First representation tensor of shape (batch_size, latent_dim)
+            x2: Second representation tensor of shape (batch_size, latent_dim)
         
         Returns:
             reward: Predicted reward tensor of shape (batch_size, 1)
         """
         
-        # Flatten x1 from [B, sequence_length, latent_dim] to [B, sequence_length * latent_dim]
-        x1_flattened = x1.view(x1.size(0), -1)
-        
-        # Flatten x2 from [B, 1, latent_dim] to [B, latent_dim]
-        x2_flattened = x2.view(x2.size(0), -1)
         
         # Concatenate the flattened representations
-        combined = torch.cat([x1_flattened, x2_flattened], dim=-1)
+        combined = torch.cat([x1, x2], dim=-1)
         
         # Pass through MLP to get reward prediction
         reward = self.mlp(combined)
