@@ -87,7 +87,7 @@ def get_reps(encoder: torch.nn.Module, state: torch.Tensor) -> torch.Tensor:
     The L2 normalization ensures scale-invariant comparisons between different
     models by projecting all representations onto the unit hypersphere.
     """
-    representations = encoder(state)[:, -1, :]
+    representations = encoder(state)
     # Apply L2 normalization to ensure scale-invariant comparisons
     return torch.nn.functional.normalize(representations, p=2, dim=1)
 
