@@ -5,14 +5,13 @@ class ExperienceDataset(Dataset):
     def __init__(self, states, actions, rewards, stop_episodes, sequence_length):
         assert sequence_length is not None and sequence_length > 0
 
-        print(f'Length of states: {len(states)}')
-        print(f'Length of actions: {len(actions)}')
-        print(f'Length of rewards: {len(rewards)}')
+
         # states: list of [C, T_i, H, W] tensors; actions, rewards, stop_episodes: length-N lists/vectors
         self.sequence_length = sequence_length
 
         # concatenate along temporal dim
         self.states = torch.cat(states, dim=1)  # shape [C, total_T, H, W]
+        self.states = self.states.squeeze(0)  # remove leading dimension if it exists
         self.actions = torch.stack(actions)     # shape [total_T, ...]
         self.rewards = torch.stack(rewards)     # shape [total_T, ...]
         self.stop_episodes = torch.tensor(stop_episodes, dtype=torch.bool)  # shape [total_T]
@@ -37,8 +36,8 @@ class ExperienceDataset(Dataset):
         start = self.valid_start_indices[idx]
         end = start + self.sequence_length
 
-        state      = self.states[:, start:end, :, :]            # [C, seq_len, H, W]
-        next_state = self.states[:, end,    :, :].unsqueeze(1)   # [C, 1, H, W]
+        state      = self.states[start:end, :, :]            # [seq_len, H, W]
+        next_state = self.states[end,    :, :].unsqueeze(0)   # [1, H, W]
         action     = self.actions[start:end]                     # [seq_len, ...]
         reward     = self.rewards[start:end]                     # [seq_len, ...]
 
