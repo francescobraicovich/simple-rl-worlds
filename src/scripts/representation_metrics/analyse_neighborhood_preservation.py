@@ -50,13 +50,12 @@ def load_model(model_type: str, config_path: str, device: torch.device) -> torch
 @torch.no_grad()
 def get_latent_reps(encoder: torch.nn.Module, states: torch.Tensor, device: torch.device) -> np.ndarray:
     """
-    states: Tensor of shape (B, C, T, H, W)
+    states: Tensor of shape (B, T, H, W)
     returns: (B, D) numpy array of L2‐normalized embeddings
     """
     states = states.to(device)
-    out = encoder(states)           # now B×something×D
-    reps = out[:, -1, :]            # take last time slice
-    reps = torch.nn.functional.normalize(reps, p=2, dim=1)
+    out = encoder(states)           # now B×D
+    reps = torch.nn.functional.normalize(out, p=2, dim=1)
     return reps.cpu().numpy()
 
 
