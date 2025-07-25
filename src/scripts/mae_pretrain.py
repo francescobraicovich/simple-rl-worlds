@@ -63,7 +63,7 @@ class MAETrainer:
         self.config = load_config(config_path)
         
         # Training parameters
-        self.training_config = self.config['training']['mae_pretraining']
+        self.training_config = self.config['training']['pretraining']
         self.num_epochs = self.training_config['num_epochs']
         self.batch_size = self.training_config['batch_size']
         self.learning_rate = self.training_config['learning_rate']
