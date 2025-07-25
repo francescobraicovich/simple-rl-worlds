@@ -1,5 +1,5 @@
 environment:
-  name: "ALE/Pong-v5" # Simple environment for testing (was "ALE/Assault-v5")
+  name: "ALE/Assault-v5" # Simple environment for testing (was "ALE/Assault-v5")
 
   # Image preprocessing parameters
   frame_stack_size: 4         # Number of frames to stack (1 = no stacking, 4 = stack 4 frames)
@@ -14,18 +14,18 @@ data_and_patching:
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 3
-  max_steps_per_episode: 100
+  num_episodes: 5
+  max_steps_per_episode: 30
   random_action_percentage: 0.2 # Percentage of actions to be random (0.0 = no random actions)
-  load_path: "pong_rep_8.pth"
-  filename: "pong_rep_8.pth"
+  load_path: "assault_rep_8.pth"
+  filename: "assault_rep_8.pth"
   validation_split: 0.15
   ppo_agent:
     load: False # Whether to load a pre-trained PPO agent
     n_envs: 10 # Number of parallel environments for PPO training (default: CPU count)
     action_repetition_k: 8
     learning_rate: 0.0003
-    total_train_timesteps: 500 # Timesteps to train PPO before data collection (reduced for testing)
+    total_train_timesteps: 5000 # Timesteps to train PPO before data collection (reduced for testing)
     n_steps: 128       # PPO n_steps parameter
     batch_size: 256      # PPO batch_size parameter
     n_epochs: 6         # PPO n_epochs parameter
@@ -36,12 +36,12 @@ data_collection:
     additional_log_std_noise: 0.0
     policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
 
-latent_dim: 64 # Dimension of the embedding space for the transformer model
+latent_dim: 256 # Increased to better utilize ResNet-18 features (was 64)
 
 training:
   main_loops:
     num_epochs: 50 # Number of epochs for training
-    batch_size: 128 # Batch size for training
+    batch_size: 4 # Batch size for training
     learning_rate: 0.0001 # Learning rate for the optimizer
     weight_decay: 0.0001 # Weight decay for the optimizer
     ema_decay: 0.999 # Exponential moving average decay for model parameters
@@ -118,10 +118,10 @@ models:
     dropout_rate: 0.1
     
   decoder:
-    initial_size: 14               # Adjusted for 224x224 input (224/16=14)
-    conv_channels: [256, 128, 64, 32, 3]  # Output 3 channels for RGB
+    initial_size: 7                # Smaller initial size for fewer parameters
+    conv_channels: [512, 256, 128, 64, 32, 3]  # More layers, fewer channels (~10M parameters)
     activation: "silu"
-    dropout_rate: 0
+    dropout_rate: 0.1              # Add regularization for larger model
 
   reward_predictor:
     hidden_sizes: [256, 256]
