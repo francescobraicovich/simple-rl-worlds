@@ -5,17 +5,14 @@ environment:
   frame_stack_size: 4         # Number of frames to stack (1 = no stacking, 4 = stack 4 frames)
 
 data_and_patching:
-  image_height: 64
-  image_width: 64
+  image_height: 84
+  image_width: 84
   sequence_length: 4
-  patch_size_h: 4              # Patch size for image preprocessing
-  patch_size_w: 4              # Patch size for image preprocessing
-  patch_size_t: 2              # Temporal patch size for video data
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 100
-  max_steps_per_episode: 3000
+  num_episodes: 3
+  max_steps_per_episode: 100
   random_action_percentage: 0.2 # Percentage of actions to be random (0.0 = no random actions)
   load_path: "assault_rep_8.pth"
   filename: "assault_rep_8.pth"
@@ -25,7 +22,7 @@ data_collection:
     n_envs: 10 # Number of parallel environments for PPO training (default: CPU count)
     action_repetition_k: 8
     learning_rate: 0.0003
-    total_train_timesteps: 500000 # Timesteps to train PPO before data collection (reduced for testing)
+    total_train_timesteps: 500 # Timesteps to train PPO before data collection (reduced for testing)
     n_steps: 128       # PPO n_steps parameter
     batch_size: 256      # PPO batch_size parameter
     n_epochs: 6         # PPO n_epochs parameter
@@ -36,7 +33,7 @@ data_collection:
     additional_log_std_noise: 0.0
     policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
 
-latent_dim: 64 # Dimension of the embedding space for the transformer model
+latent_dim: 128 # Dimension of the embedding space for the transformer model
 
 training:
   main_loops:
