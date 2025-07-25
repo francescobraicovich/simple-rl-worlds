@@ -178,6 +178,7 @@ class JEPADecoderTrainer:
         # Move to device
         state = state.to(self.device)
         next_state = next_state.to(self.device)
+        action = action[:, -1]  # Use only the last action in the sequence
         action = action.to(self.device)
         
         self.optimizer.zero_grad()
@@ -223,6 +224,7 @@ class JEPADecoderTrainer:
         # Move to device
         state = state.to(self.device)
         next_state = next_state.to(self.device)
+        action = action[:, -1]  # Use only the last action in the sequence
         action = action.to(self.device)
         
         with torch.no_grad():
