@@ -104,6 +104,28 @@ class EncoderDecoderTrainer:
         if self.use_reward_predictor:
             self.reward_predictor = init_reward_predictor(self.config_path).to(self.device)
         
+        # Print model parameter counts
+        encoder_params = sum(p.numel() for p in self.encoder.parameters())
+        predictor_params = sum(p.numel() for p in self.predictor.parameters())
+        decoder_params = sum(p.numel() for p in self.decoder.parameters())
+        total_params = encoder_params + predictor_params + decoder_params
+        
+        if self.use_reward_predictor:
+            reward_params = sum(p.numel() for p in self.reward_predictor.parameters())
+            total_params += reward_params
+            print(f"📊 Model Parameters:")
+            print(f"   Encoder (ResNet-18): {encoder_params:,}")
+            print(f"   Predictor: {predictor_params:,}")
+            print(f"   Decoder: {decoder_params:,}")
+            print(f"   Reward Predictor: {reward_params:,}")
+            print(f"   Total: {total_params:,}")
+        else:
+            print(f"📊 Model Parameters:")
+            print(f"   Encoder (ResNet-18): {encoder_params:,}")
+            print(f"   Predictor: {predictor_params:,}")
+            print(f"   Decoder: {decoder_params:,}")
+            print(f"   Total: {total_params:,}")
+        
     def initialize_optimizer(self):
         """Initialize the AdamW optimizer and learning rate scheduler for all trainable parameters."""
         # Combine parameters from all models
@@ -176,8 +198,13 @@ class EncoderDecoderTrainer:
         # 3. Decode predicted latent state to reconstruct next frame
         next_state_reconstructed = self.decoder(z_next_pred)
         
-        # 4. Compute L1 reconstruction loss between reconstructed and ground-truth next state
-        reconstruction_loss = self.criterion(next_state_reconstructed, next_state)
+        # 4. Ensure target has same shape as decoder output
+        # Decoder output: [B, C, 1, H, W], Target: [B, 1, C, H, W]
+        # Transpose target to match decoder output format
+        next_state_target = next_state.transpose(1, 2)  # [B, 1, C, H, W] -> [B, C, 1, H, W]
+        
+        # 5. Compute L1 reconstruction loss between reconstructed and ground-truth next state
+        reconstruction_loss = self.criterion(next_state_reconstructed, next_state_target)
         
         # Initialize total loss with reconstruction loss
         total_loss = reconstruction_loss
@@ -244,8 +271,13 @@ class EncoderDecoderTrainer:
             # 3. Decode predicted latent state
             next_state_reconstructed = self.decoder(z_next_pred)
             
-            # 4. Compute reconstruction loss
-            reconstruction_loss = self.criterion(next_state_reconstructed, next_state)
+            # 4. Ensure target has same shape as decoder output
+            # Decoder output: [B, C, 1, H, W], Target: [B, 1, C, H, W]
+            # Transpose target to match decoder output format
+            next_state_target = next_state.transpose(1, 2)  # [B, 1, C, H, W] -> [B, C, 1, H, W]
+            
+            # 5. Compute reconstruction loss
+            reconstruction_loss = self.criterion(next_state_reconstructed, next_state_target)
             
             # Initialize total loss with reconstruction loss
             total_loss = reconstruction_loss
@@ -471,6 +503,11 @@ class EncoderDecoderTrainer:
                     message += f", Train Reward: {train_reward_loss:.6f}, Val Reward: {val_reward_loss:.6f}"
                 
                 print(message)
+                
+                # Add loss interpretation for first few epochs
+                if epoch < 5:
+                    pixel_error_pct = (train_reconstruction_loss / 255.0) * 100
+                    print(f"   📊 Loss Analysis: {pixel_error_pct:.1f}% average pixel error (excellent if <5%)")
             else:
                 # Base message for no validation with reconstruction and total losses
                 message = f"Epoch {epoch+1}/{self.num_epochs} - Train Recon: {train_reconstruction_loss:.6f}, Val Recon: N/A, Train Total: {train_total_loss:.6f}, Val Total: N/A"
