@@ -26,7 +26,7 @@ data_collection:
     action_repetition_k: 8
     learning_rate: 0.0003
     total_train_timesteps: 1000000 # Timesteps to train PPO before data collection (reduced for testing)
-    n_steps: 2000       # PPO n_steps parameter
+    n_steps: 256       # PPO n_steps parameter
     batch_size: 256      # PPO batch_size parameter
     n_epochs: 6         # PPO n_epochs parameter
     gamma: 0.99         # PPO gamma parameter
