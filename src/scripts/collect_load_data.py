@@ -23,13 +23,14 @@ class DataCollectionPipeline:
     training systems.
     """
     
-    def __init__(self, batch_size: int, config_path: str = "config.yaml"):
+    def __init__(self, batch_size: int, config_path: str = None):
         """
         Initialize the data collection pipeline.
         
         Args:
             config_path: Path to the YAML configuration file
         """
+        # If no config path provided, use the default from config_utils
         self.config_path = config_path
         self.config = None
         self.train_dataset = None
@@ -254,7 +255,7 @@ class DataLoadingPipeline:
     existing datasets.
     """
     
-    def __init__(self, batch_size: int, config_path: str = "config.yaml"):
+    def __init__(self, batch_size: int, config_path: str = None):
         """
         Initialize the data loading pipeline.
         
@@ -465,7 +466,7 @@ def main():
     args = parser.parse_args()
     
     # Create and run pipeline
-    pipeline = DataCollectionPipeline(args.config)
+    pipeline = DataCollectionPipeline(batch_size=128, config_path=args.config)
     
     if args.validate_only:
         # Only validate configuration
