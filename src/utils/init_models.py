@@ -2,7 +2,7 @@ import yaml
 import os
 from typing import Dict, Any
 
-from ..models.encoder import ConvEncoder
+from ..models.encoder import ConvEncoder, PretrainedResNet18Encoder
 from ..models.predictor import MLPHistoryPredictor
 from ..models.decoder import ConvDecoder
 from ..models.reward_predictor import MLPRewardPredictor
@@ -44,16 +44,24 @@ def init_encoder(config_path: str = None) -> ConvEncoder:
     encoder_config = config['models']['encoder']
     latent_dim = config['latent_dim']
 
-
     encoder = ConvEncoder(
         latent_dim=latent_dim,
-        input_channels=1,
+        input_channels=encoder_config.get('input_channels', 3),  # Default to RGB
         conv_channels=encoder_config['conv_channels'],
         activation=encoder_config['activation'],
-        dropout_rate=encoder_config['dropout_rate']
+        dropout_rate=encoder_config['dropout_rate'],
+        use_pretrained_resnet=encoder_config.get('use_pretrained_resnet', True),
+        image_size=encoder_config.get('image_size', 224)
     )
     
     return encoder
+
+
+def init_conv_encoder(config_path: str = None) -> ConvEncoder:
+    """
+    Alias for init_encoder for backward compatibility with tests.
+    """
+    return init_encoder(config_path)
 
 
 
@@ -115,6 +123,13 @@ def init_decoder(config_path: str = None) -> ConvDecoder:
     )
     
     return decoder
+
+
+def init_conv_decoder(config_path: str = None) -> ConvDecoder:
+    """
+    Alias for init_decoder for backward compatibility with tests.
+    """
+    return init_decoder(config_path)
 
 
 def init_reward_predictor(config_path: str = None) -> MLPRewardPredictor:
