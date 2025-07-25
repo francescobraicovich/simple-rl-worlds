@@ -97,13 +97,13 @@ def get_reps(encoder: torch.nn.Module, state: torch.Tensor) -> torch.Tensor:
     
     Args:
         encoder: The pre-trained encoder model.
-        state: The input state tensor [B, C, T, H, W].
+        state: The input state tensor [B, T, H, W].
         
     Returns:
         The L2-normalized latent representation tensor [B, Embedding_Dim].
     """
     # The encoder returns [B, T, E], we take the last time step's embedding
-    representations = encoder(state)[:, -1, :]
+    representations = encoder(state)
     # Apply L2 normalization to ensure scale-invariant comparisons
     return torch.nn.functional.normalize(representations, p=2, dim=1)
 
