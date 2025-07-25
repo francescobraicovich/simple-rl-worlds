@@ -29,10 +29,10 @@ import wandb
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils.init_models import init_encoder, init_predictor, load_config, init_vicreg, init_reward_predictor
+from src.utils.init_models import init_encoder, init_predictor, load_config
 from src.scripts.collect_load_data import DataLoadingPipeline
 from src.utils.set_device import set_device
-from src.utils.scheduler_utils import create_lr_scheduler, step_scheduler, get_current_lr
+from src.utils.scheduler_utils import create_lr_scheduler, step_scheduler
 
 
 class JEPATrainer:
@@ -73,14 +73,11 @@ class JEPATrainer:
         self.encoder = None
         self.predictor = None
         self.target_encoder = None
-        self.vicreg_loss = None
-        self.reward_predictor = None
         
         # Training components
         self.optimizer = None
         self.lr_scheduler = None
         self.criterion = nn.L1Loss()  # Mean Absolute Error
-        self.reward_criterion = nn.MSELoss()  # Reward prediction loss
 
         # Data
         self.train_dataloader = None
@@ -90,10 +87,11 @@ class JEPATrainer:
         self.best_val_loss = float('inf')
         self.checkpoint_dir = Path("weights/jepa")
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
-        # Flag for VICREG and reward predictor usage
-        self.use_vicreg = self.config['models'].get('vicreg').get('active')
-        self.use_reward_predictor = self.config['training'].get('main_loops').get('reward_loss')
+        
+        # JEPA pretraining configuration
+        self.load_jepa_weights = self.training_config.get('load_jepa_weights', False)
+        self.jepa_weights_path = "weights/jepa_pretraining/best_checkpoint.pth"
+        self.freeze_encoder = self.training_config.get('freeze_encoder', False)
         
     def initialize_models(self):
         """Initialize encoder, predictor, and target encoder models."""
@@ -101,28 +99,96 @@ class JEPATrainer:
         self.encoder = init_encoder(self.config_path).to(self.device)
         self.predictor = init_predictor(self.config_path).to(self.device)
 
-        if self.use_vicreg:
-            self.vicreg_loss = init_vicreg(self.config_path).to(self.device)
-
-        if self.use_reward_predictor:
-            self.reward_predictor = init_reward_predictor(self.config_path).to(self.device)
-
         # Initialize target encoder as a copy of the main encoder
         self.target_encoder = copy.deepcopy(self.encoder).to(self.device)
         
-        # Freeze target encoder (no gradients)
+        # Load JEPA pretrained weights if configured
+        if self.load_jepa_weights:
+            self.load_jepa_pretrained_weights()
+            
+        # Freeze encoder if configured
+        if self.freeze_encoder:
+            self.freeze_model(self.encoder, "encoder")
+            # Also freeze the target encoder since it's a copy
+            self.freeze_model(self.target_encoder, "target_encoder")
+        
+        # Freeze target encoder (no gradients) - always frozen for EMA updates
         for param in self.target_encoder.parameters():
             param.requires_grad = False
             
+        # Print model parameter counts and frozen status
+        encoder_params = sum(p.numel() for p in self.encoder.parameters())
+        encoder_trainable = sum(p.numel() for p in self.encoder.parameters() if p.requires_grad)
+        predictor_params = sum(p.numel() for p in self.predictor.parameters()) 
+        predictor_trainable = sum(p.numel() for p in self.predictor.parameters() if p.requires_grad)
+        
+        print(f"Encoder: {encoder_params} parameters ({encoder_trainable} trainable)")
+        print(f"Predictor: {predictor_params} parameters ({predictor_trainable} trainable)")
+        print(f"Target Encoder: {sum(p.numel() for p in self.target_encoder.parameters())} parameters (0 trainable - EMA updates only)")
+            
+    def load_jepa_pretrained_weights(self):
+        """Load pretrained weights from JEPA checkpoint."""
+        jepa_checkpoint_path = Path(self.jepa_weights_path)
+        
+        if not jepa_checkpoint_path.exists():
+            print(f"Warning: JEPA checkpoint not found at {jepa_checkpoint_path}")
+            print("Proceeding with randomly initialized weights...")
+            return
+            
+        print(f"Loading JEPA pretrained weights from {jepa_checkpoint_path}")
+        
+        try:
+            checkpoint = torch.load(jepa_checkpoint_path, map_location=self.device)
+            
+            # Load encoder weights
+            if 'encoder_state_dict' in checkpoint:
+                self.encoder.load_state_dict(checkpoint['encoder_state_dict'])
+                print("✓ Loaded pretrained encoder weights")
+            else:
+                print("Warning: No encoder_state_dict found in JEPA checkpoint")
+                
+            # Load predictor weights (optional - might want to train from scratch)
+            if 'predictor_state_dict' in checkpoint and not self.freeze_encoder:
+                # Only load predictor weights if encoder is not frozen (for consistency)
+                # If encoder is frozen, we typically want to train predictor from scratch
+                pass  # Skip loading predictor weights to train from scratch
+            
+            # Update target encoder to match the loaded encoder
+            self.target_encoder = copy.deepcopy(self.encoder).to(self.device)
+                
+        except Exception as e:
+            print(f"Error loading JEPA checkpoint: {e}")
+            print("Proceeding with randomly initialized weights...")
+            
+    def freeze_model(self, model, model_name):
+        """Freeze all parameters of a model."""
+        for param in model.parameters():
+            param.requires_grad = False
+        print(f"✓ Frozen {model_name} parameters")
+            
     def initialize_optimizer(self):
         """Initialize the AdamW optimizer and learning rate scheduler for trainable parameters."""
-        # Combine parameters from encoder and predictor
-        trainable_params = list(self.encoder.parameters()) + list(self.predictor.parameters())
-        if self.use_vicreg:
-            trainable_params += list(self.vicreg_loss.parameters())
-
-        if self.use_reward_predictor:
-            trainable_params += list(self.reward_predictor.parameters())
+        # Collect only trainable parameters from all models
+        trainable_params = []
+        
+        # Add encoder parameters if not frozen
+        if not self.freeze_encoder:
+            trainable_params.extend(list(self.encoder.parameters()))
+        else:
+            # If frozen, only add parameters that require gradients (should be empty)
+            trainable_params.extend([p for p in self.encoder.parameters() if p.requires_grad])
+            
+        # Add predictor parameters (always trainable)
+        trainable_params.extend(list(self.predictor.parameters()))
+        
+        # Filter to only parameters that require gradients
+        trainable_params = [p for p in trainable_params if p.requires_grad]
+        
+        if not trainable_params:
+            raise ValueError("No trainable parameters found! Check model freezing configuration.")
+        
+        print(f"Optimizing {len(trainable_params)} parameter groups")
+        print(f"Total trainable parameters: {sum(p.numel() for p in trainable_params)}")
         
         self.optimizer = optim.AdamW(
             trainable_params,
@@ -172,15 +238,15 @@ class JEPATrainer:
         Returns:
             Loss value for this batch
         """
-        state, next_state, action, reward = batch
+        state, next_state, action, _ = batch  # Ignore reward
 
         # Move to device
         state = state.to(self.device)
         next_state = next_state.to(self.device)
+
+        action = action[:, -1]  # Use only the last action in the sequence
         action = action.to(self.device)
-        reward = reward[:, -1]
-        reward = reward.to(self.device)
-        
+
         # Forward pass
         self.optimizer.zero_grad()
 
@@ -190,63 +256,28 @@ class JEPATrainer:
         # Predict next latent state using the full action sequence
         z_next_pred = self.predictor(z_state, action)
         
-        # Encode ground-truth next state
-        if self.use_vicreg:
-            # Use online encoder for VICReg (no EMA)
-            z_next_target = self.encoder(next_state)
-        else:
-            # Use target encoder with EMA for standard training (no gradients)
-            with torch.no_grad():
-                z_next_target = self.target_encoder(next_state)
-
-        # Initialize losses
-        sim_loss, std_loss, cov_loss, reward_loss = 0.0, 0.0, 0.0, 0.0
+        # Encode ground-truth next state using target encoder with EMA
+        with torch.no_grad():
+            z_next_target = self.target_encoder(next_state)
 
         # Compute L1 loss between predicted and target latent states
-        if self.use_vicreg:
-            # Use VICReg loss if configured
-            loss, sim_loss, std_loss, cov_loss = self.vicreg_loss(z_next_pred, z_next_target)
-        else:
-            # Default L1 loss
-            loss = self.criterion(z_next_pred, z_next_target)
-
-        if self.use_reward_predictor:
-            # Predict reward using the reward predictor
-            reward_pred = self.reward_predictor(z_state, z_next_target)
-            reward_pred = reward_pred.squeeze(-1).squeeze(-1)  # Ensure shape is [B]
-            # Compute reward loss (MSE loss)
-            reward_loss = self.reward_criterion(reward_pred, reward)
-            loss += reward_loss
+        loss = self.criterion(z_next_pred, z_next_target)
     
         
         # Backward pass
         loss.backward()
         # Gradient clipping if configured
         if self.gradient_clipping is not None:
-            # Include all trainable parameters in gradient clipping
-            trainable_params = list(self.encoder.parameters()) + list(self.predictor.parameters())
-            if self.use_vicreg:
-                trainable_params += list(self.vicreg_loss.parameters())
-            if self.use_reward_predictor:
-                trainable_params += list(self.reward_predictor.parameters())
+            # Include only trainable parameters in gradient clipping
+            trainable_params = [p for p in list(self.encoder.parameters()) + list(self.predictor.parameters()) if p.requires_grad]
             torch.nn.utils.clip_grad_norm_(trainable_params, self.gradient_clipping)
         self.optimizer.step()
         
-        # Update target encoder with EMA only if not using VICReg
-        if not self.use_vicreg:
+        # Update target encoder with EMA (only if encoder is not frozen)
+        if not self.freeze_encoder:
             self.update_target_encoder()
         
-        # Convert tensor losses to float for consistent return type
-        if isinstance(sim_loss, torch.Tensor):
-            sim_loss = sim_loss.item()
-        if isinstance(std_loss, torch.Tensor):
-            std_loss = std_loss.item()
-        if isinstance(cov_loss, torch.Tensor):
-            cov_loss = cov_loss.item()
-        if isinstance(reward_loss, torch.Tensor):
-            reward_loss = reward_loss.item()
-        
-        return loss.item(), sim_loss, std_loss, cov_loss, reward_loss
+        return loss.item()
         
     def validate_step(self, batch: Tuple[torch.Tensor, ...]) -> float:
         """
@@ -258,14 +289,13 @@ class JEPATrainer:
         Returns:
             Loss value for this batch
         """
-        state, next_state, action, reward = batch
+        state, next_state, action, _ = batch  # Ignore reward
 
         # Move to device
         state = state.to(self.device)
         next_state = next_state.to(self.device)
+        action = action[:, -1]  # Use only the last action in the sequence
         action = action.to(self.device)
-        reward = reward[:, -1]
-        reward = reward.to(self.device)
 
         with torch.no_grad():
             # Encode current state
@@ -274,44 +304,13 @@ class JEPATrainer:
             # Predict next latent state using full action sequence
             z_next_pred = self.predictor(z_state, action)
             
-            # Encode ground-truth next state
-            if self.use_vicreg:
-                # Use online encoder for VICReg (no EMA)
-                z_next_target = self.encoder(next_state)
-            else:
-                # Use target encoder with EMA for standard training
-                z_next_target = self.target_encoder(next_state)
+            # Encode ground-truth next state using target encoder with EMA
+            z_next_target = self.target_encoder(next_state)
 
-            sim_loss, std_loss, cov_loss, reward_loss = 0.0, 0.0, 0.0, 0.0
+            # Compute L1 loss
+            loss = self.criterion(z_next_pred, z_next_target)
 
-            # Compute loss
-            if self.use_vicreg:
-                # Use VICReg loss if configured
-                loss, sim_loss, std_loss, cov_loss = self.vicreg_loss(z_next_pred, z_next_target)
-            else:
-                # Default L1 loss
-                loss = self.criterion(z_next_pred, z_next_target)
-
-            # If using reward predictor, compute reward loss
-            if self.use_reward_predictor:
-                # Predict reward using the reward predictor
-                reward_pred = self.reward_predictor(z_state, z_next_target)
-                reward_pred = reward_pred.squeeze(-1).squeeze(-1)  # Ensure shape is [B]
-                # Compute reward loss (MSE loss)
-                reward_loss = self.reward_criterion(reward_pred, reward)
-                loss += reward_loss
-
-            # Convert tensor losses to float for consistent return type
-            if isinstance(sim_loss, torch.Tensor):
-                sim_loss = sim_loss.item()
-            if isinstance(std_loss, torch.Tensor):
-                std_loss = std_loss.item()
-            if isinstance(cov_loss, torch.Tensor):
-                cov_loss = cov_loss.item()
-            if isinstance(reward_loss, torch.Tensor):
-                reward_loss = reward_loss.item()
-
-        return loss.item(), sim_loss, std_loss, cov_loss, reward_loss
+        return loss.item()
 
     def train_epoch(self) -> float:
         """
@@ -325,32 +324,18 @@ class JEPATrainer:
         self.target_encoder.eval()  # Target encoder is always in eval mode
         
         total_loss = 0.0
-        total_sim_loss = 0.0
-        total_std_loss = 0.0
-        total_cov_loss = 0.0
-        total_reward_loss = 0.0
         num_batches = len(self.train_dataloader)
         
         for batch_idx, batch in enumerate(self.train_dataloader):
-            loss, sim_loss, std_loss, cov_loss, reward_loss = self.train_step(batch)
+            loss = self.train_step(batch)
             total_loss += loss
-            total_sim_loss += sim_loss
-            total_std_loss += std_loss
-            total_cov_loss += cov_loss
-            total_reward_loss += reward_loss
             
             # Log batch loss to wandb (minimal terminal output)
             if wandb.run is not None:
-                wandb.log({"batch_loss": loss, "batch": batch_idx,
-                            "sim_loss": sim_loss, "std_loss": std_loss, 
-                            "cov_loss": cov_loss, "reward_loss": reward_loss})
+                wandb.log({"batch_loss": loss, "batch": batch_idx})
 
         avg_loss = total_loss / num_batches
-        avg_sim_loss = total_sim_loss / num_batches
-        avg_std_loss = total_std_loss / num_batches
-        avg_cov_loss = total_cov_loss / num_batches
-        avg_reward_loss = total_reward_loss / num_batches
-        return avg_loss, avg_sim_loss, avg_std_loss, avg_cov_loss, avg_reward_loss
+        return avg_loss
         
     def validate_epoch(self) -> Optional[float]:
         """
@@ -367,27 +352,14 @@ class JEPATrainer:
         self.target_encoder.eval()
         
         total_loss = 0.0
-        total_sim_loss = 0.0
-        total_std_loss = 0.0
-        total_cov_loss = 0.0
-        total_reward_loss = 0.0
         num_batches = len(self.val_dataloader)
         
         for batch in self.val_dataloader:
-            loss, sim_loss, std_loss, cov_loss, reward_loss = self.validate_step(batch)
+            loss = self.validate_step(batch)
             total_loss += loss
-            total_sim_loss += sim_loss
-            total_std_loss += std_loss
-            total_cov_loss += cov_loss
-            total_reward_loss += reward_loss
 
         avg_loss = total_loss / num_batches
-        avg_sim_loss = total_sim_loss / num_batches
-        avg_std_loss = total_std_loss / num_batches
-        avg_cov_loss = total_cov_loss / num_batches
-        avg_reward_loss = total_reward_loss / num_batches
-
-        return avg_loss, avg_sim_loss, avg_std_loss, avg_cov_loss, avg_reward_loss
+        return avg_loss
 
     def save_checkpoint(self, epoch: int, train_loss: float, val_loss: Optional[float]):
         """
@@ -409,12 +381,6 @@ class JEPATrainer:
             'config': self.config
         }
         
-        # Add optional model state dicts if they exist
-        if self.vicreg_loss is not None:
-            checkpoint['vicreg_loss_state_dict'] = self.vicreg_loss.state_dict()
-        if self.reward_predictor is not None:
-            checkpoint['reward_predictor_state_dict'] = self.reward_predictor.state_dict()
-        
         # Save latest checkpoint
         latest_path = self.checkpoint_dir / "latest_checkpoint.pth"
         torch.save(checkpoint, latest_path)
@@ -428,12 +394,6 @@ class JEPATrainer:
             # Also save individual model state dicts for easy loading
             torch.save(self.encoder.state_dict(), self.checkpoint_dir / "best_encoder.pth")
             torch.save(self.predictor.state_dict(), self.checkpoint_dir / "best_predictor.pth")
-            
-            # Save optional models if they exist
-            if self.vicreg_loss is not None:
-                torch.save(self.vicreg_loss.state_dict(), self.checkpoint_dir / "best_vicreg_loss.pth")
-            if self.reward_predictor is not None:
-                torch.save(self.reward_predictor.state_dict(), self.checkpoint_dir / "best_reward_predictor.pth")
             
     def train(self):
         """Run the complete training loop."""
@@ -459,10 +419,10 @@ class JEPATrainer:
             epoch_start_time = time.time()
             
             # Train
-            train_loss, sim_loss, std_loss, cov_loss, reward_loss = self.train_epoch()
+            train_loss = self.train_epoch()
 
             # Validate
-            val_loss, val_sim_loss, val_std_loss, val_cov_loss, val_reward_loss = self.validate_epoch()
+            val_loss = self.validate_epoch()
 
             epoch_time = time.time() - epoch_start_time
             
@@ -475,22 +435,6 @@ class JEPATrainer:
             }
             if val_loss is not None:
                 log_dict["val_loss"] = val_loss
-
-            if self.use_vicreg:
-                log_dict.update({
-                    "train_sim_loss": sim_loss,
-                    "train_std_loss": std_loss,
-                    "train_cov_loss": cov_loss,
-                    "val_sim_loss": val_sim_loss,
-                    "val_std_loss": val_std_loss,
-                    "val_cov_loss": val_cov_loss
-                })
-
-            if self.use_reward_predictor:
-                log_dict.update({
-                    "train_reward_loss": reward_loss,
-                    "val_reward_loss": val_reward_loss
-                })
                 
             if wandb.run is not None:
                 wandb.log(log_dict)
@@ -499,29 +443,10 @@ class JEPATrainer:
             if val_loss is not None:
                 # Base message
                 message = f"Epoch {epoch+1}/{self.num_epochs} - Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}"
-                
-                # Add VICReg losses if enabled
-                if self.use_vicreg:
-                    message += f", Train Sim {sim_loss:.6f}, Train Std {std_loss:.6f}, Train Cov {cov_loss:.6f}"
-                    message += f", Val Sim {val_sim_loss:.6f}, Val Std {val_std_loss:.6f}, Val Cov {val_cov_loss:.6f}"
-                
-                # Add reward losses if enabled
-                if self.use_reward_predictor:
-                    message += f", Train Reward {reward_loss:.6f}, Val Reward {val_reward_loss:.6f}"
-                
                 print(message)
             else:
                 # Base message for no validation
                 message = f"Epoch {epoch+1}/{self.num_epochs} - Train Loss: {train_loss:.6f}, Val Loss: N/A"
-                
-                # Add VICReg losses if enabled
-                if self.use_vicreg:
-                    message += f", Train Sim {sim_loss:.6f}, Train Std {std_loss:.6f}, Train Cov {cov_loss:.6f}"
-                
-                # Add reward loss if enabled
-                if self.use_reward_predictor:
-                    message += f", Train Reward {reward_loss:.6f}"
-                
                 print(message)
                 
             # Save checkpoint
