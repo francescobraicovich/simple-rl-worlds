@@ -94,6 +94,12 @@ class EncoderDecoderTrainer:
         # Flag for reward predictor usage
         self.use_reward_predictor = self.config['training'].get('main_loops').get('reward_loss')
         
+        # MAE pretraining configuration
+        self.load_mae_weights = self.training_config.get('load_mae_weights', False)
+        self.mae_weights_path = self.training_config.get('mae_weights_path', 'weights/mae_pretraining/best_checkpoint.pth')
+        self.freeze_encoder = self.training_config.get('freeze_encoder', False)
+        self.freeze_decoder = self.training_config.get('freeze_decoder', False)
+        
     def initialize_models(self):
         """Initialize encoder, predictor, and decoder models."""
         # Initialize all models
@@ -103,16 +109,119 @@ class EncoderDecoderTrainer:
 
         if self.use_reward_predictor:
             self.reward_predictor = init_reward_predictor(self.config_path).to(self.device)
+            
+        # Load MAE pretrained weights if configured
+        if self.load_mae_weights:
+            self.load_mae_pretrained_weights()
+            
+        # Freeze encoder and decoder if configured
+        if self.freeze_encoder:
+            self.freeze_model(self.encoder, "encoder")
+        if self.freeze_decoder:
+            self.freeze_model(self.decoder, "decoder")
+            
+        # Print model parameter counts and frozen status
+        encoder_params = sum(p.numel() for p in self.encoder.parameters())
+        encoder_trainable = sum(p.numel() for p in self.encoder.parameters() if p.requires_grad)
+        predictor_params = sum(p.numel() for p in self.predictor.parameters()) 
+        predictor_trainable = sum(p.numel() for p in self.predictor.parameters() if p.requires_grad)
+        decoder_params = sum(p.numel() for p in self.decoder.parameters())
+        decoder_trainable = sum(p.numel() for p in self.decoder.parameters() if p.requires_grad)
+        
+        print(f"Encoder: {encoder_params} parameters ({encoder_trainable} trainable)")
+        print(f"Predictor: {predictor_params} parameters ({predictor_trainable} trainable)")  
+        print(f"Decoder: {decoder_params} parameters ({decoder_trainable} trainable)")
+        
+        if self.use_reward_predictor:
+            reward_params = sum(p.numel() for p in self.reward_predictor.parameters())
+            reward_trainable = sum(p.numel() for p in self.reward_predictor.parameters() if p.requires_grad)
+            print(f"Reward Predictor: {reward_params} parameters ({reward_trainable} trainable)")
+            
+    def load_mae_pretrained_weights(self):
+        """Load pretrained weights from MAE checkpoint."""
+        mae_checkpoint_path = Path(self.mae_weights_path)
+        
+        if not mae_checkpoint_path.exists():
+            print(f"Warning: MAE checkpoint not found at {mae_checkpoint_path}")
+            print("Proceeding with randomly initialized weights...")
+            return
+            
+        print(f"Loading MAE pretrained weights from {mae_checkpoint_path}")
+        
+        try:
+            checkpoint = torch.load(mae_checkpoint_path, map_location=self.device)
+            
+            # Load encoder weights
+            if 'encoder_state_dict' in checkpoint:
+                self.encoder.load_state_dict(checkpoint['encoder_state_dict'])
+                print("✓ Loaded pretrained encoder weights")
+            else:
+                print("Warning: No encoder_state_dict found in MAE checkpoint")
+                
+            # Load decoder weights  
+            if 'decoder_state_dict' in checkpoint:
+                self.decoder.load_state_dict(checkpoint['decoder_state_dict'])
+                print("✓ Loaded pretrained decoder weights")
+            else:
+                print("Warning: No decoder_state_dict found in MAE checkpoint")
+                
+        except Exception as e:
+            print(f"Error loading MAE checkpoint: {e}")
+            print("Proceeding with randomly initialized weights...")
+            
+    def freeze_model(self, model, model_name):
+        """Freeze all parameters of a model."""
+        for param in model.parameters():
+            param.requires_grad = False
+        print(f"✓ Frozen {model_name} parameters")
+        
+    def get_trainable_parameters(self):
+        """Get all trainable parameters from all models."""
+        trainable_params = []
+        
+        # Add parameters that require gradients from all models
+        trainable_params.extend([p for p in self.encoder.parameters() if p.requires_grad])
+        trainable_params.extend([p for p in self.predictor.parameters() if p.requires_grad])
+        trainable_params.extend([p for p in self.decoder.parameters() if p.requires_grad])
+        
+        if self.use_reward_predictor:
+            trainable_params.extend([p for p in self.reward_predictor.parameters() if p.requires_grad])
+            
+        return trainable_params
         
     def initialize_optimizer(self):
         """Initialize the AdamW optimizer and learning rate scheduler for all trainable parameters."""
-        # Combine parameters from all models
-        trainable_params = (list(self.encoder.parameters()) + 
-                          list(self.predictor.parameters()) + 
-                          list(self.decoder.parameters()))
+        # Collect only trainable parameters from all models
+        trainable_params = []
+        
+        # Add encoder parameters if not frozen
+        if not self.freeze_encoder:
+            trainable_params.extend(list(self.encoder.parameters()))
+        else:
+            # If frozen, only add parameters that require gradients (should be empty)
+            trainable_params.extend([p for p in self.encoder.parameters() if p.requires_grad])
+            
+        # Add predictor parameters (always trainable)
+        trainable_params.extend(list(self.predictor.parameters()))
+        
+        # Add decoder parameters if not frozen
+        if not self.freeze_decoder:
+            trainable_params.extend(list(self.decoder.parameters()))
+        else:
+            # If frozen, only add parameters that require gradients (should be empty)
+            trainable_params.extend([p for p in self.decoder.parameters() if p.requires_grad])
 
         if self.use_reward_predictor:
-            trainable_params += list(self.reward_predictor.parameters())
+            trainable_params.extend(list(self.reward_predictor.parameters()))
+        
+        # Filter to only parameters that require gradients
+        trainable_params = [p for p in trainable_params if p.requires_grad]
+        
+        if not trainable_params:
+            raise ValueError("No trainable parameters found! Check model freezing configuration.")
+        
+        print(f"Optimizing {len(trainable_params)} parameter groups")
+        print(f"Total trainable parameters: {sum(p.numel() for p in trainable_params)}")
         
         self.optimizer = optim.AdamW(
             trainable_params,
@@ -200,12 +309,8 @@ class EncoderDecoderTrainer:
         total_loss.backward()
         # Gradient clipping if configured
         if self.gradient_clipping is not None:
-            # Include all trainable parameters in gradient clipping
-            trainable_params = (list(self.encoder.parameters()) + 
-                              list(self.predictor.parameters()) + 
-                              list(self.decoder.parameters()))
-            if self.use_reward_predictor:
-                trainable_params += list(self.reward_predictor.parameters())
+            # Include only trainable parameters in gradient clipping
+            trainable_params = self.get_trainable_parameters()
             torch.nn.utils.clip_grad_norm_(trainable_params, self.gradient_clipping)
         self.optimizer.step()
         
@@ -399,6 +504,19 @@ class EncoderDecoderTrainer:
             
     def train(self):
         """Run the complete end-to-end training loop."""
+        print("🚀 Starting Encoder-Decoder training...")
+        
+        # Print configuration summary
+        print("Configuration:")
+        print(f"  - Load MAE weights: {self.load_mae_weights}")
+        if self.load_mae_weights:
+            print(f"  - MAE weights path: {self.mae_weights_path}")
+        print(f"  - Freeze encoder: {self.freeze_encoder}")
+        print(f"  - Freeze decoder: {self.freeze_decoder}")
+        print(f"  - Epochs: {self.num_epochs}, Batch size: {self.batch_size}, LR: {self.learning_rate}")
+        print(f"  - Device: {self.device}")
+        print()
+        
         # Initialize everything
         self.initialize_models()
         self.initialize_optimizer()
@@ -407,10 +525,19 @@ class EncoderDecoderTrainer:
         # Initialize wandb if configured
         wandb_config = self.config.get('wandb', {})
         if wandb_config.get('enabled', False):
+            # Create a descriptive run name based on configuration
+            run_name_suffix = "pretrained" if self.load_mae_weights else "scratch"
+            frozen_parts = []
+            if self.freeze_encoder:
+                frozen_parts.append("enc")
+            if self.freeze_decoder:
+                frozen_parts.append("dec")
+            frozen_suffix = f"-frozen-{'-'.join(frozen_parts)}" if frozen_parts else ""
+            
             wandb.init(
                 project=wandb_config.get('project', 'encoder-decoder-training'),
                 entity=wandb_config.get('entity'),
-                name=f"encoder-decoder-{time.strftime('%Y%m%d-%H%M%S')}",
+                name=f"encoder-decoder-{run_name_suffix}{frozen_suffix}-{time.strftime('%Y%m%d-%H%M%S')}",
                 config=self.config
             )
         
@@ -492,11 +619,30 @@ def main():
     parser = argparse.ArgumentParser(description='Train Encoder-Decoder models end-to-end')
     parser.add_argument('--config', type=str, default=None,
                        help='Path to config.yaml file')
+    parser.add_argument('--load-mae-weights', action='store_true',
+                       help='Load pretrained MAE weights (overrides config)')
+    parser.add_argument('--mae-weights-path', type=str, 
+                       help='Path to MAE checkpoint file (overrides config)')
+    parser.add_argument('--freeze-encoder', action='store_true',
+                       help='Freeze encoder parameters (overrides config)')
+    parser.add_argument('--freeze-decoder', action='store_true',
+                       help='Freeze decoder parameters (overrides config)')
     
     args = parser.parse_args()
     
     # Create trainer and run training
     trainer = EncoderDecoderTrainer(config_path=args.config)
+    
+    # Override MAE settings from command line if provided
+    if args.load_mae_weights:
+        trainer.load_mae_weights = True
+    if args.mae_weights_path:
+        trainer.mae_weights_path = args.mae_weights_path
+    if args.freeze_encoder:
+        trainer.freeze_encoder = True
+    if args.freeze_decoder:
+        trainer.freeze_decoder = True
+    
     trainer.train()
 
 
