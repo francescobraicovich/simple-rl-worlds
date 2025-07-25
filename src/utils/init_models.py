@@ -2,9 +2,9 @@ import yaml
 import os
 from typing import Dict, Any
 
-from ..models.encoder import ConvEncoder
+from ..models.encoder import Encoder
 from ..models.predictor import MLPHistoryPredictor
-from ..models.decoder import ConvDecoder
+from ..models.decoder import Decoder
 from ..models.reward_predictor import MLPRewardPredictor
 from ..models.vicreg import VICRegLoss
 from ..data.data_utils import _initialize_environment
@@ -29,7 +29,7 @@ def load_config(config_path: str = None) -> Dict[str, Any]:
     return config
 
 
-def init_encoder(config_path: str = None) -> ConvEncoder:
+def init_encoder(config_path: str = None) -> Encoder:
     """
     Initialize the ConvEncoder model from configuration.
 
@@ -40,17 +40,10 @@ def init_encoder(config_path: str = None) -> ConvEncoder:
         Initialized ConvEncoder model.
     """
     config = load_config(config_path)
-    
-    encoder_config = config['models']['encoder']
     latent_dim = config['latent_dim']
 
-
-    encoder = ConvEncoder(
+    encoder = Encoder(
         latent_dim=latent_dim,
-        input_channels=1,
-        conv_channels=encoder_config['conv_channels'],
-        activation=encoder_config['activation'],
-        dropout_rate=encoder_config['dropout_rate']
     )
     
     return encoder
@@ -91,7 +84,7 @@ def init_predictor(config_path: str = None) -> MLPHistoryPredictor:
     return predictor
 
 
-def init_decoder(config_path: str = None) -> ConvDecoder:
+def init_decoder(config_path: str = None) -> Decoder:
     """
     Initialize the HybridConvTransformerDecoder model from configuration.
     
@@ -103,15 +96,8 @@ def init_decoder(config_path: str = None) -> ConvDecoder:
     """
     config = load_config(config_path)
     
-    # Extract relevant configuration parameters
-    decoder_config = config['models']['decoder']
-    
-    decoder = ConvDecoder(
+    decoder = Decoder(
         latent_dim=config['latent_dim'],  # Use global latent_dim from config
-        initial_size=decoder_config['initial_size'],
-        conv_channels=decoder_config['conv_channels'],
-        activation=decoder_config['activation'],
-        dropout_rate=decoder_config['dropout_rate']
     )
     
     return decoder
