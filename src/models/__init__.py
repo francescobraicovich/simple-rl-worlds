@@ -1,15 +1,14 @@
 # models/__init__.py
-from .encoder import VideoViT, ConvEncoder
-from .predictor import LatentDynamicsPredictor, MLPHistoryPredictor
-from .decoder import HybridConvTransformerDecoder, ConvDecoder
-from .reward_predictor import RewardPredictor
+from .encoder import Encoder
+from .predictor import MLPHistoryPredictor
+from .decoder import Decoder
+from .reward_predictor import RewardPredictor, MLPRewardPredictor
 
 __all__ = [
-    "VideoViT",
-    "ConvEncoder",
+    "Encoder",
     "LatentDynamicsPredictor",
     "MLPHistoryPredictor",
-    "HybridConvTransformerDecoder",
-    "ConvDecoder",
-    "RewardPredictor"
+    "Decoder",
+    "RewardPredictor",
+    "MLPRewardPredictor"
 ]
