@@ -126,8 +126,7 @@ class DataCollectionPipeline:
         
         # Validate tensor shapes and types
         expected_shape = (
-            self.config['data_and_patching']['image_height'],
-            self.config['data_and_patching']['image_width']
+            224, 224  # ResNet expects 224x224 input
         )
         
         if sample_state.shape[-2:] != expected_shape:
@@ -361,8 +360,7 @@ class DataLoadingPipeline:
         
         # Validate tensor shapes and types
         expected_shape = (
-            self.config['data_and_patching']['image_height'],
-            self.config['data_and_patching']['image_width']
+            224, 224  # ResNet expects 224x224 input
         )
         
         if sample_state.shape[-2:] != expected_shape:
