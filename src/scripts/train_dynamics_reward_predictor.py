@@ -173,6 +173,7 @@ class DynamicsRewardPredictorTrainer:
         # Move to device
         state = state.to(self.device)
         next_state = next_state.to(self.device)
+        action = action[:, -1]  # Use only the last action in the sequence
         action = action.to(self.device)
 
         # Take the last reward value 
@@ -230,6 +231,7 @@ class DynamicsRewardPredictorTrainer:
         # Move to device
         state = state.to(self.device)
         next_state = next_state.to(self.device)
+        action = action[:, -1]  # Use only the last action in the sequence
         action = action.to(self.device)
 
         # Take the last reward value
