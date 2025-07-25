@@ -5,11 +5,11 @@ environment:
   frame_stack_size: 4         # Number of frames to stack (1 = no stacking, 4 = stack 4 frames)
 
 data_and_patching:
-  image_height: 64
-  image_width: 64
+  image_height: 224            # Updated for standard ResNet input size
+  image_width: 224             # Updated for standard ResNet input size
   sequence_length: 4
-  patch_size_h: 4              # Patch size for image preprocessing
-  patch_size_w: 4              # Patch size for image preprocessing
+  patch_size_h: 16             # Patch size for image preprocessing (adjusted for 224x224)
+  patch_size_w: 16             # Patch size for image preprocessing (adjusted for 224x224)
   patch_size_t: 2              # Temporal patch size for video data
 
 # --- Data Collection & Dataset Management ---
@@ -105,9 +105,12 @@ training:
 
 models:
   encoder:
-    conv_channels: [32, 64, 128, 256]
+    use_pretrained_resnet: true    # Use pretrained ResNet-18 for better features
+    input_channels: 3              # RGB input (changed from 1 for grayscale)
+    image_size: 224                # Standard ResNet input size
+    conv_channels: [32, 64, 128, 256]  # Only used if use_pretrained_resnet: false
     activation: "silu"
-    dropout_rate: 0
+    dropout_rate: 0.1              # Slightly higher dropout for pretrained models
    
   predictor:
     hidden_sizes: [512, 512]
@@ -115,8 +118,8 @@ models:
     dropout_rate: 0.1
     
   decoder:
-    initial_size: 4
-    conv_channels: [256, 128, 64, 32, 1]
+    initial_size: 14               # Adjusted for 224x224 input (224/16=14)
+    conv_channels: [256, 128, 64, 32, 3]  # Output 3 channels for RGB
     activation: "silu"
     dropout_rate: 0
 
@@ -138,7 +141,7 @@ wandb:
   enabled: true  # Set to true to enable wandb logging
   project: "simple-rl-worlds"
   entity: null  # Set to your wandb username/team
-  tags: []  # Add tags for organizing experiments
+  tags: ["resnet18", "rgb", "224x224"]  # Add tags for organizing experiments
 
 
     
