@@ -294,13 +294,10 @@ def extract_all_representations(encoder, dataloader, device: str, max_samples: i
             state = state.to(device)
             
             # Get representations
-            z = encoder(state)  # [B, T, E]
-            
-            # Pool over time dimension to get per-sample representation
-            z_pooled = z.mean(dim=1)  # [B, E]
-            
-            representations.append(z_pooled.cpu().numpy())
-    
+            z = encoder(state)  # [B, E]
+
+            representations.append(z.cpu().numpy())
+
     if not representations:
         raise ValueError("No representations extracted")
     
