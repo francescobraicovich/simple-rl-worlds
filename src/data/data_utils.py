@@ -79,15 +79,23 @@ def _initialize_environment(config: dict):
     img_h = config['data_and_patching'].get('image_height')
     img_w = config['data_and_patching'].get('image_width')
     img_size = (img_h, img_w)
-    env = ImagePreprocessingWrapper(env, img_size, grayscale=True)
+    
+    # Check if we should use RGB or grayscale based on encoder config
+    encoder_config = config.get('models', {}).get('encoder', {})
+    use_rgb = encoder_config.get('input_channels', 1) == 3
+    grayscale = not use_rgb
+    
+    env = ImagePreprocessingWrapper(env, img_size, grayscale=grayscale)
 
     # Apply action repetition wrapper if configured
     if action_repetition_k > 1 and not is_ale:
         print(f"Applying ActionRepeatWrapper with k={action_repetition_k}.")
         env = ActionRepeatWrapper(env, action_repetition_k)
 
-    frame_stack_size = config['environment'].get('frame_stack_size')
-    env = FrameStackWrapper(env, stack_size=frame_stack_size)  # Stack 4 frames for temporal context
+    # Note: Frame stacking is handled by the dataset, not the environment
+    # The ResNet encoder expects individual RGB frames (3 channels), not stacked frames
+    # frame_stack_size = config['environment'].get('frame_stack_size')
+    # env = FrameStackWrapper(env, stack_size=frame_stack_size)  # Stack 4 frames for temporal context
     
     return env, render_mode
 
