@@ -4,12 +4,11 @@ import torch.nn.functional as F
 class MLPHistoryPredictor(nn.Module):
     """
     Multi-layer perceptron that predicts the next latent vector using the entire history
-    of latent vectors and discrete actions.
+    of latent vectors (concatenated into one vector) and the last discrete action.
     """
     
     def __init__(
         self,
-        frames_per_clip: int = 4,
         latent_dim: int = 64,
         num_actions: int = 7,
         hidden_sizes: list = None,
@@ -23,15 +22,11 @@ class MLPHistoryPredictor(nn.Module):
             hidden_sizes = [512, 512]
         
         # Set parameters
-        self.frames_per_clip = frames_per_clip
         self.latent_dim = latent_dim
         self.num_actions = num_actions
         
-        if hidden_sizes is None:
-            hidden_sizes = self.default_config['hidden_sizes']
-        
-        # Calculate input size: T * (E + A)
-        input_size = self.frames_per_clip * (self.latent_dim + self.num_actions)
+        # Calculate input size: E (latent vector) + A (one-hot action)
+        input_size = self.latent_dim + self.num_actions
         
         # Choose activation function
         if activation.lower() == 'silu':
@@ -76,7 +71,7 @@ class MLPHistoryPredictor(nn.Module):
         Create MLPHistoryPredictor by automatically inferring dimensions from encoder output.
         
         Args:
-            encoder_output: Tensor of shape [B, T, E] from encoder
+            encoder_output: Tensor of shape [B, E] from encoder (all frames concatenated)
             num_actions: Number of discrete actions
             hidden_sizes: List of hidden layer sizes
             activation: Activation function name
@@ -85,13 +80,12 @@ class MLPHistoryPredictor(nn.Module):
         Returns:
             MLPHistoryPredictor instance with inferred dimensions
         """
-        if len(encoder_output.shape) != 3:
-            raise ValueError(f"Expected encoder output shape [B, T, E], got {encoder_output.shape}")
+        if len(encoder_output.shape) != 2:
+            raise ValueError(f"Expected encoder output shape [B, E], got {encoder_output.shape}")
         
-        B, T, E = encoder_output.shape
+        B, E = encoder_output.shape
         
         return cls(
-            frames_per_clip=T,
             latent_dim=E,
             num_actions=num_actions,
             hidden_sizes=hidden_sizes,
@@ -108,36 +102,28 @@ class MLPHistoryPredictor(nn.Module):
     def forward(self, x: torch.Tensor, a: torch.LongTensor) -> torch.Tensor:
         """
         Args:
-            x: Per-frame latent vectors, shape [B, T, E]
-            a: Discrete action indices, shape [B, T]
+            x: Concatenated latent vectors, shape [B, E]
+            a: Discrete action index, shape [B]
         Returns:
-            x_pred: Predicted latent vector for the next frame, shape [B, 1, E]
+            x_pred: Predicted latent vector for the next frame, shape [B, E]
         """
-        B, T, E = x.shape
+        B, E = x.shape
 
         # ensure a is long tensor
         if not a.is_floating_point():
             a = a.long()
         
         # Validate input dimensions
-        if T != self.frames_per_clip:
-            raise ValueError(f"Expected {self.frames_per_clip} frames, got {T}")
         if E != self.latent_dim:
             raise ValueError(f"Expected latent dim {self.latent_dim}, got {E}")
         
         # One-hot encode actions
-        one_hot_a = F.one_hot(a, num_classes=self.num_actions).float()  # [B, T, A]
+        one_hot_a = F.one_hot(a, num_classes=self.num_actions).float()  # [B, A]
         
-        # Concatenate latent vectors with one-hot actions
-        x_cat = torch.cat([x, one_hot_a], dim=-1)  # [B, T, E + A]
-        
-        # Flatten sequence dimension
-        x_flat = x_cat.view(B, T * (E + self.num_actions))  # [B, T * (E + A)]
+        # Concatenate latent vector with one-hot action
+        x_cat = torch.cat([x, one_hot_a], dim=-1)  # [B, E + A]
         
         # Pass through MLP
-        x_pred = self.mlp(x_flat)  # [B, E]
-        
-        # Reshape to [B, 1, E] to match expected output format
-        x_pred = x_pred.unsqueeze(1)  # [B, 1, E]
+        x_pred = self.mlp(x_cat)  # [B, E]
         
         return x_pred
