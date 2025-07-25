@@ -40,10 +40,10 @@ latent_dim: 512 # Dimension of the embedding space for the transformer model
 
 training:
   pretraining:
-    num_epochs: 50 # Number of epochs for pretraining (MAE/JEPA)
-    batch_size: 128 # Batch size for pretraining
-    learning_rate: 0.0001 # Learning rate for the optimizer
-    weight_decay: 0.0001 # Weight decay for the optimizer
+    num_epochs: 1 # Number of epochs for MAE pretraining
+    batch_size: 128 # Batch size for MAE pretraining
+    learning_rate: 0.0001 # Learning rate for the MAE optimizer
+    weight_decay: 0.0001 # Weight decay for the MAE optimizer
     gradient_clipping: 10.0 # Maximum norm for gradient clipping
     mask_ratio: 0.4 # Ratio of patches to mask during training
     lr_scheduler:
@@ -59,19 +59,17 @@ training:
       plateau_patience: 10 # Number of epochs with no improvement to wait
       plateau_threshold: 0.0001 # Threshold for measuring improvement
   main_loops:
-    num_epochs: 50 # Number of epochs for training
+    num_epochs: 1 # Number of epochs for training
     batch_size: 128 # Batch size for training
     learning_rate: 0.0001 # Learning rate for the optimizer
     weight_decay: 0.0001 # Weight decay for the optimizer
     ema_decay: 0.999 # Exponential moving average decay for model parameters
     gradient_clipping: 1.0 # Maximum norm for gradient clipping
-    reward_loss: true # Whether to use reward loss during training
     load_mae_weights: true # Whether to load pretrained MAE weights for encoder and decoder
-    mae_weights_path: "weights/mae_pretraining/best_checkpoint.pth" # Path to MAE checkpoint
     freeze_encoder: true # Whether to freeze encoder parameters during training
     freeze_decoder: true # Whether to freeze decoder parameters during training
     lr_scheduler:
-      enabled: true # Whether to use learning rate scheduling
+      enabled: false # Whether to use learning rate scheduling
       type: "cosine" # Type of scheduler: "cosine", "step", "exponential", "plateau"
       cosine_T_max: 50 # Maximum number of iterations for cosine annealing (typically num_epochs)
       cosine_eta_min: 0.000001 # Minimum learning rate for cosine annealing
@@ -83,33 +81,33 @@ training:
       plateau_patience: 10 # Number of epochs with no improvement to wait
       plateau_threshold: 0.0001 # Threshold for measuring improvement
   jepa_decoder:
-    num_epochs: 50 # Number of epochs for the JEPA decoder training
+    num_epochs: 1 # Number of epochs for the JEPA decoder training
     batch_size: 128 # Batch size for the JEPA decoder training
     learning_rate: 0.0001 # Learning rate for the JEPA decoder optimizer
     weight_decay: 0.0001 # Weight decay for the JEPA decoder optimizer
     gradient_clipping: 1.0 # Maximum norm for JEPA decoder gradient clipping
     # Learning rate scheduler configuration
     lr_scheduler:
-      enabled: true # Whether to use learning rate scheduling
+      enabled: false # Whether to use learning rate scheduling
       type: "cosine" # Type of scheduler: "cosine", "step", "exponential", "plateau"
       cosine_T_max: 50 # Maximum number of iterations for cosine annealing
       cosine_eta_min: 0.000001 # Minimum learning rate for cosine annealing
   reward_predictor:
     versions: "both" # Versions of the reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
-    num_epochs: 100 # Number of epochs for the reward predictor training
+    num_epochs: 1 # Number of epochs for the reward predictor training
     batch_size: 128 # Batch size for the reward predictor training
     learning_rate: 0.0001 # Learning rate for the reward predictor optimizer
     weight_decay: 0.0001 # Weight decay for the reward predictor optimizer
     gradient_clipping: 0.5 # Maximum norm for reward predictor gradient clipping
     # Learning rate scheduler configuration
     lr_scheduler:
-      enabled: true # Whether to use learning rate scheduling
+      enabled: false # Whether to use learning rate scheduling
       type: "cosine" # Type of scheduler: "cosine", "step", "exponential", "plateau"
       cosine_T_max: 100 # Maximum number of iterations for cosine annealing
       cosine_eta_min: 0.000001 # Minimum learning rate for cosine annealing
   dynamics_reward_predictor:
     versions: "both" # Versions of the dynamics reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
-    num_epochs: 50 # Number of epochs for the dynamics reward predictor training
+    num_epochs: 1 # Number of epochs for the dynamics reward predictor training
     batch_size: 128 # Batch size for the dynamics reward predictor training
     learning_rate: 0.0001 # Learning rate for the dynamics reward predictor optimizer
     weight_decay: 0.0001 # Weight decay for the dynamics reward predictor optimizer
@@ -146,14 +144,6 @@ models:
     hidden_sizes: [512, 512]
     activation: "silu"
     dropout_rate: 0.1
-    
-  vicreg:
-    active: false  # Whether to use VICReg loss for JEPA
-    lambda_v: 25.0  # Weight for variance loss
-    lambda_s: 1.0  # Weight for covariance loss
-    lambda_i: 5.0   # Weight for invariance loss
-    proj_hidden_dim: 256 # Hidden dimension of the VICReg projection head
-    proj_output_dim: 32  # Output dimension of the VICReg projection head
 
 
 # Wandb configuration for experiment tracking
