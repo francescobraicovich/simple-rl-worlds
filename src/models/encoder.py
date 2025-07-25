@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torchvision.models as models
 
 
 class RotaryEmbedding(nn.Module):
@@ -322,86 +323,211 @@ class VideoViT(nn.Module):
         return x
 
 
-class ConvEncoder(nn.Module):
+class PretrainedResNet18Encoder(nn.Module):
     """
-    Convolutional encoder
+    Pretrained ResNet-18 encoder adapted for RGB video frames.
     
     Architecture:
-    - Input: (B, 1, T, 64, 64) -> squeeze(1) -> (B, T, 64, 64)
-    - 4 conv layers: 1→32→64→128→256 channels
-    - Each conv: kernel_size=4, stride=2, padding=1, SiLU + LayerNorm
-    - Final linear layer maps to latent_dim
+    - Input: (B, T, 3, 224, 224)
+    - Reshape: (B*T, 3, 224, 224)
+    - Pretrained ResNet-18 (without final classification layer)
+    - Custom final projection to latent_dim
+    - Reshape: (B, T, latent_dim)
+    """
+    
+    def __init__(self, latent_dim=64, pretrained=True, activation='silu', dropout_rate=0.0):
+        super().__init__()
+        
+        self.config = {
+            'latent_dim': latent_dim,
+            'pretrained': pretrained,
+            'activation': activation,
+            'dropout_rate': dropout_rate
+        }
+        
+        self.latent_dim = latent_dim
+        
+        # Get activation function
+        if activation.lower() == 'silu':
+            activation_fn = nn.SiLU
+        elif activation.lower() == 'relu':
+            activation_fn = nn.ReLU
+        elif activation.lower() == 'gelu':
+            activation_fn = nn.GELU
+        else:
+            activation_fn = nn.SiLU
+        
+        # Load pretrained ResNet-18
+        if pretrained:
+            self.resnet = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+        else:
+            self.resnet = models.resnet18(weights=None)
+        
+        # Remove the final classification layer (fc layer)
+        # We'll replace it with our own projection
+        self.resnet = nn.Sequential(*list(self.resnet.children())[:-1])  # Remove fc layer
+        
+        # The ResNet-18 outputs 512 features after global average pooling
+        resnet_output_dim = 512
+        
+        # Custom final layers
+        self.final_layers = nn.Sequential(
+            nn.Dropout(dropout_rate),
+            nn.Linear(resnet_output_dim, resnet_output_dim // 2),
+            activation_fn(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(resnet_output_dim // 2, latent_dim)
+        )
+        
+        # Initialize the new layers
+        self._init_final_layers()
+    
+    def _init_final_layers(self):
+        """Initialize the custom final layers."""
+        for m in self.final_layers.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through the pretrained ResNet-18 encoder.
+        
+        Args:
+            x: Input tensor of shape (B, T, 3, 224, 224)
+            
+        Returns:
+            Latent vectors of shape (B, T, latent_dim)
+        """
+        # Input shape: (B, T, 3, 224, 224)
+        B, T, C, H, W = x.shape
+        assert C == 3, f"Expected 3 channels (RGB), got {C}"
+        assert H == 224 and W == 224, f"Expected 224x224 images, got {H}x{W}"
+        
+        # Reshape to process all frames as a batch: (B, T, 3, 224, 224) -> (B*T, 3, 224, 224)
+        x = x.reshape(B * T, C, H, W)
+        
+        # Pass through pretrained ResNet-18 (without final fc layer)
+        # This gives us (B*T, 512, 1, 1) after global average pooling
+        x = self.resnet(x)
+        
+        # Flatten: (B*T, 512, 1, 1) -> (B*T, 512)
+        x = x.flatten(start_dim=1)
+        
+        # Pass through custom final layers to get latent representation
+        latents = self.final_layers(x)  # (B*T, latent_dim)
+        
+        # Reshape back to (B, T, latent_dim)
+        latents = latents.reshape(B, T, self.latent_dim)
+        
+        return latents
+
+
+class ConvEncoder(nn.Module):
+    """
+    Convolutional encoder (now using pretrained ResNet-18 by default)
+    
+    Architecture:
+    - Input: (B, T, 3, 224, 224)
+    - Pretrained ResNet-18 backbone
+    - Custom final projection to latent_dim
     - Output: (B, T, latent_dim)
     """
     
-    def __init__(self, latent_dim=64, input_channels=1, conv_channels=None, activation='silu', dropout_rate=0.0):
+    def __init__(self, latent_dim=64, input_channels=3, conv_channels=None, activation='silu', 
+                 dropout_rate=0.0, use_pretrained_resnet=True, image_size=224):
         super().__init__()
         
-        # Use provided parameters or defaults
-        if conv_channels is None:
-            conv_channels = [32, 64, 128, 256]
-        
+        # Store configuration for compatibility
         self.config = {
             'latent_dim': latent_dim,
             'input_channels': input_channels,
             'conv_channels': conv_channels,
             'activation': activation,
-            'dropout_rate': dropout_rate
+            'dropout_rate': dropout_rate,
+            'use_pretrained_resnet': use_pretrained_resnet,
+            'image_size': image_size
         }
         
-        # Extract configuration
-        self.latent_dim = self.config['latent_dim']
-        input_channels = self.config['input_channels']
-        conv_channels = self.config['conv_channels']
-        
-        # Get activation function
-        if self.config['activation'].lower() == 'silu':
-            activation_fn = nn.SiLU
-        elif self.config['activation'].lower() == 'relu':
-            activation_fn = nn.ReLU
-        elif self.config['activation'].lower() == 'gelu':
-            activation_fn = nn.GELU
-        else:
-            activation_fn = nn.SiLU  # Default fallback
-        
-        # Build CNN layers with LayerNorm after each conv
-        self.conv_layers = nn.ModuleList()
-        self.layer_norms = nn.ModuleList()
-        in_channels = input_channels
-        
-        for out_channels in conv_channels:
-            # Conv layer
-            conv = nn.Conv2d(
-                in_channels, out_channels,
-                kernel_size=4, stride=2, padding=1
+        if use_pretrained_resnet:
+            # Use pretrained ResNet-18
+            self.resnet_encoder = PretrainedResNet18Encoder(
+                latent_dim=latent_dim,
+                pretrained=True,
+                activation=activation,
+                dropout_rate=dropout_rate
             )
-            self.conv_layers.append(conv)
+            self.use_pretrained_resnet = True
+        else:
+            # Fallback to original simple conv encoder (adapted for RGB)
+            self.use_pretrained_resnet = False
             
-            # LayerNorm for this layer's output channels
-            # LayerNorm will be applied across the spatial dimensions
-            self.layer_norms.append(nn.LayerNorm(out_channels))
+            # Use provided parameters or defaults
+            if conv_channels is None:
+                conv_channels = [32, 64, 128, 256]
             
-            in_channels = out_channels
-        
-        # Activation function
-        self.activation = activation_fn()
-        
-        # Dropout layer
-        self.dropout = nn.Dropout(self.config['dropout_rate'])
-        
-        # Calculate flattened size after convolutions
-        # Input: 64x64, after 4 conv layers with stride=2: 64/2^4 = 4x4
-        final_spatial_size = 64 // (2 ** len(conv_channels))  # 4x4
-        flattened_size = conv_channels[-1] * final_spatial_size * final_spatial_size
-        
-        # Add LayerNorm before the final linear layer
-        self.final_norm = nn.LayerNorm(flattened_size)
-        
-        # Final linear layer to latent dimension
-        self.fc = nn.Linear(flattened_size, self.latent_dim)
-        
-        # Initialize weights
-        self.apply(self._init_weights)
+            self.config = {
+                'latent_dim': latent_dim,
+                'input_channels': input_channels,
+                'conv_channels': conv_channels,
+                'activation': activation,
+                'dropout_rate': dropout_rate,
+                'image_size': image_size
+            }
+            
+            # Extract configuration
+            self.latent_dim = self.config['latent_dim']
+            input_channels = self.config['input_channels']
+            conv_channels = self.config['conv_channels']
+            image_size = self.config['image_size']
+            
+            # Get activation function
+            if self.config['activation'].lower() == 'silu':
+                activation_fn = nn.SiLU
+            elif self.config['activation'].lower() == 'relu':
+                activation_fn = nn.ReLU
+            elif self.config['activation'].lower() == 'gelu':
+                activation_fn = nn.GELU
+            else:
+                activation_fn = nn.SiLU  # Default fallback
+            
+            # Build CNN layers with LayerNorm after each conv
+            self.conv_layers = nn.ModuleList()
+            self.layer_norms = nn.ModuleList()
+            in_channels = input_channels
+            
+            for out_channels in conv_channels:
+                # Conv layer
+                conv = nn.Conv2d(
+                    in_channels, out_channels,
+                    kernel_size=4, stride=2, padding=1
+                )
+                self.conv_layers.append(conv)
+                
+                # LayerNorm for this layer's output channels
+                self.layer_norms.append(nn.LayerNorm(out_channels))
+                
+                in_channels = out_channels
+            
+            # Activation function
+            self.activation = activation_fn()
+            
+            # Dropout layer
+            self.dropout = nn.Dropout(self.config['dropout_rate'])
+            
+            # Calculate flattened size after convolutions
+            final_spatial_size = image_size // (2 ** len(conv_channels))
+            flattened_size = conv_channels[-1] * final_spatial_size * final_spatial_size
+            
+            # Add LayerNorm before the final linear layer
+            self.final_norm = nn.LayerNorm(flattened_size)
+            
+            # Final linear layer to latent dimension
+            self.fc = nn.Linear(flattened_size, self.latent_dim)
+            
+            # Initialize weights
+            self.apply(self._init_weights)
     
     def _init_weights(self, m: nn.Module) -> None:
         """Initialize model weights."""
@@ -422,49 +548,53 @@ class ConvEncoder(nn.Module):
         Forward pass through the encoder.
         
         Args:
-            x: Input tensor of shape (B, 1, T, 64, 64)
+            x: Input tensor of shape (B, T, 3, 224, 224)
             
         Returns:
             Latent vectors of shape (B, T, latent_dim)
         """
-        # Input shape: (B, 1, T, 64, 64)
-        B, C, T, H, W = x.shape
-        assert C == 1, f"Expected 1 channel, got {C}"
-        assert H == 64 and W == 64, f"Expected 64x64 images, got {H}x{W}"
-        
-        # Reshape to process all frames as a batch: (B, 1, T, 64, 64) -> (B*T, 1, 64, 64)
-        x = x.reshape(B * T, C, H, W)
-        
-        # Pass through each conv layer with LayerNorm and Dropout
-        for conv, layer_norm in zip(self.conv_layers, self.layer_norms):
-            # Apply convolution
-            x = conv(x)  # Shape: (B*T, C, H, W)
+        if self.use_pretrained_resnet:
+            return self.resnet_encoder(x)
+        else:
+            # Original ConvEncoder forward pass (adapted for RGB)
+            # Input shape: (B, T, 3, 224, 224)
+            B, T, C, H, W = x.shape
+            assert C == 3, f"Expected 3 channels (RGB), got {C}"
+            assert H == 224 and W == 224, f"Expected 224x224 images, got {H}x{W}"
             
-            # Apply activation
-            x = self.activation(x)
+            # Reshape to process all frames as a batch: (B, T, 3, 224, 224) -> (B*T, 3, 224, 224)
+            x = x.reshape(B * T, C, H, W)
             
-            # Apply LayerNorm: reshape from (B*T, C, H, W) to (B*T, H, W, C) for LayerNorm
-            BT, C_out, H_out, W_out = x.shape
-            x = x.permute(0, 2, 3, 1)  # (B*T, H, W, C)
-            x = layer_norm(x)          # Apply LayerNorm on channel dimension
-            x = x.permute(0, 3, 1, 2)  # Back to (B*T, C, H, W)
+            # Pass through each conv layer with LayerNorm and Dropout
+            for conv, layer_norm in zip(self.conv_layers, self.layer_norms):
+                # Apply convolution
+                x = conv(x)  # Shape: (B*T, C, H, W)
+                
+                # Apply activation
+                x = self.activation(x)
+                
+                # Apply LayerNorm: reshape from (B*T, C, H, W) to (B*T, H, W, C) for LayerNorm
+                BT, C_out, H_out, W_out = x.shape
+                x = x.permute(0, 2, 3, 1)  # (B*T, H, W, C)
+                x = layer_norm(x)          # Apply LayerNorm on channel dimension
+                x = x.permute(0, 3, 1, 2)  # Back to (B*T, C, H, W)
+                
+                # Apply dropout
+                x = x.permute(0, 2, 3, 1)  # (B*T, H, W, C) for dropout
+                x = self.dropout(x)
+                x = x.permute(0, 3, 1, 2)  # Back to (B*T, C, H, W)
             
-            # Apply dropout
-            x = x.permute(0, 2, 3, 1)  # (B*T, H, W, C) for dropout
-            x = self.dropout(x)
-            x = x.permute(0, 3, 1, 2)  # Back to (B*T, C, H, W)
-        
-        # Flatten spatial dimensions
-        x = x.flatten(start_dim=1)  # Shape: (B*T, C*H*W)
-        
-        # Apply final layer normalization
-        x = self.final_norm(x)
-        
-        # Map to latent dimension
-        latents = self.fc(x)  # Shape: (B*T, latent_dim)
-        
-        # Reshape back to (B, T, latent_dim)
-        latents = latents.reshape(B, T, self.latent_dim)
-        
-        return latents
+            # Flatten spatial dimensions
+            x = x.flatten(start_dim=1)  # Shape: (B*T, C*H*W)
+            
+            # Apply final layer normalization
+            x = self.final_norm(x)
+            
+            # Map to latent dimension
+            latents = self.fc(x)  # Shape: (B*T, latent_dim)
+            
+            # Reshape back to (B, T, latent_dim)
+            latents = latents.reshape(B, T, self.latent_dim)
+            
+            return latents
 
