@@ -15,7 +15,7 @@ data_and_patching:
 # --- Data Collection & Dataset Management ---
 data_collection:
   num_episodes: 40
-  max_steps_per_episode: 50000
+  max_steps_per_episode: 1000
   random_action_percentage: 0.2 # Percentage of actions to be random (0.0 = no random actions)
   load_path: "assault_rep_8.pth"
   filename: "assault_rep_8.pth"
@@ -25,7 +25,7 @@ data_collection:
     n_envs: 10 # Number of parallel environments for PPO training (default: CPU count)
     action_repetition_k: 8
     learning_rate: 0.0003
-    total_train_timesteps: 500 # Timesteps to train PPO before data collection (reduced for testing)
+    total_train_timesteps: 50000 # Timesteps to train PPO before data collection (reduced for testing)
     n_steps: 128       # PPO n_steps parameter
     batch_size: 256      # PPO batch_size parameter
     n_epochs: 6         # PPO n_epochs parameter
@@ -46,19 +46,14 @@ training:
     weight_decay: 0.0001 # Weight decay for the MAE optimizer
     gradient_clipping: 10.0 # Maximum norm for gradient clipping
     mask_ratio: 0.4 # Ratio of patches to mask during training
-    # Learning rate scheduler configuration
     lr_scheduler:
       enabled: false # Whether to use learning rate scheduling
       type: "cosine" # Type of scheduler: "cosine", "step", "exponential", "plateau"
-      # Cosine annealing parameters
       cosine_T_max: 50 # Maximum number of iterations for cosine annealing (typically num_epochs)
       cosine_eta_min: 0.000001 # Minimum learning rate for cosine annealing
-      # Step scheduler parameters  
       step_size: 20 # Period of learning rate decay for step scheduler
       step_gamma: 0.5 # Multiplicative factor of learning rate decay for step scheduler
-      # Exponential scheduler parameters
       exp_gamma: 0.95 # Multiplicative factor for exponential decay
-      # ReduceLROnPlateau parameters
       plateau_mode: "min" # Mode for plateau scheduler: "min" or "max"
       plateau_factor: 0.5 # Factor by which learning rate is reduced
       plateau_patience: 10 # Number of epochs with no improvement to wait
@@ -71,19 +66,18 @@ training:
     ema_decay: 0.999 # Exponential moving average decay for model parameters
     gradient_clipping: 1.0 # Maximum norm for gradient clipping
     reward_loss: true # Whether to use reward loss during training
-    # Learning rate scheduler configuration
+    load_mae_weights: true # Whether to load pretrained MAE weights for encoder and decoder
+    mae_weights_path: "weights/mae_pretraining/best_checkpoint.pth" # Path to MAE checkpoint
+    freeze_encoder: true # Whether to freeze encoder parameters during training
+    freeze_decoder: true # Whether to freeze decoder parameters during training
     lr_scheduler:
       enabled: true # Whether to use learning rate scheduling
       type: "cosine" # Type of scheduler: "cosine", "step", "exponential", "plateau"
-      # Cosine annealing parameters
       cosine_T_max: 50 # Maximum number of iterations for cosine annealing (typically num_epochs)
       cosine_eta_min: 0.000001 # Minimum learning rate for cosine annealing
-      # Step scheduler parameters  
       step_size: 20 # Period of learning rate decay for step scheduler
       step_gamma: 0.5 # Multiplicative factor of learning rate decay for step scheduler
-      # Exponential scheduler parameters
       exp_gamma: 0.95 # Multiplicative factor for exponential decay
-      # ReduceLROnPlateau parameters
       plateau_mode: "min" # Mode for plateau scheduler: "min" or "max"
       plateau_factor: 0.5 # Factor by which learning rate is reduced
       plateau_patience: 10 # Number of epochs with no improvement to wait
