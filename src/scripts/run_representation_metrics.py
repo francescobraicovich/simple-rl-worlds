@@ -76,11 +76,11 @@ class RepresentationMetricsRunner:
                 'script': 'representation_metrics/analyse_manifold_dimension.py',
                 'description': 'Evaluate intrinsic dimensionality using Participation Ratio and Two-NN estimation'
             },
-            {
-                'name': 'smoothness',
-                'script': 'representation_metrics/analyse_smoothness.py',
-                'description': 'Measure representation smoothness by correlating pixel and latent distances'
-            },
+            #{
+            #    'name': 'smoothness',
+            #    'script': 'representation_metrics/analyse_smoothness.py',
+            #    'description': 'Measure representation smoothness by correlating pixel and latent distances'
+            #},
             {
                 'name': 'robustness',
                 'script': 'representation_metrics/analyse_robustness.py',
