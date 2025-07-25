@@ -54,10 +54,10 @@ class ExperienceDataset(Dataset):
         start = self.valid_start_indices[idx]
         end = start + self.sequence_length
 
-        # state sequence: [C, seq_len, 224, 224]
-        state      = self.states[:, start:end, :, :]
-        # next frame: [C, 1, 224, 224]
-        next_state = self.states[:, end:end+1, :, :]
+        # state sequence: [C, seq_len, 224, 224] -> [seq_len, C, 224, 224]
+        state      = self.states[:, start:end, :, :].permute(1, 0, 2, 3)
+        # next frame: [C, 1, 224, 224] -> [1, C, 224, 224]
+        next_state = self.states[:, end:end+1, :, :].permute(1, 0, 2, 3)
 
         action     = self.actions[start:end]   # [seq_len, …]
         reward     = self.rewards[start:end]   # [seq_len, …]
