@@ -318,26 +318,32 @@ class ConvDecoder(nn.Module):
         initial_size: int = 4,
         conv_channels: list = None,
         activation: str = 'silu',
-        dropout_rate: float = 0.0
+        dropout_rate: float = 0.0,
+        target_height: int = 224,
+        target_width: int = 224
     ):
         super().__init__()
         
         # Set default conv_channels if not provided
         if conv_channels is None:
-            conv_channels = [256, 128, 64, 32, 1]
+            conv_channels = [256, 128, 64, 32, 3]  # Changed last channel to 3 for RGB
         
         self.config = {
             'latent_dim': latent_dim,
             'initial_size': initial_size,
             'conv_channels': conv_channels,
             'activation': activation,
-            'dropout_rate': dropout_rate
+            'dropout_rate': dropout_rate,
+            'target_height': target_height,
+            'target_width': target_width
         }
         
         # Extract configuration
         self.latent_dim = self.config['latent_dim']
         initial_size = self.config['initial_size']
         conv_channels = self.config['conv_channels']
+        target_height = self.config['target_height']
+        target_width = self.config['target_width']
         
         # Get activation function
         if self.config['activation'].lower() == 'silu':
@@ -349,7 +355,7 @@ class ConvDecoder(nn.Module):
         else:
             activation_fn = nn.SiLU  # Default fallback
         
-        # Initial linear layer: latent_dim → 256 × 4 × 4
+        # Initial linear layer: latent_dim → initial_channels × initial_size × initial_size
         self.initial_linear = nn.Linear(
             self.latent_dim, 
             conv_channels[0] * initial_size * initial_size
@@ -450,5 +456,15 @@ class ConvDecoder(nn.Module):
         
         # Add temporal dimension: [B, C, H, W] → [B, C, 1, H, W]
         output = x.unsqueeze(2)
+        
+        # Ensure output matches target size exactly
+        B, C, T, H, W = output.shape
+        if H != self.config['target_height'] or W != self.config['target_width']:
+            output = F.interpolate(
+                output.squeeze(2),  # Remove temporal dim for interpolation
+                size=(self.config['target_height'], self.config['target_width']),
+                mode='bilinear',
+                align_corners=False
+            ).unsqueeze(2)  # Add temporal dim back
         
         return output

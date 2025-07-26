@@ -14,18 +14,18 @@ data_and_patching:
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 2
-  max_steps_per_episode: 10
-  random_action_percentage: 0.2 # Percentage of actions to be random (0.0 = no random actions)
+  num_episodes: 15               # ↓ Reduced from 30 for faster data loading
+  max_steps_per_episode: 1500    # ↓ Reduced from 3000 for faster data loading
+  random_action_percentage: 0.15 # Percentage of actions to be random (0.0 = no random actions)
   load_path: "assault_rep_8.pth"
   filename: "assault_rep_8.pth"
-  validation_split: 0.15
+  validation_split: 0.2
   ppo_agent:
     load: False # Whether to load a pre-trained PPO agent
     n_envs: 10 # Number of parallel environments for PPO training (default: CPU count)
     action_repetition_k: 8
     learning_rate: 0.0003
-    total_train_timesteps: 1000 # Timesteps to train PPO before data collection (very small for testing)
+    total_train_timesteps: 100000 # Timesteps to train PPO before data collection (very small for testing)
     n_steps: 128       # PPO n_steps parameter
     batch_size: 256      # PPO batch_size parameter
     n_epochs: 6         # PPO n_epochs parameter
@@ -36,40 +36,28 @@ data_collection:
     additional_log_std_noise: 0.0
     policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
 
-latent_dim: 256 # Increased to better utilize ResNet-18 features (was 64)
+latent_dim: 128 # Reduced to match MobileNetV2 encoder parameter count (~3.5M)
 
 training:
   main_loops:
-    num_epochs: 2000 # Number of epochs for training (reduced for testing)
-    batch_size: 4 # Batch size for training
-    learning_rate: 0.001 # Learning rate for the optimizer (higher for faster convergence)
-    weight_decay: 0.0001 # Weight decay for the optimizer
-    ema_decay: 0.999 # Exponential moving average decay for model parameters
-    gradient_clipping: 1.0 # Maximum norm for gradient clipping
-    reward_loss: true # Whether to use reward loss during training
-    # Early stopping configuration
+    num_epochs: 50              
+    batch_size: 32               
+    learning_rate: 0.001        
+    weight_decay: 0.0001         
+    ema_decay: 0.999             
+    gradient_clipping: 1.0       
+    
     early_stopping:
-      enabled: true # Whether to use early stopping
-      patience: 20 # Number of epochs to wait for improvement before stopping
-      min_delta: 0.001 # Minimum change in validation loss to be considered an improvement
-      restore_best_weights: true # Whether to restore best weights when stopping early
-    # Learning rate scheduler configuration
+      enabled: true
+      patience: 2               # ↑ Increased patience for fewer epochs
+      min_delta: 0.001           # ↑ Increased threshold for faster stopping
+      restore_best_weights: true
+    
     lr_scheduler:
-      enabled: true # Whether to use learning rate scheduling
-      type: "cosine" # Type of scheduler: "cosine", "step", "exponential", "plateau"
-      # Cosine annealing parameters
-      cosine_T_max: 50 # Maximum number of iterations for cosine annealing (typically num_epochs)
-      cosine_eta_min: 0.000001 # Minimum learning rate for cosine annealing
-      # Step scheduler parameters  
-      step_size: 20 # Period of learning rate decay for step scheduler
-      step_gamma: 0.5 # Multiplicative factor of learning rate decay for step scheduler
-      # Exponential scheduler parameters
-      exp_gamma: 0.95 # Multiplicative factor for exponential decay
-      # ReduceLROnPlateau parameters
-      plateau_mode: "min" # Mode for plateau scheduler: "min" or "max"
-      plateau_factor: 0.5 # Factor by which learning rate is reduced
-      plateau_patience: 10 # Number of epochs with no improvement to wait
-      plateau_threshold: 0.0001 # Threshold for measuring improvement
+      enabled: true
+      type: "cosine"             # ✅ Best for most cases
+      cosine_T_max: 50           # Match num_epochs
+      cosine_eta_min: 0.0001     # ↑ Higher minimum LR for faster convergence
   jepa_decoder:
     num_epochs: 50 # Number of epochs for the JEPA decoder training
     batch_size: 128 # Batch size for the JEPA decoder training
@@ -84,23 +72,23 @@ training:
       cosine_eta_min: 0.000001 # Minimum learning rate for cosine annealing
   reward_predictor:
     versions: "both" # Versions of the reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
-    num_epochs: 100 # Number of epochs for the reward predictor training
-    batch_size: 128 # Batch size for the reward predictor training
-    learning_rate: 0.0001 # Learning rate for the reward predictor optimizer
+    num_epochs: 50                 # ↓ Reduced from 200 for faster training
+    batch_size: 64                 # ↑ Larger batches
+    learning_rate: 0.001           # ↑ Increased from 0.0003 for faster convergence
     weight_decay: 0.0001 # Weight decay for the reward predictor optimizer
     gradient_clipping: 0.5 # Maximum norm for reward predictor gradient clipping
     # Early stopping configuration
     early_stopping:
       enabled: true # Whether to use early stopping
-      patience: 15 # Number of epochs to wait for improvement before stopping
-      min_delta: 0.001 # Minimum change in validation loss to be considered an improvement
+      patience: 15                 # ↓ Reduced patience for faster stopping
+      min_delta: 0.001             # ↑ Increased threshold for faster stopping
       restore_best_weights: true # Whether to restore best weights when stopping early
     # Learning rate scheduler configuration
     lr_scheduler:
       enabled: true # Whether to use learning rate scheduling
       type: "cosine" # Type of scheduler: "cosine", "step", "exponential", "plateau"
-      cosine_T_max: 100 # Maximum number of iterations for cosine annealing
-      cosine_eta_min: 0.000001 # Minimum learning rate for cosine annealing
+      cosine_T_max: 50 # Maximum number of iterations for cosine annealing
+      cosine_eta_min: 0.0001 # Minimum learning rate for cosine annealing
   dynamics_reward_predictor:
     versions: "both" # Versions of the dynamics reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
     num_epochs: 50 # Number of epochs for the dynamics reward predictor training
@@ -117,23 +105,24 @@ training:
 
 models:
   encoder:
-    use_pretrained_resnet: true    # Use pretrained ResNet-18 for better features
-    input_channels: 3              # RGB input (changed from 1 for grayscale)
-    image_size: 224                # Standard ResNet input size
-    conv_channels: [32, 64, 128, 256]  # Only used if use_pretrained_resnet: false
+    use_pretrained_backbone: true    # Use pretrained backbone for better features
+    backbone_type: "mobilenetv2"        # Options: "resnet18", "mobilenetv2"
+    input_channels: 3                # RGB input (changed from 1 for grayscale)
+    image_size: 224                  # Standard backbone input size
+    conv_channels: [32, 64, 128, 256]  # Only used if use_pretrained_backbone: false
     activation: "silu"
-    dropout_rate: 0.1              # Slightly higher dropout for pretrained models
+    dropout_rate: 0.2              # ↑ More regularization for pretrained models
    
   predictor:
-    hidden_sizes: [512, 512]
+    hidden_sizes: [1024, 1024]   # ↑ Larger for complex dynamics
     activation: "silu"
-    dropout_rate: 0.1
+    dropout_rate: 0.2            # ↑ More regularization
     
   decoder:
-    initial_size: 7                # Smaller initial size for fewer parameters
-    conv_channels: [512, 256, 128, 64, 32, 3]  # More layers, fewer channels (~10M parameters)
+    initial_size: 3              # Optimized to match MobileNetV2 encoder parameter count (~3.1M)
+    conv_channels: [512, 256, 64, 32, 3]  # Optimized for ~3.1M parameters (4.4% difference)
     activation: "silu"
-    dropout_rate: 0.1              # Add regularization for larger model
+    dropout_rate: 0.2            # ↑ More regularization
 
   reward_predictor:
     hidden_sizes: [256, 256]
@@ -153,7 +142,7 @@ wandb:
   enabled: true  # Set to true to enable wandb logging
   project: "simple-rl-worlds"
   entity: null  # Set to your wandb username/team
-  tags: ["resnet18", "rgb", "224x224"]  # Add tags for organizing experiments
+  tags: ["mobilenetv2", "rgb", "224x224"]  # Add tags for organizing experiments
 
 
     

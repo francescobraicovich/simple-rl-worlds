@@ -2,7 +2,7 @@ import yaml
 import os
 from typing import Dict, Any
 
-from ..models.encoder import ConvEncoder, PretrainedResNet18Encoder
+from ..models.encoder import ConvEncoder, PretrainedResNet18Encoder, PretrainedMobileNetV2Encoder
 from ..models.predictor import MLPHistoryPredictor
 from ..models.decoder import ConvDecoder
 from ..models.reward_predictor import MLPRewardPredictor
@@ -47,10 +47,11 @@ def init_encoder(config_path: str = None) -> ConvEncoder:
     encoder = ConvEncoder(
         latent_dim=latent_dim,
         input_channels=encoder_config.get('input_channels', 3),  # Default to RGB
-        conv_channels=encoder_config['conv_channels'],
+        conv_channels=encoder_config.get('conv_channels', None),  # Optional for pretrained backbones
         activation=encoder_config['activation'],
         dropout_rate=encoder_config['dropout_rate'],
-        use_pretrained_resnet=encoder_config.get('use_pretrained_resnet', True),
+        use_pretrained_backbone=encoder_config.get('use_pretrained_backbone', True),
+        backbone_type=encoder_config.get('backbone_type', 'resnet18'),
         image_size=encoder_config.get('image_size', 224)
     )
     
@@ -101,25 +102,28 @@ def init_predictor(config_path: str = None) -> MLPHistoryPredictor:
 
 def init_decoder(config_path: str = None) -> ConvDecoder:
     """
-    Initialize the HybridConvTransformerDecoder model from configuration.
+    Initialize the ConvDecoder model from configuration.
     
     Args:
         config_path: Path to config.yaml file. If None, uses default location.
     
     Returns:
-        Initialized HybridConvTransformerDecoder model.
+        Initialized ConvDecoder model.
     """
     config = load_config(config_path)
     
     # Extract relevant configuration parameters
     decoder_config = config['models']['decoder']
+    data_config = config['data_and_patching']
     
     decoder = ConvDecoder(
         latent_dim=config['latent_dim'],  # Use global latent_dim from config
         initial_size=decoder_config['initial_size'],
         conv_channels=decoder_config['conv_channels'],
         activation=decoder_config['activation'],
-        dropout_rate=decoder_config['dropout_rate']
+        dropout_rate=decoder_config['dropout_rate'],
+        target_height=data_config['image_height'],
+        target_width=data_config['image_width']
     )
     
     return decoder

@@ -424,19 +424,126 @@ class PretrainedResNet18Encoder(nn.Module):
         return latents
 
 
-class ConvEncoder(nn.Module):
+class PretrainedMobileNetV2Encoder(nn.Module):
     """
-    Convolutional encoder (now using pretrained ResNet-18 by default)
+    Pretrained MobileNetV2 encoder adapted for RGB video frames.
     
     Architecture:
     - Input: (B, T, 3, 224, 224)
-    - Pretrained ResNet-18 backbone
+    - Reshape: (B*T, 3, 224, 224)
+    - Pretrained MobileNetV2 (without final classification layer)
+    - Custom final projection to latent_dim
+    - Reshape: (B, T, latent_dim)
+    """
+    
+    def __init__(self, latent_dim=64, pretrained=True, activation='silu', dropout_rate=0.0):
+        super().__init__()
+        
+        self.config = {
+            'latent_dim': latent_dim,
+            'pretrained': pretrained,
+            'activation': activation,
+            'dropout_rate': dropout_rate
+        }
+        
+        self.latent_dim = latent_dim
+        
+        # Get activation function
+        if activation.lower() == 'silu':
+            activation_fn = nn.SiLU
+        elif activation.lower() == 'relu':
+            activation_fn = nn.ReLU
+        elif activation.lower() == 'gelu':
+            activation_fn = nn.GELU
+        else:
+            activation_fn = nn.SiLU
+        
+        # Load pretrained MobileNetV2
+        if pretrained:
+            self.mobilenet = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.IMAGENET1K_V1)
+        else:
+            self.mobilenet = models.mobilenet_v2(weights=None)
+        
+        # Remove the final classification layer (classifier)
+        # We'll replace it with our own projection
+        self.mobilenet = nn.Sequential(*list(self.mobilenet.children())[:-1])  # Remove classifier
+        
+        # Add global average pooling to ensure we get the correct output size
+        self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
+        
+        # The MobileNetV2 outputs 1280 features after global average pooling
+        mobilenet_output_dim = 1280
+        
+        # Custom final layers
+        self.final_layers = nn.Sequential(
+            nn.Dropout(dropout_rate),
+            nn.Linear(mobilenet_output_dim, mobilenet_output_dim // 2),
+            activation_fn(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(mobilenet_output_dim // 2, latent_dim)
+        )
+        
+        # Initialize the new layers
+        self._init_final_layers()
+    
+    def _init_final_layers(self):
+        """Initialize the custom final layers."""
+        for m in self.final_layers.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass through the pretrained MobileNetV2 encoder.
+        
+        Args:
+            x: Input tensor of shape (B, T, 3, 224, 224)
+            
+        Returns:
+            Latent vectors of shape (B, T, latent_dim)
+        """
+        # Input shape: (B, T, 3, 224, 224)
+        B, T, C, H, W = x.shape
+        assert C == 3, f"Expected 3 channels (RGB), got {C}"
+        assert H == 224 and W == 224, f"Expected 224x224 images, got {H}x{W}"
+        
+        # Reshape to process all frames as a batch: (B, T, 3, 224, 224) -> (B*T, 3, 224, 224)
+        x = x.reshape(B * T, C, H, W)
+        
+        # Pass through pretrained MobileNetV2 (without final classifier)
+        # This gives us (B*T, 1280, H, W) feature maps
+        x = self.mobilenet(x)
+        
+        # Apply global average pooling to get (B*T, 1280, 1, 1)
+        x = self.global_pool(x)
+        
+        # Flatten: (B*T, 1280, 1, 1) -> (B*T, 1280)
+        x = x.flatten(start_dim=1)
+        
+        # Pass through custom final layers to get latent representation
+        latents = self.final_layers(x)  # (B*T, latent_dim)
+        
+        # Reshape back to (B, T, latent_dim)
+        latents = latents.reshape(B, T, self.latent_dim)
+        
+        return latents
+
+
+class ConvEncoder(nn.Module):
+    """
+    Convolutional encoder (now using pretrained backbones by default)
+    
+    Architecture:
+    - Input: (B, T, 3, 224, 224)
+    - Pretrained backbone (ResNet-18 or MobileNetV2)
     - Custom final projection to latent_dim
     - Output: (B, T, latent_dim)
     """
     
     def __init__(self, latent_dim=64, input_channels=3, conv_channels=None, activation='silu', 
-                 dropout_rate=0.0, use_pretrained_resnet=True, image_size=224):
+                 dropout_rate=0.0, use_pretrained_backbone=True, backbone_type='resnet18', image_size=224):
         super().__init__()
         
         # Store configuration for compatibility
@@ -446,22 +553,34 @@ class ConvEncoder(nn.Module):
             'conv_channels': conv_channels,
             'activation': activation,
             'dropout_rate': dropout_rate,
-            'use_pretrained_resnet': use_pretrained_resnet,
+            'use_pretrained_backbone': use_pretrained_backbone,
+            'backbone_type': backbone_type,
             'image_size': image_size
         }
         
-        if use_pretrained_resnet:
-            # Use pretrained ResNet-18
-            self.resnet_encoder = PretrainedResNet18Encoder(
-                latent_dim=latent_dim,
-                pretrained=True,
-                activation=activation,
-                dropout_rate=dropout_rate
-            )
-            self.use_pretrained_resnet = True
+        if use_pretrained_backbone:
+            # Use pretrained backbone
+            if backbone_type.lower() == 'resnet18':
+                self.backbone_encoder = PretrainedResNet18Encoder(
+                    latent_dim=latent_dim,
+                    pretrained=True,
+                    activation=activation,
+                    dropout_rate=dropout_rate
+                )
+            elif backbone_type.lower() == 'mobilenetv2':
+                self.backbone_encoder = PretrainedMobileNetV2Encoder(
+                    latent_dim=latent_dim,
+                    pretrained=True,
+                    activation=activation,
+                    dropout_rate=dropout_rate
+                )
+            else:
+                raise ValueError(f"Unsupported backbone type: {backbone_type}. Supported: 'resnet18', 'mobilenetv2'")
+            
+            self.use_pretrained_backbone = True
         else:
             # Fallback to original simple conv encoder (adapted for RGB)
-            self.use_pretrained_resnet = False
+            self.use_pretrained_backbone = False
             
             # Use provided parameters or defaults
             if conv_channels is None:
@@ -553,8 +672,8 @@ class ConvEncoder(nn.Module):
         Returns:
             Latent vectors of shape (B, T, latent_dim)
         """
-        if self.use_pretrained_resnet:
-            return self.resnet_encoder(x)
+        if self.use_pretrained_backbone:
+            return self.backbone_encoder(x)
         else:
             # Original ConvEncoder forward pass (adapted for RGB)
             # Input shape: (B, T, 3, 224, 224)
