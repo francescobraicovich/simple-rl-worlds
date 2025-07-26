@@ -189,6 +189,7 @@ cython_debug/
 /weights
 /best_models
 /evaluation_results
+decoder_plots/
 
 slurm-*.out
 run_job.slurm
