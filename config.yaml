@@ -48,7 +48,7 @@ training:
     gradient_clipping: 1.0       
     
     early_stopping:
-      enabled: true
+      enabled: false
       patience: 2               # ↑ Increased patience for fewer epochs
       min_delta: 0.001           # ↑ Increased threshold for faster stopping
       restore_best_weights: true
