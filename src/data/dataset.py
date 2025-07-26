@@ -12,7 +12,7 @@ class ExperienceDataset(Dataset):
         # concatenate along temporal dim
         self.states = torch.cat(states, dim=1)  # shape [C, total_T, H, W]
         self.states = self.states.squeeze(0)  # remove leading dimension if it exists
-        self.states = self.states / 255.0 # normalize to [0, 1] range
+        #self.states = self.states / 255.0 # normalize to [0, 1] range
         self.actions = torch.stack(actions)     # shape [total_T, ...]
         self.rewards = torch.stack(rewards)     # shape [total_T, ...]
         self.stop_episodes = torch.tensor(stop_episodes, dtype=torch.bool)  # shape [total_T]
