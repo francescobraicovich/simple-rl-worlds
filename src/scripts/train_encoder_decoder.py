@@ -91,6 +91,17 @@ class EncoderDecoderTrainer:
         self.checkpoint_dir = Path("weights/encoder_decoder")
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
+        # Early stopping configuration
+        early_stopping_config = self.training_config.get('early_stopping', {})
+        self.early_stopping_enabled = early_stopping_config.get('enabled', False)
+        self.early_stopping_patience = early_stopping_config.get('patience', 20)
+        self.early_stopping_min_delta = early_stopping_config.get('min_delta', 0.001)
+        self.restore_best_weights = early_stopping_config.get('restore_best_weights', True)
+        
+        # Early stopping state
+        self.epochs_without_improvement = 0
+        self.best_weights = None
+
         # Flag for reward predictor usage
         self.use_reward_predictor = self.config['training'].get('main_loops').get('reward_loss')
         
@@ -163,9 +174,70 @@ class EncoderDecoderTrainer:
             config_path=self.config_path
         )
 
-        # Run the pipeline to get dataloaders from existing data
+                # Run the pipeline to get dataloaders from existing data
         self.train_dataloader, self.val_dataloader = pipeline.run_pipeline()
+    
+    def save_best_weights(self):
+        """Save current model weights as best weights."""
+        import copy
+        self.best_weights = {
+            'encoder': copy.deepcopy(self.encoder.state_dict()),
+            'predictor': copy.deepcopy(self.predictor.state_dict()),
+            'decoder': copy.deepcopy(self.decoder.state_dict()),
+            'optimizer': copy.deepcopy(self.optimizer.state_dict())
+        }
+        if self.reward_predictor is not None:
+            self.best_weights['reward_predictor'] = copy.deepcopy(self.reward_predictor.state_dict())
+        if self.lr_scheduler is not None:
+            self.best_weights['lr_scheduler'] = copy.deepcopy(self.lr_scheduler.state_dict())
+    
+    def restore_best_weights(self):
+        """Restore the best model weights."""
+        if self.best_weights is not None:
+            self.encoder.load_state_dict(self.best_weights['encoder'])
+            self.predictor.load_state_dict(self.best_weights['predictor'])
+            self.decoder.load_state_dict(self.best_weights['decoder'])
+            self.optimizer.load_state_dict(self.best_weights['optimizer'])
+            if self.reward_predictor is not None and 'reward_predictor' in self.best_weights:
+                self.reward_predictor.load_state_dict(self.best_weights['reward_predictor'])
+            if self.lr_scheduler is not None and 'lr_scheduler' in self.best_weights:
+                self.lr_scheduler.load_state_dict(self.best_weights['lr_scheduler'])
+            print("✅ Restored best model weights")
+    
+    def check_early_stopping(self, val_loss: float) -> bool:
+        """
+        Check if training should stop early based on validation loss.
         
+        Args:
+            val_loss: Current validation loss
+            
+        Returns:
+            True if training should stop, False otherwise
+        """
+        if not self.early_stopping_enabled or val_loss is None:
+            return False
+        
+        # Check if validation loss improved
+        if val_loss < self.best_val_loss - self.early_stopping_min_delta:
+            # Improvement found
+            self.best_val_loss = val_loss
+            self.epochs_without_improvement = 0
+            # Save best weights
+            if self.restore_best_weights:
+                self.save_best_weights()
+            return False
+        else:
+            # No improvement
+            self.epochs_without_improvement += 1
+            print(f"⚠️  No improvement for {self.epochs_without_improvement} epochs (patience: {self.early_stopping_patience})")
+            
+            # Check if patience exceeded
+            if self.epochs_without_improvement >= self.early_stopping_patience:
+                print(f"🛑 Early stopping triggered after {self.epochs_without_improvement} epochs without improvement")
+                return True
+        
+        return False
+            
     def train_step(self, batch: Tuple[torch.Tensor, ...]) -> Tuple[float, float, float]:
         """
         Perform a single training step with end-to-end reconstruction.
@@ -492,6 +564,14 @@ class EncoderDecoderTrainer:
             if self.lr_scheduler is not None:
                 # Use validation reconstruction loss for plateau scheduler, otherwise step normally
                 step_scheduler(self.lr_scheduler, val_reconstruction_loss)
+
+            # Check for early stopping (use total validation loss)
+            if self.check_early_stopping(val_total_loss):
+                print(f"🛑 Training stopped early at epoch {epoch+1}")
+                # Restore best weights if configured
+                if self.restore_best_weights and self.best_weights is not None:
+                    self.restore_best_weights()
+                break
 
             # Terminal output
             if val_reconstruction_loss is not None:

@@ -97,6 +97,17 @@ class RewardPredictorTrainer:
         self.checkpoint_dir = Path(f"weights/{self.approach}/reward_predictor")
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
+        # Early stopping configuration
+        early_stopping_config = self.training_config.get('early_stopping', {})
+        self.early_stopping_enabled = early_stopping_config.get('enabled', False)
+        self.early_stopping_patience = early_stopping_config.get('patience', 20)
+        self.early_stopping_min_delta = early_stopping_config.get('min_delta', 0.001)
+        self.restore_best_weights = early_stopping_config.get('restore_best_weights', True)
+        
+        # Early stopping state
+        self.epochs_without_improvement = 0
+        self.best_weights = None
+        
         # Paths for pre-trained models
         self.pretrained_dir = Path(f"weights/{self.approach}")
         
