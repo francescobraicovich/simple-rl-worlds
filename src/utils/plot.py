@@ -5,6 +5,7 @@ from typing import List, Tuple, Optional
 import random
 import re
 
+VMAX = 255
 
 def cleanup_future_epoch_images(output_dir: Path, current_epoch: int, model_name: str) -> None:
     """
@@ -93,13 +94,13 @@ def plot_validation_samples(
         
         # Plot true frames (top row)
         for t in range(T):
-            axes_sample[0, t].imshow(true_states[batch_idx, t], cmap='gray', vmin=0, vmax=1)
+            axes_sample[0, t].imshow(true_states[batch_idx, t], cmap='gray', vmin=0, vmax=VMAX)
             axes_sample[0, t].set_title(f'True Frame {t+1}')
             axes_sample[0, t].axis('off')
         
         # Plot predicted frames (bottom row)
         for t in range(T):
-            axes_sample[1, t].imshow(pred_states[batch_idx, t], cmap='gray', vmin=0, vmax=1)
+            axes_sample[1, t].imshow(pred_states[batch_idx, t], cmap='gray', vmin=0, vmax=VMAX)
             axes_sample[1, t].set_title(f'Predicted Frame {t+1}')
             axes_sample[1, t].axis('off')
         
@@ -168,12 +169,12 @@ def plot_combined_validation_samples(
             col_idx = sample_idx * T + t
             
             # Plot true frame (top row)
-            axes[0, col_idx].imshow(true_states[batch_idx, t], cmap='gray', vmin=0, vmax=1)
+            axes[0, col_idx].imshow(true_states[batch_idx, t], cmap='gray', vmin=0, vmax=VMAX)
             axes[0, col_idx].set_title(f'Sample {sample_idx+1} - True Frame {t+1}')
             axes[0, col_idx].axis('off')
             
             # Plot predicted frame (bottom row)
-            axes[1, col_idx].imshow(pred_states[batch_idx, t], cmap='gray', vmin=0, vmax=1)
+            axes[1, col_idx].imshow(pred_states[batch_idx, t], cmap='gray', vmin=0, vmax=VMAX)
             axes[1, col_idx].set_title(f'Sample {sample_idx+1} - Predicted Frame {t+1}')
             axes[1, col_idx].axis('off')
     
@@ -246,19 +247,19 @@ def plot_mae_validation_samples(
         
         # Plot masked frames (top row)
         for t in range(T):
-            axes_sample[0, t].imshow(masked_states[batch_idx, t], cmap='gray', vmin=0, vmax=1)
+            axes_sample[0, t].imshow(masked_states[batch_idx, t], cmap='gray', vmin=0, vmax=VMAX)
             axes_sample[0, t].set_title(f'Masked Frame {t+1}')
             axes_sample[0, t].axis('off')
         
         # Plot reconstructed frames (middle row)
         for t in range(T):
-            axes_sample[1, t].imshow(reconstructed_states[batch_idx, t], cmap='gray', vmin=0, vmax=1)
+            axes_sample[1, t].imshow(reconstructed_states[batch_idx, t], cmap='gray', vmin=0, vmax=VMAX)
             axes_sample[1, t].set_title(f'Reconstructed Frame {t+1}')
             axes_sample[1, t].axis('off')
             
         # Plot true frames (bottom row)
         for t in range(T):
-            axes_sample[2, t].imshow(true_states[batch_idx, t], cmap='gray', vmin=0, vmax=1)
+            axes_sample[2, t].imshow(true_states[batch_idx, t], cmap='gray', vmin=0, vmax=VMAX)
             axes_sample[2, t].set_title(f'True Frame {t+1}')
             axes_sample[2, t].axis('off')
         
@@ -330,17 +331,17 @@ def plot_mae_combined_validation_samples(
             col_idx = sample_idx * T + t
             
             # Plot masked frame (top row)
-            axes[0, col_idx].imshow(masked_states[batch_idx, t], cmap='gray', vmin=0, vmax=1)
+            axes[0, col_idx].imshow(masked_states[batch_idx, t], cmap='gray', vmin=0, vmax=VMAX)
             axes[0, col_idx].set_title(f'Sample {sample_idx+1} - Masked Frame {t+1}')
             axes[0, col_idx].axis('off')
             
             # Plot reconstructed frame (middle row)
-            axes[1, col_idx].imshow(reconstructed_states[batch_idx, t], cmap='gray', vmin=0, vmax=1)
+            axes[1, col_idx].imshow(reconstructed_states[batch_idx, t], cmap='gray', vmin=0, vmax=VMAX)
             axes[1, col_idx].set_title(f'Sample {sample_idx+1} - Reconstructed Frame {t+1}')
             axes[1, col_idx].axis('off')
             
             # Plot true frame (bottom row)
-            axes[2, col_idx].imshow(true_states[batch_idx, t], cmap='gray', vmin=0, vmax=1)
+            axes[2, col_idx].imshow(true_states[batch_idx, t], cmap='gray', vmin=0, vmax=VMAX)
             axes[2, col_idx].set_title(f'Sample {sample_idx+1} - True Frame {t+1}')
             axes[2, col_idx].axis('off')
     
