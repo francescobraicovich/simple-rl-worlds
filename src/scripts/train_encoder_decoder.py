@@ -14,9 +14,6 @@ The training process:
 """
 
 import os
-# Set MPS fallback for unsupported operations
-os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
-
 import sys
 import time
 from pathlib import Path
@@ -26,6 +23,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import wandb
+
+# Set MPS fallback for unsupported operations
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent
@@ -94,6 +94,11 @@ class EncoderDecoderTrainer:
         self.mae_weights_path = "weights/mae_pretraining/best_checkpoint.pth"
         self.freeze_encoder = self.training_config.get('freeze_encoder', False)
         self.freeze_decoder = self.training_config.get('freeze_decoder', False)
+        
+        # Plotting configuration
+        self.plot_frequency = 5  # Plot every 5 epochs
+        self.plot_dir = "evaluation_plots/decoder_plots/encoder_decoder"
+        self.validation_sample_indices = None  # Will be set once data is loaded
         
     def initialize_models(self):
         """Initialize encoder, predictor, and decoder models."""
@@ -380,6 +385,55 @@ class EncoderDecoderTrainer:
         avg_total_loss = total_total_loss / num_batches
         return avg_reconstruction_loss, avg_total_loss
         
+    def plot_validation_predictions(self, epoch: int):
+        """Generate validation plots for the current epoch if needed."""
+        # Import here to avoid issues with module-level imports
+        from src.utils.plot import plot_validation_samples, get_random_validation_samples, should_plot_validation
+        
+        # Check if we should plot for this epoch
+        if not should_plot_validation(epoch, self.plot_frequency):
+            return
+            
+        if self.val_dataloader is None:
+            return
+            
+        # Get validation sample indices (consistent across epochs)
+        if self.validation_sample_indices is None:
+            self.validation_sample_indices, _, _, _ = get_random_validation_samples(
+                self.val_dataloader, n_samples=5, seed=42
+            )
+        
+        # Set models to eval mode
+        self.encoder.eval()
+        self.predictor.eval()
+        self.decoder.eval()
+        
+        # Get a validation batch
+        val_iter = iter(self.val_dataloader)
+        batch = next(val_iter)
+        state, next_state, action, _ = batch
+        
+        # Move to device
+        state = state.to(self.device)
+        next_state = next_state.to(self.device)
+        action = action[:, -1].to(self.device)  # Use only the last action
+        
+        with torch.no_grad():
+            # Forward pass through the models
+            z_state = self.encoder(state)
+            z_next_pred = self.predictor(z_state, action)
+            next_state_reconstructed = self.decoder(z_next_pred)
+        
+        # Generate plots
+        plot_validation_samples(
+            true_next_states=next_state,
+            predicted_next_states=next_state_reconstructed,
+            epoch=epoch,
+            sample_indices=self.validation_sample_indices,
+            output_dir=self.plot_dir,
+            model_name="encoder_decoder"
+        )
+        
     def save_checkpoint(self, epoch: int, train_reconstruction_loss: float, train_total_loss: float,
                        val_reconstruction_loss: Optional[float], val_total_loss: Optional[float]):
         """
@@ -475,6 +529,9 @@ class EncoderDecoderTrainer:
                 val_reconstruction_loss, val_total_loss = val_results
             else:
                 val_reconstruction_loss, val_total_loss = None, None
+            
+            # Generate validation plots if needed
+            self.plot_validation_predictions(epoch)
             
             epoch_time = time.time() - epoch_start_time
             
