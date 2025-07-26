@@ -1,5 +1,5 @@
 environment:
-  name: "ALE/Assault-v5" # Simple environment for testing (was "ALE/Assault-v5")
+  name: "ALE/Pong-v5" # Simple environment for testing (was "ALE/Assault-v5")
 
   # Image preprocessing parameters
   frame_stack_size: 4         # Number of frames to stack (1 = no stacking, 4 = stack 4 frames)
@@ -14,19 +14,19 @@ data_and_patching:
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 100
+  num_episodes: 10
   max_steps_per_episode: 5000
   random_action_percentage: 0.2 # Percentage of actions to be random (0.0 = no random actions)
-  load_path: "assault_rep_8.pth"
-  filename: "assault_rep_8.pth"
+  load_path: "pong_rep_8.pth"
+  filename: "pong_rep_8.pth"
   validation_split: 0.15
   ppo_agent:
-    load: False # Whether to load a pre-trained PPO agent
+    load: true # Whether to load a pre-trained PPO agent
     n_envs: 10 # Number of parallel environments for PPO training (default: CPU count)
     action_repetition_k: 8
     learning_rate: 0.0003
-    total_train_timesteps: 1000000 # Timesteps to train PPO before data collection (reduced for testing)
-    n_steps: 256       # PPO n_steps parameter
+    total_train_timesteps: 50000 # Timesteps to train PPO before data collection (reduced for testing)
+    n_steps: 128       # PPO n_steps parameter
     batch_size: 256      # PPO batch_size parameter
     n_epochs: 6         # PPO n_epochs parameter
     gamma: 0.99         # PPO gamma parameter
@@ -36,16 +36,16 @@ data_collection:
     additional_log_std_noise: 0.0
     policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
 
-latent_dim: 512 # Dimension of the embedding space for the transformer model
+latent_dim: 256 # Dimension of the embedding space for the transformer model
 
 training:
   pretraining:
-    num_epochs: 20 # Number of epochs for MAE pretraining
+    num_epochs: 200 # Number of epochs for MAE pretraining
     batch_size: 128 # Batch size for MAE pretraining
     learning_rate: 0.0001 # Learning rate for the MAE optimizer
     weight_decay: 0.0001 # Weight decay for the MAE optimizer
     gradient_clipping: 10.0 # Maximum norm for gradient clipping
-    mask_ratio: 0.4 # Ratio of patches to mask during training
+    mask_ratio: 0.2 # Ratio of patches to mask during training
     lr_scheduler:
       enabled: false # Whether to use learning rate scheduling
       type: "cosine" # Type of scheduler: "cosine", "step", "exponential", "plateau"
@@ -59,7 +59,7 @@ training:
       plateau_patience: 10 # Number of epochs with no improvement to wait
       plateau_threshold: 0.0001 # Threshold for measuring improvement
   main_loops:
-    num_epochs: 20 # Number of epochs for training
+    num_epochs: 200 # Number of epochs for training
     batch_size: 128 # Batch size for training
     learning_rate: 0.0001 # Learning rate for the optimizer
     weight_decay: 0.0001 # Weight decay for the optimizer
@@ -81,7 +81,7 @@ training:
       plateau_patience: 10 # Number of epochs with no improvement to wait
       plateau_threshold: 0.0001 # Threshold for measuring improvement
   jepa_decoder:
-    num_epochs: 20 # Number of epochs for the JEPA decoder training
+    num_epochs: 200 # Number of epochs for the JEPA decoder training
     batch_size: 128 # Batch size for the JEPA decoder training
     learning_rate: 0.0001 # Learning rate for the JEPA decoder optimizer
     weight_decay: 0.0001 # Weight decay for the JEPA decoder optimizer
@@ -94,7 +94,7 @@ training:
       cosine_eta_min: 0.000001 # Minimum learning rate for cosine annealing
   reward_predictor:
     versions: "both" # Versions of the reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
-    num_epochs: 20 # Number of epochs for the reward predictor training
+    num_epochs: 100 # Number of epochs for the reward predictor training
     batch_size: 128 # Batch size for the reward predictor training
     learning_rate: 0.0001 # Learning rate for the reward predictor optimizer
     weight_decay: 0.0001 # Weight decay for the reward predictor optimizer
@@ -107,7 +107,7 @@ training:
       cosine_eta_min: 0.000001 # Minimum learning rate for cosine annealing
   dynamics_reward_predictor:
     versions: "both" # Versions of the dynamics reward predictor to train (e.g., "both", "jepa", "encoder_decoder")
-    num_epochs: 20 # Number of epochs for the dynamics reward predictor training
+    num_epochs: 100 # Number of epochs for the dynamics reward predictor training
     batch_size: 128 # Batch size for the dynamics reward predictor training
     learning_rate: 0.0001 # Learning rate for the dynamics reward predictor optimizer
     weight_decay: 0.0001 # Weight decay for the dynamics reward predictor optimizer
