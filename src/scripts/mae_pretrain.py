@@ -192,8 +192,8 @@ class MAETrainer:
         pixel_mask = reassemble_tubelets(mask_expanded.float())  # [B, T, H, W]
         
         # Compute reconstruction loss only on masked regions
-        masked_original = state * pixel_mask
-        masked_reconstructed = reconstructed * pixel_mask
+        masked_original = state #* pixel_mask
+        masked_reconstructed = reconstructed #* pixel_mask
         
         # Calculate loss only on the non-zero (masked) regions
         loss = self.criterion(masked_reconstructed, masked_original)
