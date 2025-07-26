@@ -92,6 +92,11 @@ class MAETrainer:
         self.checkpoint_dir = Path("weights/mae_pretraining")
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
+        # Plotting configuration
+        self.plot_frequency = 1 # Plot every 5 epochs
+        self.plot_dir = "evaluation_plots/decoder_plots/mae_pretrain"
+        self.validation_sample_indices = None  # Will be set once data is loaded
+        
     def initialize_models(self):
         """Initialize encoder and decoder models."""
         # Initialize models
@@ -156,9 +161,6 @@ class MAETrainer:
         # Move to device - we use current state for MAE pretraining
         state = state.to(self.device)  # [B, T, H, W]
         
-        # Forward pass through MAE pipeline
-        self.optimizer.zero_grad()
-        
         # 1. Extract tubelets from the batch
         tubelets = extract_tubelets(state)  # [B, N, PATCH_T, PATCH_H, PATCH_W]
         B, N, PATCH_T, PATCH_H, PATCH_W = tubelets.shape
@@ -205,7 +207,7 @@ class MAETrainer:
             torch.nn.utils.clip_grad_norm_(trainable_params, self.gradient_clipping)
             
         self.optimizer.step()
-        
+        self.optimizer.zero_grad()  # Reset gradients for next step        
         return loss.item()
         
     def validate_step(self, batch: Tuple[torch.Tensor, ...]) -> float:
@@ -315,6 +317,71 @@ class MAETrainer:
         avg_loss = total_loss / num_batches
         return avg_loss
         
+    def plot_mae_validation_predictions(self, epoch: int):
+        """Generate MAE validation plots for the current epoch if needed."""
+        # Import here to avoid issues with module-level imports
+        from src.utils.plot import plot_mae_validation_samples, get_random_validation_samples, should_plot_validation
+        
+        # Check if we should plot for this epoch
+        if not should_plot_validation(epoch, self.plot_frequency):
+            return
+            
+        if self.val_dataloader is None:
+            return
+            
+        # Get validation sample indices (consistent across epochs)
+        if self.validation_sample_indices is None:
+            self.validation_sample_indices, _, _, _ = get_random_validation_samples(
+                self.val_dataloader, n_samples=5, seed=42
+            )
+        
+        # Set models to eval mode
+        self.encoder.eval()
+        self.decoder.eval()
+        
+        # Get a validation batch
+        val_iter = iter(self.val_dataloader)
+        batch = next(val_iter)
+        state, next_state, action, _ = batch
+        
+        # Move to device - we use current state for MAE pretraining
+        state = state.to(self.device)  # [B, T, H, W]
+        
+        with torch.no_grad():
+            # 1. Extract tubelets from the batch
+            tubelets = extract_tubelets(state)  # [B, N, PATCH_T, PATCH_H, PATCH_W]
+            B, N, PATCH_T, PATCH_H, PATCH_W = tubelets.shape
+            
+            # 2. Sample a mask from uniform distribution over tubelet dimension
+            mask = generate_random_mask(B, N, self.mask_ratio, self.device)  # [B, N] boolean
+            
+            # 3. Clone tubelets and zero out masked ones to create masked input
+            masked_tubelets = tubelets.clone()
+            # Expand mask to match tubelet dimensions
+            mask_expanded = mask.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # [B, N, 1, 1, 1]
+            mask_expanded = mask_expanded.expand(-1, -1, PATCH_T, PATCH_H, PATCH_W)  # [B, N, PATCH_T, PATCH_H, PATCH_W]
+            masked_tubelets[mask_expanded] = 0.0
+            
+            # 4. Use reassemble_tubelets to fold masked tubelets back into tensor
+            masked_input = reassemble_tubelets(masked_tubelets)  # [B, T, H, W]
+            
+            # 5. Pass reassembled tensor through encoder to get latent representations
+            latent_repr = self.encoder(masked_input)  # [B, latent_dim]
+            
+            # 6. Pass through decoder to get reconstructions
+            reconstructed = self.decoder(latent_repr)  # [B, T, H, W]
+        
+        # Generate plots
+        plot_mae_validation_samples(
+            masked_frames=masked_input,
+            reconstructed_frames=reconstructed,
+            true_frames=state,
+            epoch=epoch,
+            sample_indices=self.validation_sample_indices,
+            output_dir=self.plot_dir,
+            model_name="mae_pretrain"
+        )
+        
     def save_checkpoint(self, epoch: int, train_loss: float, val_loss: Optional[float]):
         """
         Save model checkpoint.
@@ -384,6 +451,9 @@ class MAETrainer:
             
             # Validation
             val_loss = self.validate_epoch()
+            
+            # Generate MAE validation plots if needed
+            self.plot_mae_validation_predictions(epoch)
             
             # Learning rate scheduling
             if self.lr_scheduler is not None:
