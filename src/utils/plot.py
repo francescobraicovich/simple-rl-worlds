@@ -5,7 +5,7 @@ from typing import List, Tuple, Optional
 import random
 import re
 
-VMAX = 1
+VMAX = 255
 
 def cleanup_future_epoch_images(output_dir: Path, current_epoch: int, model_name: str) -> None:
     """
@@ -190,7 +190,7 @@ def plot_combined_validation_samples(
     plt.savefig(filepath, dpi=150, bbox_inches='tight')
     plt.close(fig)
     
-    print(f"Saved combined validation plot for epoch {epoch} to {filepath}")
+
 
 
 def plot_mae_validation_samples(
@@ -275,7 +275,6 @@ def plot_mae_validation_samples(
         plt.savefig(filepath, dpi=150, bbox_inches='tight')
         plt.close(fig_sample)
     
-    print(f"Saved MAE validation plots for epoch {epoch} to {output_path}")
 
 
 def plot_mae_combined_validation_samples(
@@ -357,7 +356,6 @@ def plot_mae_combined_validation_samples(
     plt.savefig(filepath, dpi=150, bbox_inches='tight')
     plt.close(fig)
     
-    print(f"Saved MAE combined validation plot for epoch {epoch} to {filepath}")
 
 
 def get_random_validation_samples(val_dataloader, n_samples: int = 5, seed: Optional[int] = None) -> Tuple[List[int], torch.Tensor, torch.Tensor, torch.Tensor]:
