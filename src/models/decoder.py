@@ -298,6 +298,9 @@ class HybridConvTransformerDecoder(nn.Module):
         feat_2d = feat.squeeze(2)  # [B, C, H, W]
         recon_2d = self.final_conv(feat_2d)  # [B, 1, H, W]
         recon = recon_2d.unsqueeze(2)  # [B, 1, 1, H, W]
+        
+        # Apply Sigmoid to ensure output is in [0, 1] range
+        recon = torch.sigmoid(recon)
         return recon
 
 
@@ -326,7 +329,7 @@ class ConvDecoder(nn.Module):
         
         # Set default conv_channels if not provided
         if conv_channels is None:
-            conv_channels = [256, 128, 64, 32, 3]  # Changed last channel to 3 for RGB
+            conv_channels = [256, 128, 64, 32, 1]  # Last channel is 1 for grayscale output
         
         self.config = {
             'latent_dim': latent_dim,
@@ -398,7 +401,15 @@ class ConvDecoder(nn.Module):
     def _init_weights(self, m: nn.Module) -> None:
         """Initialize model weights."""
         if isinstance(m, (nn.ConvTranspose2d, nn.Conv2d)):
-            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            # Use the correct nonlinearity based on the activation function
+            if self.config['activation'].lower() == 'silu':
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')  # SiLU is similar to ReLU
+            elif self.config['activation'].lower() == 'relu':
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif self.config['activation'].lower() == 'gelu':
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')  # GELU is similar to ReLU
+            else:
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')  # Default
             if m.bias is not None:
                 nn.init.zeros_(m.bias)
         elif isinstance(m, nn.Linear):
@@ -467,4 +478,5 @@ class ConvDecoder(nn.Module):
                 align_corners=False
             ).unsqueeze(2)  # Add temporal dim back
         
+        # Return logits (no sigmoid applied)
         return output
