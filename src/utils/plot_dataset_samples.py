@@ -66,9 +66,9 @@ def process_state_tensor(state_tensor: torch.Tensor) -> np.ndarray:
     # Convert to numpy and ensure proper data type
     state_np = state_tensor.detach().cpu().numpy()
     
-    # Normalize to [0, 1] range if needed
-    if state_np.max() > 1.0:
-        state_np = state_np / 255.0
+    # Convert from [0, 1] range back to [0, 255] for plotting
+    if state_np.max() <= 1.0:
+        state_np = (state_np * 255).astype('uint8')
     
     return state_np
 
@@ -94,9 +94,9 @@ def process_next_state_tensor(next_state_tensor: torch.Tensor) -> np.ndarray:
     # Convert to numpy and ensure proper data type
     next_state_np = next_state_tensor.detach().cpu().numpy()
     
-    # Normalize to [0, 1] range if needed
-    if next_state_np.max() > 1.0:
-        next_state_np = next_state_np / 255.0
+    # Convert from [0, 1] range back to [0, 255] for plotting
+    if next_state_np.max() <= 1.0:
+        next_state_np = (next_state_np * 255).astype('uint8')
     
     return next_state_np
 
@@ -139,13 +139,13 @@ def create_sample_visualization(sample_data: List[Tuple], config: dict, output_p
         # Plot state frames (sequence)
         for t in range(sequence_length):
             ax = fig.add_subplot(sample_gs[0, t])
-            ax.imshow(state_np[t], cmap='gray', vmin=0, vmax=1)
+            ax.imshow(state_np[t], cmap='gray', vmin=0, vmax=255)
             ax.set_title(f'State t-{sequence_length-1-t}', fontsize=8)
             ax.axis('off')
         
         # Plot next state
         ax = fig.add_subplot(sample_gs[0, sequence_length])
-        ax.imshow(next_state_np, cmap='gray', vmin=0, vmax=1)
+        ax.imshow(next_state_np, cmap='gray', vmin=0, vmax=255)
         ax.set_title('Next State', fontsize=8, color='red')
         ax.axis('off')
         
