@@ -31,6 +31,8 @@ import wandb
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
+# Add plotting imports
+from src.utils.plot import plot_encoder_decoder_combined_validation_samples, get_random_validation_samples
 from src.utils.init_models import init_encoder, init_predictor, init_decoder, load_config, init_reward_predictor
 from src.scripts.collect_load_data import DataLoadingPipeline
 from src.utils.set_device import set_device
@@ -79,7 +81,7 @@ class EncoderDecoderTrainer:
         # Training components
         self.optimizer = None
         self.lr_scheduler = None
-        self.criterion = nn.L1Loss()  # Mean Absolute Error for reconstruction
+        self.criterion = nn.MSELoss()  # MSE loss for logits (no sigmoid)
         self.reward_criterion = nn.MSELoss()  # Reward prediction loss
         
         # Data
@@ -104,6 +106,16 @@ class EncoderDecoderTrainer:
 
         # Flag for reward predictor usage
         self.use_reward_predictor = self.config['training'].get('main_loops').get('reward_loss')
+        
+        # Plotting configuration
+        self.plot_output_dir = "evaluation_plots/decoder_plots/encoder_decoder"
+        self.validation_sample_indices = None
+        self.validation_samples = None
+        
+        # Training progress tracking
+        self.current_epoch = 0
+        self.total_batches = 0
+        self.batches_completed = 0
         
     def initialize_models(self):
         """Initialize encoder, predictor, and decoder models."""
@@ -176,6 +188,74 @@ class EncoderDecoderTrainer:
 
                 # Run the pipeline to get dataloaders from existing data
         self.train_dataloader, self.val_dataloader = pipeline.run_pipeline()
+        
+        # Initialize validation samples for plotting
+        self.initialize_validation_samples()
+        
+
+        
+        # Calculate total batches for progress tracking
+        self.total_batches = len(self.train_dataloader) * self.num_epochs
+        print(f"📊 Training Progress: {self.num_epochs} epochs, {len(self.train_dataloader)} batches per epoch")
+        print(f"📊 Total batches to complete: {self.total_batches}")
+    
+    def initialize_validation_samples(self):
+        """Initialize validation samples for consistent plotting across epochs."""
+        if self.val_dataloader is not None:
+            # Get random validation samples for consistent plotting (3 samples)
+            self.validation_sample_indices, states, next_states, actions = get_random_validation_samples(
+                self.val_dataloader, 
+                n_samples=3,  # Use 3 samples as requested
+                seed=42  # Fixed seed for reproducible samples
+            )
+            self.validation_samples = (states, next_states, actions)
+            print(f"📊 Initialized validation samples for plotting: {len(self.validation_sample_indices)} samples")
+        else:
+            print(f"⚠️  No validation dataloader available")
+    
+    def generate_validation_plots(self, epoch: int):
+        """Generate combined validation plots for the current epoch."""
+        if self.validation_samples is None:
+            print(f"⚠️  No validation samples available, skipping plots")
+            return
+            
+        # Calculate progress information
+        progress_percentage = (self.batches_completed / self.total_batches) * 100
+        remaining_batches = self.total_batches - self.batches_completed
+        
+        print(f"📊 Generating plots at: Epoch {epoch+1}/{self.num_epochs} ({progress_percentage:.1f}% complete)")
+        print(f"   📈 Progress: {self.batches_completed}/{self.total_batches} batches processed, {remaining_batches} remaining")
+            
+        states, next_states, actions = self.validation_samples
+        
+        # Move to device
+        states = states.to(self.device)
+        next_states = next_states.to(self.device)
+        actions = actions.to(self.device)
+        
+        with torch.no_grad():
+            # Get predictions for validation samples
+            z_state = self.encoder(states)
+            z_next_pred = self.predictor(z_state, actions)
+            predicted_next_states = self.decoder(z_next_pred)
+            
+            # Convert from [B, 1, 1, H, W] to [B, 1, 3, H, W] for plotting consistency
+            # Replicate single channel to 3 channels for visualization
+            predicted_next_states = predicted_next_states.transpose(1, 2)  # [B, 1, 1, H, W]
+            predicted_next_states = predicted_next_states.repeat(1, 1, 3, 1, 1)  # [B, 1, 3, H, W]
+            
+            # Generate combined plot with current state, predicted next state, and true next state
+            plot_encoder_decoder_combined_validation_samples(
+                current_states=states,
+                predicted_next_states=predicted_next_states,
+                true_next_states=next_states,
+                epoch=epoch,
+                sample_indices=self.validation_sample_indices,
+                output_dir=self.plot_output_dir,
+                model_name="encoder_decoder"
+            )
+            
+        print(f"   ✅ Plots saved for epoch {epoch+1}")
     
     def save_best_weights(self):
         """Save current model weights as best weights."""
@@ -217,11 +297,13 @@ class EncoderDecoderTrainer:
         if not self.early_stopping_enabled or val_loss is None:
             return False
         
-        # Check if validation loss improved
+        # Check if validation loss improved (lower is better for loss)
         if val_loss < self.best_val_loss - self.early_stopping_min_delta:
             # Improvement found
+            improvement = self.best_val_loss - val_loss
             self.best_val_loss = val_loss
             self.epochs_without_improvement = 0
+            print(f"New best validation loss: {val_loss:.6f} (improvement: {improvement:.6f})")
             # Save best weights
             if self.restore_best_weights:
                 self.save_best_weights()
@@ -229,11 +311,12 @@ class EncoderDecoderTrainer:
         else:
             # No improvement
             self.epochs_without_improvement += 1
-            print(f"⚠️  No improvement for {self.epochs_without_improvement} epochs (patience: {self.early_stopping_patience})")
+            print(f"No improvement for {self.epochs_without_improvement} epochs (patience: {self.early_stopping_patience})")
+            print(f"   Current: {val_loss:.6f}, Best: {self.best_val_loss:.6f}, Min delta: {self.early_stopping_min_delta:.6f}")
             
             # Check if patience exceeded
             if self.epochs_without_improvement >= self.early_stopping_patience:
-                print(f"🛑 Early stopping triggered after {self.epochs_without_improvement} epochs without improvement")
+                print(f"Early stopping triggered after {self.epochs_without_improvement} epochs without improvement")
                 return True
         
         return False
@@ -257,6 +340,10 @@ class EncoderDecoderTrainer:
         reward = reward[:, -1]
         reward = reward.to(self.device)
         
+        # Normalize images to [0, 1] range
+        state = state / 255.0
+        next_state = next_state / 255.0
+        
         # Forward pass through the entire model stack
         self.optimizer.zero_grad()
         
@@ -271,12 +358,16 @@ class EncoderDecoderTrainer:
         next_state_reconstructed = self.decoder(z_next_pred)
         
         # 4. Ensure target has same shape as decoder output
-        # Decoder output: [B, C, 1, H, W], Target: [B, 1, C, H, W]
-        # Transpose target to match decoder output format
-        next_state_target = next_state.transpose(1, 2)  # [B, 1, C, H, W] -> [B, C, 1, H, W]
-        
-        # 5. Compute L1 reconstruction loss between reconstructed and ground-truth next state
+        # Decoder output: [B, 1, 1, H, W] (single grayscale channel)
+        # Target: [B, 1, 3, H, W] (grayscale replicated 3 times)
+        # Convert target from 3-channel replicated grayscale to single channel
+        next_state_target = next_state[:, :, 0:1, :, :]  # Take only first channel [B, 1, 1, H, W]
+        next_state_target = next_state_target.transpose(1, 2)  # [B, 1, 1, H, W] -> [B, 1, 1, H, W]
+                
+        # 5. Compute MSE reconstruction loss between reconstructed and ground-truth next state
         reconstruction_loss = self.criterion(next_state_reconstructed, next_state_target)
+        
+
         
         # Initialize total loss with reconstruction loss
         total_loss = reconstruction_loss
@@ -297,6 +388,9 @@ class EncoderDecoderTrainer:
         
         # 6. Backward pass through entire model graph
         total_loss.backward()
+        
+
+        
         # Gradient clipping if configured
         if self.gradient_clipping is not None:
             # Include all trainable parameters in gradient clipping
@@ -333,6 +427,10 @@ class EncoderDecoderTrainer:
         reward = reward[:, -1]
         reward = reward.to(self.device)
         
+        # Normalize images to [0, 1] range
+        state = state / 255.0
+        next_state = next_state / 255.0
+        
         with torch.no_grad():
             # 1. Encode current state
             z_state = self.encoder(state)
@@ -344,11 +442,13 @@ class EncoderDecoderTrainer:
             next_state_reconstructed = self.decoder(z_next_pred)
             
             # 4. Ensure target has same shape as decoder output
-            # Decoder output: [B, C, 1, H, W], Target: [B, 1, C, H, W]
-            # Transpose target to match decoder output format
-            next_state_target = next_state.transpose(1, 2)  # [B, 1, C, H, W] -> [B, C, 1, H, W]
+            # Decoder output: [B, 1, 1, H, W] (single grayscale channel)
+            # Target: [B, 1, 3, H, W] (grayscale replicated 3 times)
+            # Convert target from 3-channel replicated grayscale to single channel
+            next_state_target = next_state[:, :, 0:1, :, :]  # Take only first channel [B, 1, 1, H, W]
+            next_state_target = next_state_target.transpose(1, 2)  # [B, 1, 1, H, W] -> [B, 1, 1, H, W]
             
-            # 5. Compute reconstruction loss
+            # 5. Compute MSE reconstruction loss
             reconstruction_loss = self.criterion(next_state_reconstructed, next_state_target)
             
             # Initialize total loss with reconstruction loss
@@ -392,18 +492,32 @@ class EncoderDecoderTrainer:
         total_total_loss = 0.0
         num_batches = len(self.train_dataloader)
         
+        # Update current epoch counter
+        self.current_epoch += 1
+        
         for batch_idx, batch in enumerate(self.train_dataloader):
             reconstruction_loss, reward_loss, batch_total_loss = self.train_step(batch)
             total_reconstruction_loss += reconstruction_loss
             total_reward_loss += reward_loss
             total_total_loss += batch_total_loss
             
+            # Update batch counter
+            self.batches_completed += 1
+            
+            # Print batch progress every 10 batches or at the end of epoch
+            if batch_idx % 10 == 0 or batch_idx == len(self.train_dataloader) - 1:
+                batch_progress = (batch_idx + 1) / len(self.train_dataloader) * 100
+                print(f"   📦 Batch {batch_idx+1}/{len(self.train_dataloader)} ({batch_progress:.1f}% of epoch) - Loss: {batch_total_loss:.6f}")
+            
             # Log batch loss to wandb (minimal terminal output)
             if wandb.run is not None:
                 log_dict = {
                     "batch_reconstruction_loss": reconstruction_loss,
                     "batch_total_loss": batch_total_loss,
-                    "batch": batch_idx
+                    "batch": batch_idx,
+                    "epoch": self.current_epoch,
+                    "total_batches_completed": self.batches_completed,
+                    "training_progress": self.batches_completed / self.total_batches
                 }
                 if self.use_reward_predictor:
                     log_dict["batch_reward_loss"] = reward_loss
@@ -435,11 +549,16 @@ class EncoderDecoderTrainer:
         total_total_loss = 0.0
         num_batches = len(self.val_dataloader)
         
-        for batch in self.val_dataloader:
+        for batch_idx, batch in enumerate(self.val_dataloader):
             reconstruction_loss, reward_loss, batch_total_loss = self.validate_step(batch)
             total_reconstruction_loss += reconstruction_loss
             total_reward_loss += reward_loss
             total_total_loss += batch_total_loss
+            
+            # Print validation batch progress every 5 batches or at the end
+            if batch_idx % 5 == 0 or batch_idx == len(self.val_dataloader) - 1:
+                val_batch_progress = (batch_idx + 1) / len(self.val_dataloader) * 100
+                print(f"   🔍 Val Batch {batch_idx+1}/{len(self.val_dataloader)} ({val_batch_progress:.1f}% of validation) - Loss: {batch_total_loss:.6f}")
             
         avg_reconstruction_loss = total_reconstruction_loss / num_batches
         avg_reward_loss = total_reward_loss / num_batches
@@ -532,15 +651,27 @@ class EncoderDecoderTrainer:
             else:
                 val_reconstruction_loss, val_reward_loss, val_total_loss = None, None, None
             
+            # Generate validation plots for this epoch
+            print(f"🎨 Generating validation plots for epoch {epoch+1}...")
+            self.generate_validation_plots(epoch)
+            
             epoch_time = time.time() - epoch_start_time
+            
+            # Calculate and display progress
+            progress_percentage = (self.batches_completed / self.total_batches) * 100
+            remaining_batches = self.total_batches - self.batches_completed
             
             # Log to wandb
             log_dict = {
                 "epoch": epoch,
+                "current_epoch": self.current_epoch,
                 "train_reconstruction_loss": train_reconstruction_loss,
                 "train_total_loss": train_total_loss,
                 "epoch_time": epoch_time,
-                "learning_rate": self.optimizer.param_groups[0]['lr']
+                "learning_rate": self.optimizer.param_groups[0]['lr'],
+                "total_batches_completed": self.batches_completed,
+                "training_progress": progress_percentage,
+                "remaining_batches": remaining_batches
             }
             if val_reconstruction_loss is not None:
                 log_dict["val_reconstruction_loss"] = val_reconstruction_loss
@@ -565,18 +696,19 @@ class EncoderDecoderTrainer:
                 # Use validation reconstruction loss for plateau scheduler, otherwise step normally
                 step_scheduler(self.lr_scheduler, val_reconstruction_loss)
 
-            # Check for early stopping (use total validation loss)
-            if self.check_early_stopping(val_total_loss):
-                print(f"🛑 Training stopped early at epoch {epoch+1}")
-                # Restore best weights if configured
-                if self.restore_best_weights and self.best_weights is not None:
-                    self.restore_best_weights()
-                break
+            # Check for early stopping (use validation reconstruction loss as primary objective)
+            if val_reconstruction_loss is not None:
+                if self.check_early_stopping(val_reconstruction_loss):
+                    print(f"🛑 Training stopped early at epoch {epoch+1}")
+                    # Restore best weights if configured
+                    if self.restore_best_weights and self.best_weights is not None:
+                        self.restore_best_weights()
+                    break
 
-            # Terminal output
+            # Terminal output with progress tracking
             if val_reconstruction_loss is not None:
                 # Base message with reconstruction and total losses
-                message = f"Epoch {epoch+1}/{self.num_epochs} - Train Recon: {train_reconstruction_loss:.6f}, Val Recon: {val_reconstruction_loss:.6f}, Train Total: {train_total_loss:.6f}, Val Total: {val_total_loss:.6f}"
+                message = f"Epoch {epoch+1}/{self.num_epochs} ({progress_percentage:.1f}% complete) - Train Recon: {train_reconstruction_loss:.6f}, Val Recon: {val_reconstruction_loss:.6f}, Train Total: {train_total_loss:.6f}, Val Total: {val_total_loss:.6f}"
                 
                 # Add reward losses if enabled
                 if self.use_reward_predictor:
@@ -584,19 +716,25 @@ class EncoderDecoderTrainer:
                 
                 print(message)
                 
+                # Add progress details
+                print(f"   📊 Progress: {self.batches_completed}/{self.total_batches} batches completed, {remaining_batches} remaining")
+                
                 # Add loss interpretation for first few epochs
                 if epoch < 5:
                     pixel_error_pct = (train_reconstruction_loss / 255.0) * 100
                     print(f"   📊 Loss Analysis: {pixel_error_pct:.1f}% average pixel error (excellent if <5%)")
             else:
                 # Base message for no validation with reconstruction and total losses
-                message = f"Epoch {epoch+1}/{self.num_epochs} - Train Recon: {train_reconstruction_loss:.6f}, Val Recon: N/A, Train Total: {train_total_loss:.6f}, Val Total: N/A"
+                message = f"Epoch {epoch+1}/{self.num_epochs} ({progress_percentage:.1f}% complete) - Train Recon: {train_reconstruction_loss:.6f}, Val Recon: N/A, Train Total: {train_total_loss:.6f}, Val Total: N/A"
                 
                 # Add reward loss if enabled
                 if self.use_reward_predictor:
                     message += f", Train Reward: {train_reward_loss:.6f}, Val Reward: N/A"
                 
                 print(message)
+                
+                # Add progress details
+                print(f"   📊 Progress: {self.batches_completed}/{self.total_batches} batches completed, {remaining_batches} remaining")
             
         if wandb.run is not None:
             wandb.finish()
