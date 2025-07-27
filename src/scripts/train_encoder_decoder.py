@@ -136,14 +136,14 @@ class EncoderDecoderTrainer:
         if self.use_reward_predictor:
             reward_params = sum(p.numel() for p in self.reward_predictor.parameters())
             total_params += reward_params
-            print(f"📊 Model Parameters:")
+            print(f"Model Parameters:")
             print(f"   Encoder (ResNet-18): {encoder_params:,}")
             print(f"   Predictor: {predictor_params:,}")
             print(f"   Decoder: {decoder_params:,}")
             print(f"   Reward Predictor: {reward_params:,}")
             print(f"   Total: {total_params:,}")
         else:
-            print(f"📊 Model Parameters:")
+            print(f"Model Parameters:")
             print(f"   Encoder (ResNet-18): {encoder_params:,}")
             print(f"   Predictor: {predictor_params:,}")
             print(f"   Decoder: {decoder_params:,}")
@@ -196,8 +196,8 @@ class EncoderDecoderTrainer:
         
         # Calculate total batches for progress tracking
         self.total_batches = len(self.train_dataloader) * self.num_epochs
-        print(f"📊 Training Progress: {self.num_epochs} epochs, {len(self.train_dataloader)} batches per epoch")
-        print(f"📊 Total batches to complete: {self.total_batches}")
+        print(f"Training Progress: {self.num_epochs} epochs, {len(self.train_dataloader)} batches per epoch")
+        print(f"Total batches to complete: {self.total_batches}")
     
     def initialize_validation_samples(self):
         """Initialize validation samples for consistent plotting across epochs."""
@@ -209,22 +209,22 @@ class EncoderDecoderTrainer:
                 seed=42  # Fixed seed for reproducible samples
             )
             self.validation_samples = (states, next_states, actions)
-            print(f"📊 Initialized validation samples for plotting: {len(self.validation_sample_indices)} samples")
+            print(f"Initialized validation samples for plotting: {len(self.validation_sample_indices)} samples")
         else:
-            print(f"⚠️  No validation dataloader available")
+            print(f"No validation dataloader available")
     
     def generate_validation_plots(self, epoch: int):
         """Generate combined validation plots for the current epoch."""
         if self.validation_samples is None:
-            print(f"⚠️  No validation samples available, skipping plots")
+            print(f"No validation samples available, skipping plots")
             return
             
         # Calculate progress information
         progress_percentage = (self.batches_completed / self.total_batches) * 100
         remaining_batches = self.total_batches - self.batches_completed
         
-        print(f"📊 Generating plots at: Epoch {epoch+1}/{self.num_epochs} ({progress_percentage:.1f}% complete)")
-        print(f"   📈 Progress: {self.batches_completed}/{self.total_batches} batches processed, {remaining_batches} remaining")
+        print(f"Generating plots at: Epoch {epoch+1}/{self.num_epochs} ({progress_percentage:.1f}% complete)")
+        print(f"   Progress: {self.batches_completed}/{self.total_batches} batches processed, {remaining_batches} remaining")
             
         states, next_states, actions = self.validation_samples
         
@@ -255,7 +255,7 @@ class EncoderDecoderTrainer:
                 model_name="encoder_decoder"
             )
             
-        print(f"   ✅ Plots saved for epoch {epoch+1}")
+        print(f"   Plots saved for epoch {epoch+1}")
     
     def save_best_weights(self):
         """Save current model weights as best weights."""
@@ -282,7 +282,7 @@ class EncoderDecoderTrainer:
                 self.reward_predictor.load_state_dict(self.best_weights['reward_predictor'])
             if self.lr_scheduler is not None and 'lr_scheduler' in self.best_weights:
                 self.lr_scheduler.load_state_dict(self.best_weights['lr_scheduler'])
-            print("✅ Restored best model weights")
+            print("Restored best model weights")
     
     def check_early_stopping(self, val_loss: float) -> bool:
         """
@@ -507,7 +507,7 @@ class EncoderDecoderTrainer:
             # Print batch progress every 10 batches or at the end of epoch
             if batch_idx % 10 == 0 or batch_idx == len(self.train_dataloader) - 1:
                 batch_progress = (batch_idx + 1) / len(self.train_dataloader) * 100
-                print(f"   📦 Batch {batch_idx+1}/{len(self.train_dataloader)} ({batch_progress:.1f}% of epoch) - Loss: {batch_total_loss:.6f}")
+                print(f"   Batch {batch_idx+1}/{len(self.train_dataloader)} ({batch_progress:.1f}% of epoch) - Loss: {batch_total_loss:.6f}")
             
             # Log batch loss to wandb (minimal terminal output)
             if wandb.run is not None:
@@ -558,7 +558,7 @@ class EncoderDecoderTrainer:
             # Print validation batch progress every 5 batches or at the end
             if batch_idx % 5 == 0 or batch_idx == len(self.val_dataloader) - 1:
                 val_batch_progress = (batch_idx + 1) / len(self.val_dataloader) * 100
-                print(f"   🔍 Val Batch {batch_idx+1}/{len(self.val_dataloader)} ({val_batch_progress:.1f}% of validation) - Loss: {batch_total_loss:.6f}")
+                print(f"   Val Batch {batch_idx+1}/{len(self.val_dataloader)} ({val_batch_progress:.1f}% of validation) - Loss: {batch_total_loss:.6f}")
             
         avg_reconstruction_loss = total_reconstruction_loss / num_batches
         avg_reward_loss = total_reward_loss / num_batches
@@ -652,7 +652,7 @@ class EncoderDecoderTrainer:
                 val_reconstruction_loss, val_reward_loss, val_total_loss = None, None, None
             
             # Generate validation plots for this epoch
-            print(f"🎨 Generating validation plots for epoch {epoch+1}...")
+            print(f"Generating validation plots for epoch {epoch+1}...")
             self.generate_validation_plots(epoch)
             
             epoch_time = time.time() - epoch_start_time
@@ -699,7 +699,7 @@ class EncoderDecoderTrainer:
             # Check for early stopping (use validation reconstruction loss as primary objective)
             if val_reconstruction_loss is not None:
                 if self.check_early_stopping(val_reconstruction_loss):
-                    print(f"🛑 Training stopped early at epoch {epoch+1}")
+                    print(f"Training stopped early at epoch {epoch+1}")
                     # Restore best weights if configured
                     if self.restore_best_weights and self.best_weights is not None:
                         self.restore_best_weights()
@@ -717,12 +717,12 @@ class EncoderDecoderTrainer:
                 print(message)
                 
                 # Add progress details
-                print(f"   📊 Progress: {self.batches_completed}/{self.total_batches} batches completed, {remaining_batches} remaining")
+                print(f"   Progress: {self.batches_completed}/{self.total_batches} batches completed, {remaining_batches} remaining")
                 
                 # Add loss interpretation for first few epochs
                 if epoch < 5:
                     pixel_error_pct = (train_reconstruction_loss / 255.0) * 100
-                    print(f"   📊 Loss Analysis: {pixel_error_pct:.1f}% average pixel error (excellent if <5%)")
+                    print(f"   Loss Analysis: {pixel_error_pct:.1f}% average pixel error (excellent if <5%)")
             else:
                 # Base message for no validation with reconstruction and total losses
                 message = f"Epoch {epoch+1}/{self.num_epochs} ({progress_percentage:.1f}% complete) - Train Recon: {train_reconstruction_loss:.6f}, Val Recon: N/A, Train Total: {train_total_loss:.6f}, Val Total: N/A"
@@ -734,7 +734,7 @@ class EncoderDecoderTrainer:
                 print(message)
                 
                 # Add progress details
-                print(f"   📊 Progress: {self.batches_completed}/{self.total_batches} batches completed, {remaining_batches} remaining")
+                print(f"   Progress: {self.batches_completed}/{self.total_batches} batches completed, {remaining_batches} remaining")
             
         if wandb.run is not None:
             wandb.finish()
