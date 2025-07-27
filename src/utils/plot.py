@@ -5,7 +5,7 @@ from typing import List, Tuple, Optional
 import random
 import re
 
-VMAX = 255
+VMAX = 1
 
 def cleanup_future_epoch_images(output_dir: Path, current_epoch: int, model_name: str) -> None:
     """
@@ -116,7 +116,7 @@ def plot_validation_samples(
         plt.savefig(filepath, dpi=150, bbox_inches='tight')
         plt.close(fig_sample)
     
-    print(f"Saved validation plots for epoch {epoch} to {output_path}")
+    #print(f"Saved validation plots for epoch {epoch} to {output_path}")
 
 
 def plot_combined_validation_samples(
