@@ -197,3 +197,5 @@ run_job.slurm
 /paper
 
 *copy.py
+
+mae-pretrain/
