@@ -15,7 +15,7 @@ data_and_patching:
 # --- Data Collection & Dataset Management ---
 data_collection:
   num_episodes: 3
-  max_steps_per_episode: 12
+  max_steps_per_episode: 50
   random_action_percentage: 0.2 # Percentage of actions to be random (0.0 = no random actions)
   load_path: "assault_rep_8.pth"
   filename: "assault_rep_8.pth"
