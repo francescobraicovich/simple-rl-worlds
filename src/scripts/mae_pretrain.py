@@ -97,6 +97,9 @@ class MAETrainer:
         self.plot_dir = "evaluation_plots/decoder_plots/mae_pretrain"
         self.validation_sample_indices = None  # Will be set once data is loaded
         
+        # Gradient logging configuration
+        self.gradient_log_frequency = self.training_config.get('gradient_log_frequency', 10)  # Log every N batches
+        
     def initialize_models(self):
         """Initialize encoder and decoder models."""
         # Initialize models
@@ -146,12 +149,74 @@ class MAETrainer:
         else:
             print("No validation data available")
             
-    def train_step(self, batch: Tuple[torch.Tensor, ...]) -> float:
+    def log_gradients(self):
+        """
+        Log gradient statistics for all layers to wandb.
+        This helps monitor gradient flow and identify training issues.
+        """
+        # Log encoder gradients
+        for name, param in self.encoder.named_parameters():
+            if param.grad is not None:
+                # Compute gradient statistics
+                grad_norm = param.grad.norm().item()
+                grad_mean = param.grad.mean().item()
+                grad_std = param.grad.std().item()
+                grad_max = param.grad.max().item()
+                grad_min = param.grad.min().item()
+                
+                # Log to wandb with encoder prefix
+                wandb.log({
+                    f"gradients/encoder_{name}_norm": grad_norm,
+                    f"gradients/encoder_{name}_mean": grad_mean,
+                    f"gradients/encoder_{name}_std": grad_std,
+                    f"gradients/encoder_{name}_max": grad_max,
+                    f"gradients/encoder_{name}_min": grad_min,
+                })
+        
+        # Log decoder gradients
+        for name, param in self.decoder.named_parameters():
+            if param.grad is not None:
+                # Compute gradient statistics
+                grad_norm = param.grad.norm().item()
+                grad_mean = param.grad.mean().item()
+                grad_std = param.grad.std().item()
+                grad_max = param.grad.max().item()
+                grad_min = param.grad.min().item()
+                
+                # Log to wandb with decoder prefix
+                wandb.log({
+                    f"gradients/decoder_{name}_norm": grad_norm,
+                    f"gradients/decoder_{name}_mean": grad_mean,
+                    f"gradients/decoder_{name}_std": grad_std,
+                    f"gradients/decoder_{name}_max": grad_max,
+                    f"gradients/decoder_{name}_min": grad_min,
+                })
+        
+        # Log overall gradient statistics
+        all_params = list(self.encoder.parameters()) + list(self.decoder.parameters())
+        total_norm = 0.0
+        total_params = 0
+        
+        for param in all_params:
+            if param.grad is not None:
+                param_norm = param.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+                total_params += param.numel()
+        
+        total_norm = total_norm ** (1. / 2)
+        
+        wandb.log({
+            "gradients/total_grad_norm": total_norm,
+            "gradients/total_params": total_params,
+        })
+            
+    def train_step(self, batch: Tuple[torch.Tensor, ...], batch_idx: int = 0) -> float:
         """
         Perform a single training step with MAE reconstruction loss.
         
         Args:
             batch: Tuple containing (state, next_state, action, reward)
+            batch_idx: Current batch index for logging purposes
             
         Returns:
             Reconstruction loss for this batch
@@ -192,14 +257,23 @@ class MAETrainer:
         pixel_mask = reassemble_tubelets(mask_expanded.float())  # [B, T, H, W]
         
         # Compute reconstruction loss only on masked regions
-        masked_original = state #* pixel_mask
-        masked_reconstructed = reconstructed #* pixel_mask
+        masked_original = state * pixel_mask
+        masked_reconstructed = reconstructed * pixel_mask
         
-        # Calculate loss only on the non-zero (masked) regions
-        loss = self.criterion(masked_reconstructed, masked_original)
+        # Calculate loss only on the masked (non-zero) regions
+        # We need to account for the fact that most pixels are now zero
+        num_masked_pixels = pixel_mask.sum()
+        if num_masked_pixels > 0:
+            loss = self.criterion(masked_reconstructed, masked_original) * (pixel_mask.numel() / num_masked_pixels)
+        else:
+            loss = self.criterion(reconstructed, state)  # Fallback to full reconstruction loss
         
         # 8. Backward pass and optimizer step
         loss.backward()
+        
+        # Log gradients to wandb if enabled and at the right frequency
+        if self.config['wandb']['enabled'] and batch_idx % self.gradient_log_frequency == 0:
+            self.log_gradients()
         
         # Gradient clipping if configured
         if self.gradient_clipping is not None:
@@ -279,7 +353,7 @@ class MAETrainer:
         num_batches = 0
         
         for batch_idx, batch in enumerate(self.train_dataloader):
-            loss = self.train_step(batch)
+            loss = self.train_step(batch, batch_idx)
             total_loss += loss
             num_batches += 1
             

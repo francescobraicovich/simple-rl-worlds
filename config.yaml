@@ -36,16 +36,16 @@ data_collection:
     additional_log_std_noise: 0.0
     policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
 
-latent_dim: 384 # Dimension of the embedding space for the transformer model
+latent_dim: 1024 # Dimension of the embedding space for the transformer model
 
 training:
   pretraining:
     num_epochs: 50000 # Number of epochs for MAE pretraining
-    batch_size: 128 # Batch size for MAE pretraining
-    learning_rate: 0.000s # Learning rate for the MAE optimizer
+    batch_size: 4 # Batch size for MAE pretraining
+    learning_rate: 0.0001 # Learning rate for the MAE optimizer
     weight_decay: 0.0001 # Weight decay for the MAE optimizer
     gradient_clipping: 10.0 # Maximum norm for gradient clipping
-    mask_ratio: 0.01 # Ratio of patches to mask during training
+    mask_ratio: 0.25 # Ratio of patches to mask during training
     lr_scheduler:
       enabled: false # Whether to use learning rate scheduling
       type: "cosine" # Type of scheduler: "cosine", "step", "exponential", "plateau"
