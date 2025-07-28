@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """
-ViT MAE Pretraining Script using Hugging Face Transformers
+ViT MAE Pretraining Script using Hugging        # Stack states into a batch: [B, T, H, W]
+        pixel_values = torch.stack(states)
+
+        # Ensure pixel values are in [0, 1] and properly normalized
+        pixel_values = torch.clamp(pixel_values, 0, 1)
+        
+        return {
+            "pixel_values": pixel_values
+        }sformers
 
 This script implements self-supervised pretraining using Vision Transformer 
 Masked Autoencoder (ViT MAE) from Hugging Face. The script uses the built-in
@@ -33,7 +41,8 @@ os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils.init_models import init_vit_mae, load_config  # noqa: E402
+from src.utils.init_vitmae_fixed import init_vit_mae_fixed  # noqa: E402
+from src.utils.init_models import load_config  # noqa: E402
 from src.scripts.collect_load_data import DataLoadingPipeline  # noqa: E402
 from src.utils.set_device import set_device  # noqa: E402
 
@@ -68,7 +77,7 @@ class ViTMAEDataCollator:
         pixel_values = torch.stack(states)
 
         # add noise
-        noise = torch.randn_like(pixel_values) * 0.1 + 0.1  # Example noise
+        noise = torch.randn_like(pixel_values) * 0.5 + 0.1  # Example noise
         pixel_values += noise
         pixel_values = torch.clamp(pixel_values, 0, 1)  # Ensure pixel values are in [0, 1]
         return {
@@ -102,20 +111,29 @@ class ViTMAETrainer:
         self.model = None
         self.data_collator = None
         
-        # Training arguments (specified in this file as requested)
+        # Training arguments with ultra-conservative settings for debugging
         self.training_args = TrainingArguments(
             output_dir="./mae-pretrain",
-            per_device_train_batch_size=1,
+            per_device_train_batch_size=1,  # Back to 1 for debugging
             dataloader_pin_memory=False,
             dataloader_num_workers=0,
-            num_train_epochs=2000,
-            learning_rate=1e-4,
-            logging_steps=100,
-            save_steps=10,
+            num_train_epochs=10,            # Much fewer epochs for testing
+            learning_rate=1e-6,             # Very conservative learning rate
+            weight_decay=0.0,               # No weight decay for now
+            max_grad_norm=0.5,              # Conservative gradient clipping
+            logging_steps=5,                # Very frequent logging
+            save_steps=50,
             save_total_limit=2,
-            dataloader_drop_last=True,  # Important for consistent batch sizes
-            remove_unused_columns=False,  # Keep all columns for our custom data format
+            dataloader_drop_last=True,
+            remove_unused_columns=False,
             prediction_loss_only=False,
+            warmup_steps=50,                # Less warmup
+            optim="adamw_torch",            
+            fp16=False,                     # Keep FP16 off
+            gradient_accumulation_steps=1,  # No gradient accumulation for now
+            eval_steps=50,                  # Add evaluation
+            evaluation_strategy="steps",
+            logging_first_step=True,        # Log first step
         )
         
         # Data
@@ -153,6 +171,8 @@ class ViTMAETrainer:
         # Forward pass
         outputs = self.model(pixel_values)
         loss = outputs.loss
+
+        print('Output range:', outputs.logits.min().item(), outputs.logits.max().item())
         
         # Backward pass
         loss.backward()
@@ -192,8 +212,8 @@ class ViTMAETrainer:
         
     def initialize_model(self):
         """Initialize ViT MAE model."""
-        # Initialize the ViT MAE model
-        self.model = init_vit_mae(self.config_path)
+        # Initialize the ViT MAE model with fixed configuration
+        self.model = init_vit_mae_fixed(self.config_path)
         self.model.to(self.device)
         
         # Initialize data collator (no processor needed)
