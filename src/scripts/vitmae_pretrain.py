@@ -105,15 +105,17 @@ class ViTMAETrainer:
         # Training arguments (specified in this file as requested)
         self.training_args = TrainingArguments(
             output_dir="./mae-pretrain",
-            per_device_train_batch_size=64,
-            num_train_epochs=20,
+            per_device_train_batch_size=4,
+            dataloader_pin_memory=False,
+            dataloader_num_workers=0,
+            num_train_epochs=2000,
             learning_rate=1e-4,
             logging_steps=100,
-            save_steps=500,
+            save_steps=10,
             save_total_limit=2,
             dataloader_drop_last=True,  # Important for consistent batch sizes
             remove_unused_columns=False,  # Keep all columns for our custom data format
-            prediction_loss_only=True,
+            prediction_loss_only=False,
         )
         
         # Data
@@ -169,6 +171,9 @@ class ViTMAETrainer:
             return
             
         if self.val_dataset is None:
+            return
+        
+        if torch.rand(1).item() < 0.95:
             return
             
         # Get validation sample indices (consistent across epochs)
