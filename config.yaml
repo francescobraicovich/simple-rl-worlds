@@ -14,8 +14,8 @@ data_and_patching:
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 20
-  max_steps_per_episode: 1500
+  num_episodes: 5
+  max_steps_per_episode: 10000
   random_action_percentage: 0.2 # Percentage of actions to be random (0.0 = no random actions)
   load_path: "assault_rep_8.pth"
   filename: "assault_rep_8.pth"
@@ -36,12 +36,12 @@ data_collection:
     additional_log_std_noise: 0.0
     policy_type: "CnnPolicy" # Policy type, e.g., "CnnPolicy" for image-based envs
 
-latent_dim: 1024 # Dimension of the embedding space for the transformer model
+latent_dim: 512 # Dimension of the embedding space for the transformer model
 
 training:
   pretraining:
     num_epochs: 50000 # Number of epochs for MAE pretraining
-    batch_size: 4 # Batch size for MAE pretraining
+    batch_size: 128 # Batch size for MAE pretraining
     learning_rate: 0.0001 # Learning rate for the MAE optimizer
     weight_decay: 0.0001 # Weight decay for the MAE optimizer
     gradient_clipping: 10.0 # Maximum norm for gradient clipping

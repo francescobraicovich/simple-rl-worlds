@@ -27,16 +27,18 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import wandb
+import numpy as np
 
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils.init_models import init_encoder, init_decoder, load_config
-from src.scripts.collect_load_data import DataLoadingPipeline
-from src.utils.set_device import set_device
-from src.utils.scheduler_utils import create_lr_scheduler, step_scheduler, get_current_lr
-from src.utils.mask import extract_tubelets, reassemble_tubelets, generate_random_mask
+# Local project imports (must be after path modification)
+from src.utils.init_models import init_encoder, init_decoder, load_config  # noqa: E402
+from src.scripts.collect_load_data import DataLoadingPipeline  # noqa: E402
+from src.utils.set_device import set_device  # noqa: E402
+from src.utils.scheduler_utils import create_lr_scheduler, step_scheduler, get_current_lr  # noqa: E402
+from src.utils.mask import extract_tubelets, reassemble_tubelets, generate_random_mask  # noqa: E402
 
 
 class MAETrainer:
@@ -100,6 +102,16 @@ class MAETrainer:
         # Gradient logging configuration
         self.gradient_log_frequency = self.training_config.get('gradient_log_frequency', 10)  # Log every N batches
         
+        # Vanishing gradient detection configuration
+        self.vanishing_threshold = self.training_config.get('vanishing_threshold', 1e-5)
+        self.exploding_threshold = self.training_config.get('exploding_threshold', 10.0)
+        self.vanishing_warning_ratio = self.training_config.get('vanishing_warning_ratio', 0.5)
+        self.exploding_warning_ratio = self.training_config.get('exploding_warning_ratio', 0.1)
+        
+        # WandB configuration with safety checks
+        self.wandb_enabled = self.config.get('wandb', {}).get('enabled', False)
+        self.wandb_project = self.config.get('wandb', {}).get('project', 'mae-pretraining')
+        
     def initialize_models(self):
         """Initialize encoder and decoder models."""
         # Initialize models
@@ -152,8 +164,16 @@ class MAETrainer:
     def log_gradients(self):
         """
         Log gradient statistics for all layers to wandb.
-        This helps monitor gradient flow and identify training issues.
+        This helps monitor gradient flow and identify training issues including vanishing gradients.
         """
+        # Thresholds for vanishing gradient detection
+        vanishing_threshold = self.vanishing_threshold
+        exploding_threshold = self.exploding_threshold
+        
+        vanishing_count = 0
+        exploding_count = 0
+        total_layers = 0
+        
         # Log encoder gradients
         for name, param in self.encoder.named_parameters():
             if param.grad is not None:
@@ -164,6 +184,13 @@ class MAETrainer:
                 grad_max = param.grad.max().item()
                 grad_min = param.grad.min().item()
                 
+                # Check for vanishing/exploding gradients
+                total_layers += 1
+                if grad_norm < vanishing_threshold:
+                    vanishing_count += 1
+                elif grad_norm > exploding_threshold:
+                    exploding_count += 1
+                
                 # Log to wandb with encoder prefix
                 wandb.log({
                     f"gradients/encoder_{name}_norm": grad_norm,
@@ -171,6 +198,8 @@ class MAETrainer:
                     f"gradients/encoder_{name}_std": grad_std,
                     f"gradients/encoder_{name}_max": grad_max,
                     f"gradients/encoder_{name}_min": grad_min,
+                    f"gradients/encoder_{name}_vanishing": float(grad_norm < vanishing_threshold),
+                    f"gradients/encoder_{name}_exploding": float(grad_norm > exploding_threshold),
                 })
         
         # Log decoder gradients
@@ -183,6 +212,13 @@ class MAETrainer:
                 grad_max = param.grad.max().item()
                 grad_min = param.grad.min().item()
                 
+                # Check for vanishing/exploding gradients
+                total_layers += 1
+                if grad_norm < vanishing_threshold:
+                    vanishing_count += 1
+                elif grad_norm > exploding_threshold:
+                    exploding_count += 1
+                
                 # Log to wandb with decoder prefix
                 wandb.log({
                     f"gradients/decoder_{name}_norm": grad_norm,
@@ -190,6 +226,8 @@ class MAETrainer:
                     f"gradients/decoder_{name}_std": grad_std,
                     f"gradients/decoder_{name}_max": grad_max,
                     f"gradients/decoder_{name}_min": grad_min,
+                    f"gradients/decoder_{name}_vanishing": float(grad_norm < vanishing_threshold),
+                    f"gradients/decoder_{name}_exploding": float(grad_norm > exploding_threshold),
                 })
         
         # Log overall gradient statistics
@@ -205,14 +243,100 @@ class MAETrainer:
         
         total_norm = total_norm ** (1. / 2)
         
+        # Calculate vanishing/exploding gradient ratios
+        vanishing_ratio = vanishing_count / total_layers if total_layers > 0 else 0.0
+        exploding_ratio = exploding_count / total_layers if total_layers > 0 else 0.0
+        
         wandb.log({
             "gradients/total_grad_norm": total_norm,
             "gradients/total_params": total_params,
+            "gradients/vanishing_count": vanishing_count,
+            "gradients/exploding_count": exploding_count,
+            "gradients/total_layers": total_layers,
+            "gradients/vanishing_ratio": vanishing_ratio,
+            "gradients/exploding_ratio": exploding_ratio,
+            "gradients/vanishing_threshold": vanishing_threshold,
+            "gradients/exploding_threshold": exploding_threshold,
         })
+        
+        # Print warnings for vanishing/exploding gradients
+        if vanishing_ratio > self.vanishing_warning_ratio:
+            print(f"⚠️  WARNING: {vanishing_ratio:.1%} of layers have vanishing gradients (norm < {vanishing_threshold})")
+        if exploding_ratio > self.exploding_warning_ratio:
+            print(f"⚠️  WARNING: {exploding_ratio:.1%} of layers have exploding gradients (norm > {exploding_threshold})")
+            
+    def check_vanishing_gradients(self) -> dict:
+        """
+        Check for vanishing and exploding gradients across all model parameters.
+        
+        Returns:
+            Dictionary containing gradient health statistics
+        """
+        vanishing_count = 0
+        exploding_count = 0
+        total_layers = 0
+        min_grad_norm = float('inf')
+        max_grad_norm = 0.0
+        grad_norms = []
+        
+        # Check all parameters in both encoder and decoder
+        all_named_params = list(self.encoder.named_parameters()) + list(self.decoder.named_parameters())
+        
+        for name, param in all_named_params:
+            if param.grad is not None:
+                grad_norm = param.grad.norm().item()
+                grad_norms.append(grad_norm)
+                
+                total_layers += 1
+                min_grad_norm = min(min_grad_norm, grad_norm)
+                max_grad_norm = max(max_grad_norm, grad_norm)
+                
+                if grad_norm < self.vanishing_threshold:
+                    vanishing_count += 1
+                elif grad_norm > self.exploding_threshold:
+                    exploding_count += 1
+        
+        # Handle case where no gradients are available
+        if total_layers == 0:
+            return {
+                'vanishing_count': 0,
+                'exploding_count': 0,
+                'total_layers': 0,
+                'vanishing_ratio': 0.0,
+                'exploding_ratio': 0.0,
+                'min_grad_norm': 0.0,
+                'max_grad_norm': 0.0,
+                'mean_grad_norm': 0.0,
+                'std_grad_norm': 0.0,
+                'median_grad_norm': 0.0,
+                'has_vanishing_problem': False,
+                'has_exploding_problem': False,
+            }
+        
+        # Calculate statistics
+        vanishing_ratio = vanishing_count / total_layers if total_layers > 0 else 0.0
+        exploding_ratio = exploding_count / total_layers if total_layers > 0 else 0.0
+        
+        grad_norms = np.array(grad_norms)
+        
+        return {
+            'vanishing_count': vanishing_count,
+            'exploding_count': exploding_count,
+            'total_layers': total_layers,
+            'vanishing_ratio': vanishing_ratio,
+            'exploding_ratio': exploding_ratio,
+            'min_grad_norm': min_grad_norm if min_grad_norm != float('inf') else 0.0,
+            'max_grad_norm': max_grad_norm,
+            'mean_grad_norm': np.mean(grad_norms) if len(grad_norms) > 0 else 0.0,
+            'std_grad_norm': np.std(grad_norms) if len(grad_norms) > 0 else 0.0,
+            'median_grad_norm': np.median(grad_norms) if len(grad_norms) > 0 else 0.0,
+            'has_vanishing_problem': vanishing_ratio > self.vanishing_warning_ratio,
+            'has_exploding_problem': exploding_ratio > self.exploding_warning_ratio,
+        }
             
     def train_step(self, batch: Tuple[torch.Tensor, ...], batch_idx: int = 0) -> float:
         """
-        Perform a single training step with MAE reconstruction loss.
+        Perform a single training step with MAE reconstruction loss and input noise injection.
         
         Args:
             batch: Tuple containing (state, next_state, action, reward)
@@ -226,63 +350,69 @@ class MAETrainer:
         # Move to device - we use current state for MAE pretraining
         state = state.to(self.device)  # [B, T, H, W]
         
-        # 1. Extract tubelets from the batch
-        tubelets = extract_tubelets(state)  # [B, N, PATCH_T, PATCH_H, PATCH_W]
+        # --- NOISE INJECTION (denoising autoencoder style) ---
+        # Add a small Gaussian noise to the input only
+        noise_std = 0
+        noise = torch.randn_like(state) * noise_std
+        noisy_state = (state + noise).clamp(0.0, 1.0)  # keep values in valid range
+        # --------------------------------------------------------
+
+        # 1. Extract tubelets from the noisy input
+        tubelets = extract_tubelets(noisy_state)  # [B, N, PATCH_T, PATCH_H, PATCH_W]
         B, N, PATCH_T, PATCH_H, PATCH_W = tubelets.shape
-        
+
         # 2. Sample a mask from uniform distribution over tubelet dimension
         mask = generate_random_mask(B, N, self.mask_ratio, self.device)  # [B, N] boolean
-        
+
         # 3. Clone tubelets and zero out masked ones to create masked input
         masked_tubelets = tubelets.clone()
-        # Expand mask to match tubelet dimensions
-        mask_expanded = mask.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # [B, N, 1, 1, 1]
-        mask_expanded = mask_expanded.expand(-1, -1, PATCH_T, PATCH_H, PATCH_W)  # [B, N, PATCH_T, PATCH_H, PATCH_W]
+        mask_expanded = mask.view(B, N, 1, 1, 1).expand(-1, -1, PATCH_T, PATCH_H, PATCH_W)
         masked_tubelets[mask_expanded] = 0.0
-        
-        # 4. Use reassemble_tubelets to fold masked tubelets back into tensor
-        masked_input = reassemble_tubelets(masked_tubelets)  # [B, T, H, W]
-        
-        # 5. Pass reassembled tensor through encoder to get latent representations
+
+        # 4. Reassemble masked tubelets back into [B, T, H, W]
+        masked_input = reassemble_tubelets(masked_tubelets)
+
+        # 5. Encode masked input
         latent_repr = self.encoder(masked_input)  # [B, latent_dim]
-        
-        # 6. Pass through decoder to get reconstructions
+
+        # 6. Decode to reconstruct full frames
         reconstructed = self.decoder(latent_repr)  # [B, T, H, W]
-        
-        # 7. Compute MSE loss between original and reconstructed, but only over masked regions
-        # Since encoder/decoder works on full frames, we compute loss on the full reconstruction
-        # but weight it by the mask to focus on masked regions
-        
-        # Create a mask at the pixel level for the original tubelets
+
+        # 7. Compute MSE loss over only the masked regions (on clean targets)
+        #    Build a pixel-level mask for loss weighting
         pixel_mask = reassemble_tubelets(mask_expanded.float())  # [B, T, H, W]
-        
-        # Compute reconstruction loss only on masked regions
-        masked_original = state * pixel_mask
+
+        # Isolate masked regions in both original (clean) and reconstructed
+        masked_original     = state * pixel_mask
         masked_reconstructed = reconstructed * pixel_mask
-        
-        # Calculate loss only on the masked (non-zero) regions
-        # We need to account for the fact that most pixels are now zero
-        num_masked_pixels = pixel_mask.sum()
-        if num_masked_pixels > 0:
-            loss = self.criterion(masked_reconstructed, masked_original) * (pixel_mask.numel() / num_masked_pixels)
+
+        # Scale the loss so that it’s the average only over masked pixels
+        num_masked = pixel_mask.sum()
+        if num_masked > 0:
+            # MSE over masked pixels, normalized to full-pixel count
+            loss = self.criterion(masked_reconstructed, masked_original) \
+                * (pixel_mask.numel() / num_masked)
         else:
-            loss = self.criterion(reconstructed, state)  # Fallback to full reconstruction loss
-        
+            # Fallback: full-frame reconstruction if nothing was masked
+            loss = self.criterion(reconstructed, state)
+
         # 8. Backward pass and optimizer step
         loss.backward()
-        
-        # Log gradients to wandb if enabled and at the right frequency
-        if self.config['wandb']['enabled'] and batch_idx % self.gradient_log_frequency == 0:
+
+        # Optionally log gradients
+        if self.wandb_enabled and batch_idx % self.gradient_log_frequency == 0:
             self.log_gradients()
-        
-        # Gradient clipping if configured
+
+        # Apply gradient clipping if configured
         if self.gradient_clipping is not None:
-            trainable_params = list(self.encoder.parameters()) + list(self.decoder.parameters())
-            torch.nn.utils.clip_grad_norm_(trainable_params, self.gradient_clipping)
-            
+            params = list(self.encoder.parameters()) + list(self.decoder.parameters())
+            torch.nn.utils.clip_grad_norm_(params, self.gradient_clipping)
+
         self.optimizer.step()
-        self.optimizer.zero_grad()  # Reset gradients for next step        
+        self.optimizer.zero_grad()
+
         return loss.item()
+
         
     def validate_step(self, batch: Tuple[torch.Tensor, ...]) -> float:
         """
@@ -334,8 +464,13 @@ class MAETrainer:
             masked_original = state * pixel_mask
             masked_reconstructed = reconstructed * pixel_mask
             
-            # Calculate loss only on the non-zero (masked) regions
-            loss = self.criterion(masked_reconstructed, masked_original)
+            # Calculate loss only on the masked (non-zero) regions
+            # We need to account for the fact that most pixels are now zero
+            num_masked_pixels = pixel_mask.sum()
+            if num_masked_pixels > 0:
+                loss = self.criterion(masked_reconstructed, masked_original) * (pixel_mask.numel() / num_masked_pixels)
+            else:
+                loss = self.criterion(reconstructed, state)  # Fallback to full reconstruction loss
             
         return loss.item()
         
@@ -358,7 +493,7 @@ class MAETrainer:
             num_batches += 1
             
             # Log batch-level metrics to wandb if enabled
-            if self.config['wandb']['enabled']:
+            if self.wandb_enabled:
                 wandb.log({
                     "batch_loss": loss,
                     "batch": batch_idx
@@ -504,9 +639,9 @@ class MAETrainer:
         print(f"Mask ratio: {self.mask_ratio}, Device: {self.device}")
         
         # Initialize wandb if enabled
-        if self.config['wandb']['enabled']:
+        if self.wandb_enabled:
             wandb.init(
-                project=self.config['wandb']['project'],
+                project=self.wandb_project,
                 name=f"mae_pretraining-{time.strftime('%Y%m%d-%H%M%S')}",
                 config={
                     **self.training_config,
@@ -522,6 +657,14 @@ class MAETrainer:
             
             # Training
             train_loss = self.train_epoch()
+            
+            # Check for vanishing gradients every few epochs (after training when gradients are available)
+            grad_stats = None
+            if (epoch + 1) % 5 == 0:  # Check every 5 epochs
+                # Ensure models are in train mode for gradient checking
+                self.encoder.train()
+                self.decoder.train()
+                grad_stats = self.check_vanishing_gradients()
             
             # Validation
             val_loss = self.validate_epoch()
@@ -542,9 +685,29 @@ class MAETrainer:
             # Print epoch summary
             val_loss_str = f", Val Loss: {val_loss:.6f}" if val_loss is not None else ""
             print(f"Epoch {epoch+1}/{self.num_epochs} - "
-                  f"Train Loss: {train_loss:.6f}{val_loss_str}")            
+                  f"Train Loss: {train_loss:.6f}{val_loss_str}")
+            
+            # Print gradient health check results if available
+            if grad_stats is not None and (grad_stats['has_vanishing_problem'] or grad_stats['has_exploding_problem']):
+                print(f"📊 Gradient Health Check (Epoch {epoch+1}):")
+                print(f"   Vanishing: {grad_stats['vanishing_ratio']:.1%} ({grad_stats['vanishing_count']}/{grad_stats['total_layers']} layers)")
+                print(f"   Exploding: {grad_stats['exploding_ratio']:.1%} ({grad_stats['exploding_count']}/{grad_stats['total_layers']} layers)")
+                print(f"   Grad norm range: [{grad_stats['min_grad_norm']:.2e}, {grad_stats['max_grad_norm']:.2e}]")
+                print(f"   Mean grad norm: {grad_stats['mean_grad_norm']:.2e}")
+                
+                # Log gradient health to wandb
+                if self.wandb_enabled:
+                    wandb.log({
+                        "gradient_health/vanishing_ratio": grad_stats['vanishing_ratio'],
+                        "gradient_health/exploding_ratio": grad_stats['exploding_ratio'],
+                        "gradient_health/mean_grad_norm": grad_stats['mean_grad_norm'],
+                        "gradient_health/min_grad_norm": grad_stats['min_grad_norm'],
+                        "gradient_health/max_grad_norm": grad_stats['max_grad_norm'],
+                        "gradient_health/has_vanishing_problem": grad_stats['has_vanishing_problem'],
+                        "gradient_health/has_exploding_problem": grad_stats['has_exploding_problem'],
+                    })            
             # Log epoch-level metrics to wandb if enabled
-            if self.config['wandb']['enabled']:
+            if self.wandb_enabled:
                 log_dict = {
                     "epoch": epoch + 1,
                     "train_loss": train_loss,
@@ -563,7 +726,7 @@ class MAETrainer:
         print(f"Training completed in {total_time:.2f}s")
         print(f"Best validation loss: {self.best_val_loss:.6f}")
         
-        if self.config['wandb']['enabled']:
+        if self.wandb_enabled:
             wandb.finish()
 
 
