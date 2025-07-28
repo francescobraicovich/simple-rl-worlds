@@ -5,7 +5,7 @@ from typing import List, Tuple, Optional
 import random
 import re
 
-VMAX = 255
+VMAX = 1
 
 def cleanup_future_epoch_images(output_dir: Path, current_epoch: int, model_name: str) -> None:
     """
