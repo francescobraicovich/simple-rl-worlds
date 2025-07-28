@@ -14,8 +14,8 @@ data_and_patching:
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 15
-  max_steps_per_episode: 5000
+  num_episodes: 3
+  max_steps_per_episode: 12
   random_action_percentage: 0.2 # Percentage of actions to be random (0.0 = no random actions)
   load_path: "assault_rep_8.pth"
   filename: "assault_rep_8.pth"
@@ -25,7 +25,7 @@ data_collection:
     n_envs: 10 # Number of parallel environments for PPO training (default: CPU count)
     action_repetition_k: 8
     learning_rate: 0.0003
-    total_train_timesteps: 100000 # Timesteps to train PPO before data collection (reduced for testing)
+    total_train_timesteps: 0 # Timesteps to train PPO before data collection (reduced for testing)
     n_steps: 128       # PPO n_steps parameter
     batch_size: 256      # PPO batch_size parameter
     n_epochs: 6         # PPO n_epochs parameter
@@ -41,7 +41,7 @@ latent_dim: 256 # Dimension of the embedding space for the transformer model
 training:
   pretraining:
     num_epochs: 200 # Number of epochs for MAE pretraining
-    batch_size: 128 # Batch size for MAE pretraining
+    batch_size: 4 # Batch size for MAE pretraining
     learning_rate: 0.0001 # Learning rate for the MAE optimizer
     weight_decay: 0.0001 # Weight decay for the MAE optimizer
     gradient_clipping: 10.0 # Maximum norm for gradient clipping
