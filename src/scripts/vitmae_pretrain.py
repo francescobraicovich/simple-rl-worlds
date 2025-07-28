@@ -17,10 +17,14 @@ import os
 import sys
 import time
 import argparse
+import warnings
 import torch
 import wandb
 from pathlib import Path
 from transformers import Trainer, TrainingArguments, TrainerCallback
+
+# Suppress filesystem mtime warning from transformers
+warnings.filterwarnings("ignore", message="mtime may not be reliable on this filesystem, falling back to numerical ordering")
 
 # Set MPS fallback for unsupported operations
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
@@ -62,7 +66,11 @@ class ViTMAEDataCollator:
         
         # Stack states into a batch: [B, T, H, W]
         pixel_values = torch.stack(states)
-        
+
+        # add noise
+        noise = torch.randn_like(pixel_values) * 0.1 + 0.1  # Example noise
+        pixel_values += noise
+        pixel_values = torch.clamp(pixel_values, 0, 1)  # Ensure pixel values are in [0, 1]
         return {
             "pixel_values": pixel_values
         }
@@ -115,7 +123,7 @@ class ViTMAETrainer:
         self.val_dataset = None
         
         # Plotting configuration
-        self.plot_frequency = 20  # Plot every epoch
+        self.plot_frequency = 3  # Plot every epoch
         self.plot_dir = "evaluation_plots/decoder_plots/vitmae_pretrain"
         self.validation_sample_indices = None
         
