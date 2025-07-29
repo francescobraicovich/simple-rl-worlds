@@ -1,38 +1,29 @@
 #!/usr/bin/env python3
 """
-ViT MAE Pretraining Script using Hugging        # Stack states into a batch: [B, T, H, W]
-        pixel_values = torch.stack(states)
+Vision Transformer Masked Autoencoder (ViTMAE) Pretraining Script
 
-        # Ensure pixel values are in [0, 1] and properly normalized
-        pixel_values = torch.clamp(pixel_values, 0, 1)
-        
-        return {
-            "pixel_values": pixel_values
-        }sformers
-
-This script implements self-supervised pretraining using Vision Transformer 
-Masked Autoencoder (ViT MAE) from Hugging Face. The script uses the built-in
-Trainer and TrainingArguments for simplified training.
+This script implements self-supervised pretraining using Hugging Face's Vision Transformer
+Masked Autoencoder approach. The main objective is to train the ViTMAE model to reconstruct
+masked patches of input images, learning powerful visual representations.
 
 The training process:
-1. Load video sequences and convert to appropriate format for ViT MAE
-2. Use Hugging Face's ViTMAEForPreTraining model
-3. Train with built-in masking and reconstruction loss
-4. Generate validation plots similar to custom MAE implementation
+1. Take input video frames and convert them to patches
+2. Randomly mask a subset of patches
+3. Encode visible patches through the ViT encoder
+4. Decode latent representations to reconstruct masked patches
+5. Compute reconstruction loss only on masked patches
 """
 
 import os
 import sys
 import time
 import argparse
-import warnings
-import torch
-import wandb
 from pathlib import Path
-from transformers import Trainer, TrainingArguments, TrainerCallback
+from typing import Tuple, Optional
 
-# Suppress filesystem mtime warning from transformers
-warnings.filterwarnings("ignore", message="mtime may not be reliable on this filesystem, falling back to numerical ordering")
+import torch
+import torch.optim as optim
+import wandb
 
 # Set MPS fallback for unsupported operations
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
@@ -41,62 +32,28 @@ os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.utils.init_vitmae_fixed import init_vit_mae_fixed  # noqa: E402
-from src.utils.init_models import load_config  # noqa: E402
-from src.scripts.collect_load_data import DataLoadingPipeline  # noqa: E402
-from src.utils.set_device import set_device  # noqa: E402
-
-
-class ViTMAEDataCollator:
-    """
-    Data collator for ViT MAE that handles video sequence data.
-    Works directly with [B, T, H, W] format where T is treated as channels.
-    """
-    
-    def __init__(self):
-        pass
-    
-    def __call__(self, features):
-        """
-        Process a batch of video sequences for ViT MAE training.
-        
-        Args:
-            features: List of tuples (state, next_state, action, reward)
-            
-        Returns:
-            Dictionary with pixel_values for ViT MAE
-        """
-        # Extract states from the batch
-        states = []
-        #print('length of features:', len(features))  # Debugging line
-        #print('shape of features:', [f[0].shape for f in features])  # Debugging line
-        for state, next_state, action, reward in features:
-            states.append(state)
-        
-        # Stack states into a batch: [B, T, H, W]
-        pixel_values = torch.stack(states)
-
-        # add noise
-        noise = torch.randn_like(pixel_values) * 0.5 + 0.1  # Example noise
-        pixel_values += noise
-        pixel_values = torch.clamp(pixel_values, 0, 1)  # Ensure pixel values are in [0, 1]
-        return {
-            "pixel_values": pixel_values
-        }
+from src.utils.init_models import init_vit_mae, load_config
+from src.scripts.collect_load_data import DataLoadingPipeline
+from src.utils.set_device import set_device
+from src.utils.scheduler_utils import create_lr_scheduler, step_scheduler, get_current_lr
 
 
 class ViTMAETrainer:
     """
-    Trainer class for ViT MAE pretraining using Hugging Face Transformers.
+    Trainer class for Vision Transformer Masked Autoencoder (ViTMAE) pretraining.
     
-    This class provides a simplified training pipeline using Hugging Face's
-    built-in Trainer and TrainingArguments, making the code more concise
-    compared to the custom MAE implementation.
+    This class handles the complete pretraining pipeline including:
+    - ViTMAE model initialization
+    - Data loading and preprocessing
+    - Patch masking and reconstruction
+    - Training and validation loops with reconstruction loss
+    - Optimization of model parameters
+    - Checkpointing and logging
     """
     
     def __init__(self, config_path: str = None):
         """
-        Initialize the ViT MAE trainer.
+        Initialize the ViTMAE trainer.
         
         Args:
             config_path: Path to configuration file. If None, uses default.
@@ -104,530 +61,546 @@ class ViTMAETrainer:
         self.config_path = config_path
         self.config = load_config(config_path)
         
+        # Training parameters
+        self.training_config = self.config['training']['pretraining']
+        self.num_epochs = self.training_config['num_epochs']
+        self.batch_size = self.training_config['batch_size']
+        self.learning_rate = self.training_config['learning_rate']
+        self.weight_decay = self.training_config['weight_decay']
+        self.gradient_clipping = self.training_config.get('gradient_clipping', None)
+        self.mask_ratio = self.training_config['mask_ratio']
+        
         # Device setup using set_device
         self.device = torch.device(set_device())
         
-        # Models and data collator
-        self.model = None
-        self.data_collator = None
+        # Models
+        self.vit_mae = None
         
-        # Training arguments with ultra-conservative settings for debugging
-        self.training_args = TrainingArguments(
-            output_dir="./mae-pretrain",
-            per_device_train_batch_size=1,  # Back to 1 for debugging
-            dataloader_pin_memory=False,
-            dataloader_num_workers=0,
-            num_train_epochs=10,            # Much fewer epochs for testing
-            learning_rate=1e-6,             # Very conservative learning rate
-            weight_decay=0.0,               # No weight decay for now
-            max_grad_norm=0.5,              # Conservative gradient clipping
-            logging_steps=5,                # Very frequent logging
-            save_steps=50,
-            save_total_limit=2,
-            dataloader_drop_last=True,
-            remove_unused_columns=False,
-            prediction_loss_only=False,
-            warmup_steps=50,                # Less warmup
-            optim="adamw_torch",            
-            fp16=False,                     # Keep FP16 off
-            gradient_accumulation_steps=1,  # No gradient accumulation for now
-            eval_steps=50,                  # Add evaluation
-            evaluation_strategy="steps",
-            logging_first_step=True,        # Log first step
-        )
-        
+        # Training components
+        self.optimizer = None
+        self.lr_scheduler = None
+
         # Data
-        self.train_dataset = None
-        self.val_dataset = None
+        self.train_dataloader = None
+        self.val_dataloader = None
+        
+        # Logging and checkpointing
+        self.best_val_loss = float('inf')
+        self.checkpoint_dir = Path("weights/vitmae_pretraining")
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
         # Plotting configuration
-        self.plot_frequency = 3  # Plot every epoch
+        self.plot_frequency = 1  # Plot every epoch
         self.plot_dir = "evaluation_plots/decoder_plots/vitmae_pretrain"
-        self.validation_sample_indices = None
+        self.validation_sample_indices = None  # Will be set once data is loaded
         
-        # Gradient monitoring configuration
-        self.gradient_check_frequency = 10  # Check gradients every N steps
-        self.gradient_threshold = 1e-6  # Threshold for detecting vanishing gradients
+        # Gradient statistics tracking
+        self.last_epoch_grad_stats = {}
         
-    def check_initial_gradients(self):
-        """
-        Perform an initial gradient check before training to detect potential issues early.
-        """
-        print("\n🔍 Performing initial gradient health check...")
+    def initialize_models(self):
+        """Initialize ViTMAE model."""
+        # Initialize ViTMAE model
+        self.vit_mae = init_vit_mae(self.config_path).to(self.device)
         
-        # Set model to training mode
-        self.model.train()
+        print(f"Initialized ViTMAE with {sum(p.numel() for p in self.vit_mae.parameters())} parameters")
         
-        # Get a small batch from training data
-        if self.train_dataset is None:
-            print("⚠️  No training data loaded for gradient check")
-            return
-            
-        # Get first few samples
-        sample_batch = [self.train_dataset[i] for i in range(min(2, len(self.train_dataset)))]
-        batch = self.data_collator(sample_batch)
-        pixel_values = batch["pixel_values"].to(self.device)
+    def initialize_optimizer(self):
+        """Initialize the AdamW optimizer and learning rate scheduler for all trainable parameters."""
+        # Get all trainable parameters from ViTMAE model
+        trainable_params = list(self.vit_mae.parameters())
         
-        # Forward pass
-        outputs = self.model(pixel_values)
-        loss = outputs.loss
-
-        print('Output range:', outputs.logits.min().item(), outputs.logits.max().item())
+        self.optimizer = optim.AdamW(
+            trainable_params,
+            lr=self.learning_rate,
+            weight_decay=self.weight_decay
+        )
         
-        # Backward pass
-        loss.backward()
+        # Initialize learning rate scheduler if configured
+        scheduler_config = self.training_config.get('lr_scheduler', {})
+        self.lr_scheduler = create_lr_scheduler(
+            self.optimizer, 
+            scheduler_config, 
+            self.num_epochs
+        )
         
-        # Check gradients
-        gradient_monitor = GradientMonitoringCallback(self)
-        grad_stats = gradient_monitor._calculate_gradient_stats(self.model)
-        
-        print("Initial gradient statistics:")
-        print(f"  Mean gradient norm: {grad_stats['mean_grad_norm']:.2e}")
-        print(f"  Max gradient norm: {grad_stats['max_grad_norm']:.2e}")
-        print(f"  Min gradient norm: {grad_stats['min_grad_norm']:.2e}")
-        print(f"  Vanishing gradient ratio: {grad_stats['vanishing_ratio']:.2%}")
-        
-        # Provide recommendations
-        if grad_stats['vanishing_ratio'] > 0.5:
-            print("⚠️  WARNING: High vanishing gradient ratio detected in initial check!")
-            self._suggest_gradient_fixes(grad_stats)
-        elif grad_stats['mean_grad_norm'] > 1.0:
-            print("⚠️  WARNING: Large gradients detected - consider gradient clipping")
+        if self.lr_scheduler is not None:
+            print(f"Initialized {scheduler_config.get('type', 'cosine')} learning rate scheduler")
         else:
-            print("✅ Initial gradients look healthy")
+            print("No learning rate scheduler configured")
             
-        # Clear gradients
-        self.model.zero_grad()
-        
-    def _suggest_gradient_fixes(self, grad_stats):
-        """Suggest potential fixes for gradient issues."""
-        print("\n💡 Suggestions for gradient issues:")
-        print("   1. Reduce learning rate (try 1e-5 instead of 1e-4)")
-        print("   2. Use gradient clipping (max_grad_norm=1.0)")
-        print("   3. Check model initialization")
-        print("   4. Consider using a different optimizer (AdamW with weight decay)")
-        print("   5. Add gradient accumulation to increase effective batch size")
-        if grad_stats['vanishing_ratio'] > 0.8:
-            print("   6. CRITICAL: Consider architectural changes or different initialization")
-        
-    def initialize_model(self):
-        """Initialize ViT MAE model."""
-        # Initialize the ViT MAE model with fixed configuration
-        self.model = init_vit_mae_fixed(self.config_path)
-        self.model.to(self.device)
-        
-        # Initialize data collator (no processor needed)
-        self.data_collator = ViTMAEDataCollator()
-        
-        print(f"Initialized ViT MAE model with {sum(p.numel() for p in self.model.parameters())} parameters")
-        
     def load_data(self):
         """Load training and validation data using DataLoadingPipeline."""
         data_pipeline = DataLoadingPipeline(
-            self.training_args.per_device_train_batch_size,
+            self.batch_size,
             self.config_path
         )
 
         # Get training and validation dataloaders
-        train_dataloader, val_dataloader = data_pipeline.run_pipeline()
+        self.train_dataloader, self.val_dataloader = data_pipeline.run_pipeline()
         
-        # Convert dataloaders to datasets for Hugging Face Trainer
-        self.train_dataset = DataloaderDataset(train_dataloader)
-        if val_dataloader is not None:
-            self.val_dataset = DataloaderDataset(val_dataloader)
-        else:
-            self.val_dataset = None
-        
-        print(f"Loaded {len(self.train_dataset)} training samples")
-        if self.val_dataset is not None:
-            print(f"Loaded {len(self.val_dataset)} validation samples")
+        print(f"Loaded {len(self.train_dataloader)} training batches")
+        if self.val_dataloader is not None:
+            print(f"Loaded {len(self.val_dataloader)} validation batches")
         else:
             print("No validation data available")
+    
+    def preprocess_frames_for_vitmae(self, state: torch.Tensor) -> torch.Tensor:
+        """
+        Preprocess video frames for ViTMAE input.
+        
+        Args:
+            state: Input tensor of shape [B, T, H, W] (batch, time, height, width)
             
+        Returns:
+            Preprocessed tensor of shape [B*T, C, H, W] where C=4 (stacked frames as channels)
+        """
+        B, T, H, W = state.shape
+        
+        # Reshape to treat each sequence as a multi-channel image: [B, T, H, W] -> [B, T, H, W]
+        # We'll treat the temporal dimension as channels
+        frames = state  # Keep as [B, T, H, W]
+        
+        # Normalize pixel values to [0, 1] if needed
+        if frames.max() > 1.0:
+            frames = frames / 255.0
+            
+        return frames
+    
+    def create_masked_visualization(self, pixel_values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """
+        Create a visualization of the masked input by setting masked patches to zero.
+        
+        Args:
+            pixel_values: Input frames [B, T, H, W]
+            mask: ViTMAE mask [B, sequence_length] where 1=masked, 0=visible
+            
+        Returns:
+            Masked frames with masked patches set to zero [B, T, H, W]
+        """
+        B, T, H, W = pixel_values.shape
+        
+        # Get patch size from ViTMAE config (7x7 patches for 84x84 images)
+        patch_size = 7  # From the ViTMAE config
+        
+        # Calculate number of patches (84/7 = 12 patches per side)
+        num_patches_h = H // patch_size  # 12
+        num_patches_w = W // patch_size  # 12
+        
+        # Create a copy of the input frames
+        masked_frames = pixel_values.clone()
+        
+        # Reshape mask to match patch layout: [B, 144] -> [B, 12, 12]
+        mask_2d = mask.view(B, num_patches_h, num_patches_w)
+        
+        # Apply mask by setting masked patches to zero
+        for b in range(B):
+            for h_patch in range(num_patches_h):
+                for w_patch in range(num_patches_w):
+                    if mask_2d[b, h_patch, w_patch] == 1:  # If this patch is masked
+                        # Set all pixels in this patch to zero for all time frames
+                        h_start = h_patch * patch_size
+                        h_end = h_start + patch_size
+                        w_start = w_patch * patch_size
+                        w_end = w_start + patch_size
+                        masked_frames[b, :, h_start:h_end, w_start:w_end] = 0.0
+        
+        return masked_frames
+    
+    def unpatchify_vitmae_output(self, logits: torch.Tensor, original_shape: torch.Size) -> torch.Tensor:
+        """
+        Convert ViTMAE logits back to image format.
+        
+        Args:
+            logits: ViTMAE output logits [B, sequence_length, patch_size^2 * num_channels]
+            original_shape: Original input shape [B, T, H, W]
+            
+        Returns:
+            Reconstructed images [B, T, H, W]
+        """
+        B, T, H, W = original_shape
+        
+        # Get patch size from ViTMAE config (7x7 patches for 84x84 images)
+        patch_size = 7  # From the ViTMAE config
+        
+        # Calculate number of patches (84/7 = 12 patches per side)
+        num_patches_h = H // patch_size  # 12
+        num_patches_w = W // patch_size  # 12
+        
+        # logits shape: [B, 144, 49*4] = [B, 144, 196]
+        # where 144 = 12*12 patches, 196 = 7*7*4 (patch_size^2 * num_channels)
+        
+        # Reshape logits: [B, 144, 196] -> [B, 12, 12, 7, 7, 4]
+        logits = logits.view(B, num_patches_h, num_patches_w, patch_size, patch_size, T)
+        
+        # Rearrange to get final image: [B, 4, 84, 84] -> [B, T, H, W]
+        reconstructed = logits.permute(0, 5, 1, 3, 2, 4).contiguous()
+        reconstructed = reconstructed.view(B, T, H, W)
+        
+        return reconstructed
+    
+    def compute_gradient_vanishing_ratio(self) -> dict:
+        """
+        Compute gradient vanishing ratio for monitoring gradient flow.
+        
+        Returns:
+            Dictionary containing gradient statistics
+        """
+        total_norm = 0.0
+        param_count = 0
+        layer_norms = {}
+        
+        for name, param in self.vit_mae.named_parameters():
+            if param.grad is not None:
+                param_norm = param.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+                param_count += 1
+                
+                # Track layer-specific norms
+                layer_name = name.split('.')[0]  # Get the first part of the parameter name
+                if layer_name not in layer_norms:
+                    layer_norms[layer_name] = []
+                layer_norms[layer_name].append(param_norm.item())
+        
+        total_norm = total_norm ** (1. / 2)
+        
+        # Compute layer-wise gradient norms
+        layer_stats = {}
+        for layer_name, norms in layer_norms.items():
+            layer_stats[f"grad_norm_{layer_name}"] = sum(norms) / len(norms) if norms else 0.0
+        
+        # Compute gradient vanishing ratio (ratio of smallest to largest layer norm)
+        layer_means = [stats for stats in layer_stats.values() if stats > 0]
+        vanishing_ratio = min(layer_means) / max(layer_means) if len(layer_means) > 1 else 1.0
+        
+        return {
+            "gradient_norm_total": total_norm,
+            "gradient_vanishing_ratio": vanishing_ratio,
+            **layer_stats
+        }
+
+    def train_step(self, batch: Tuple[torch.Tensor, ...]) -> float:
+        """
+        Perform a single training step with ViTMAE reconstruction loss.
+        
+        Args:
+            batch: Tuple containing (state, next_state, action, reward)
+            
+        Returns:
+            Reconstruction loss for this batch
+        """
+        state, next_state, action, reward = batch
+
+        # Move to device - we use current state for ViTMAE pretraining
+        state = state.to(self.device)  # [B, T, H, W]
+        
+        # Preprocess frames for ViTMAE
+        pixel_values = self.preprocess_frames_for_vitmae(state)  # [B, T, H, W]
+        
+        # Forward pass through ViTMAE
+        outputs = self.vit_mae(pixel_values=pixel_values)
+        
+        # Get reconstruction loss from ViTMAE
+        loss = outputs.loss
+        
+        # Backward pass and optimizer step
+        loss.backward()
+        
+        # Compute gradient statistics before clipping
+        grad_stats = self.compute_gradient_vanishing_ratio()
+        
+        # Gradient clipping if configured
+        if self.gradient_clipping is not None:
+            torch.nn.utils.clip_grad_norm_(self.vit_mae.parameters(), self.gradient_clipping)
+            
+        self.optimizer.step()
+        self.optimizer.zero_grad()  # Reset gradients for next step
+        
+        return loss.item(), grad_stats
+        
+    def validate_step(self, batch: Tuple[torch.Tensor, ...]) -> float:
+        """
+        Perform a single validation step with ViTMAE reconstruction loss.
+        
+        Args:
+            batch: Tuple containing (state, next_state, action, reward)
+            
+        Returns:
+            Reconstruction loss for this batch
+        """
+        state, next_state, action, reward = batch
+
+        # Move to device - we use current state for ViTMAE pretraining
+        state = state.to(self.device)  # [B, T, H, W]
+        
+        with torch.no_grad():
+            # Preprocess frames for ViTMAE
+            pixel_values = self.preprocess_frames_for_vitmae(state)  # [B, T, H, W]
+            
+            # Forward pass through ViTMAE
+            outputs = self.vit_mae(pixel_values=pixel_values)
+            
+            # Get reconstruction loss from ViTMAE
+            loss = outputs.loss
+            
+        return loss.item()
+        
+    def train_epoch(self) -> float:
+        """
+        Train for one epoch.
+        
+        Returns:
+            Average training loss for the epoch
+        """
+        self.vit_mae.train()
+        
+        total_loss = 0.0
+        num_batches = 0
+        
+        # Accumulate gradient statistics across batches
+        epoch_grad_stats = {}
+        
+        for batch_idx, batch in enumerate(self.train_dataloader):
+            loss, grad_stats = self.train_step(batch)
+            total_loss += loss
+            num_batches += 1
+            
+            # Accumulate gradient statistics
+            for key, value in grad_stats.items():
+                if key not in epoch_grad_stats:
+                    epoch_grad_stats[key] = []
+                epoch_grad_stats[key].append(value)
+            
+            # Log batch-level metrics to wandb if enabled
+            if self.config['wandb']['enabled']:
+                log_dict = {
+                    "batch_loss": loss,
+                    "batch": batch_idx,
+                    **grad_stats  # Include gradient statistics
+                }
+                wandb.log(log_dict)
+                
+        # Compute average gradient statistics for the epoch
+        avg_grad_stats = {}
+        for key, values in epoch_grad_stats.items():
+            avg_grad_stats[f"epoch_{key}"] = sum(values) / len(values) if values else 0.0
+        
+        # Store epoch gradient stats for logging in main training loop
+        self.last_epoch_grad_stats = avg_grad_stats
+        
+        avg_loss = total_loss / num_batches
+        return avg_loss
+        
+    def validate_epoch(self) -> Optional[float]:
+        """
+        Validate for one epoch.
+        
+        Returns:
+            Average validation loss for the epoch, or None if no validation data
+        """
+        if self.val_dataloader is None:
+            return None
+            
+        self.vit_mae.eval()
+        
+        total_loss = 0.0
+        num_batches = 0
+        
+        for batch in self.val_dataloader:
+            loss = self.validate_step(batch)
+            total_loss += loss
+            num_batches += 1
+            
+        avg_loss = total_loss / num_batches
+        return avg_loss
+        
     def plot_vitmae_validation_predictions(self, epoch: int):
-        """Generate ViT MAE validation plots for the current epoch if needed."""
+        """Generate ViTMAE validation plots for the current epoch if needed."""
         # Import here to avoid issues with module-level imports
-        from src.utils.plot import plot_mae_validation_samples, should_plot_validation
+        try:
+            from src.utils.plot import plot_mae_validation_samples, get_random_validation_samples, should_plot_validation
+        except ImportError:
+            # If plotting utilities are not available, skip plotting
+            return
         
         # Check if we should plot for this epoch
         if not should_plot_validation(epoch, self.plot_frequency):
             return
             
-        if self.val_dataset is None:
+        if self.val_dataloader is None:
             return
-        
+            
         # Get validation sample indices (consistent across epochs)
         if self.validation_sample_indices is None:
-            self.validation_sample_indices = list(range(min(5, len(self.val_dataset))))
+            self.validation_sample_indices, _, _, _ = get_random_validation_samples(
+                self.val_dataloader, n_samples=5, seed=42
+            )
         
         # Set model to eval mode
-        self.model.eval()
+        self.vit_mae.eval()
         
-        # Get validation samples
-        val_samples = []
-        for idx in self.validation_sample_indices:
-            sample = self.val_dataset[idx]
-            val_samples.append(sample)
+        # Get a validation batch
+        val_iter = iter(self.val_dataloader)
+        batch = next(val_iter)
+        state, next_state, action, _ = batch
         
-        # Process samples through data collator
-        batch = self.data_collator(val_samples)
-        pixel_values = batch["pixel_values"].to(self.device)
+        # Move to device - we use current state for ViTMAE pretraining
+        state = state.to(self.device)  # [B, T, H, W]
         
         with torch.no_grad():
-            # Forward pass through ViT MAE
-            outputs = self.model(pixel_values)
+            # Preprocess frames for ViTMAE
+            pixel_values = self.preprocess_frames_for_vitmae(state)  # [B, T, H, W]
             
-            # Get reconstructed images from logits
-            reconstructed_logits = outputs.logits
+            # Forward pass through ViTMAE to get reconstructions
+            outputs = self.vit_mae(pixel_values=pixel_values)
             
-            # Manual unpatchify: reshape logits to image format
-            # logits shape: (batch_size, sequence_length, patch_size ** 2 * num_channels)
-            batch_size = reconstructed_logits.shape[0]
-            num_patches = reconstructed_logits.shape[1]  # Should be 144 (12*12)
+            # Get reconstructed images from ViTMAE output
+            # ViTMAE returns logits that need to be converted back to image format
+            logits = outputs.logits  # [B, sequence_length, patch_size^2 * num_channels]
+            mask = outputs.mask      # [B, sequence_length] - 1 for masked, 0 for visible
             
-            # Reshape to (batch_size, num_patches_h, num_patches_w, patch_size, patch_size, num_channels)
-            num_patches_per_side = int(num_patches ** 0.5)  # Should be 12
-            patch_size = 7
-            num_channels = 4
+            # Convert logits back to image format using the model's unpatchify method
+            try:
+                # Try to use the model's built-in unpatchify method if available
+                reconstructed = self.vit_mae.unpatchify(logits)  # Should return [B, C, H, W]
+                # Reshape to match our expected format [B, T, H, W]
+                if reconstructed.dim() == 4 and reconstructed.shape[1] == pixel_values.shape[1]:
+                    reconstructed = reconstructed  # Already in [B, T, H, W] format
+                else:
+                    # If it's in a different format, reshape appropriately
+                    reconstructed = reconstructed.view(state.shape)
+            except (AttributeError, RuntimeError):
+                # Fall back to our custom unpatchify method
+                reconstructed = self.unpatchify_vitmae_output(logits, state.shape)  # [B, T, H, W]
             
-            reconstructed_patches = reconstructed_logits.view(
-                batch_size, num_patches_per_side, num_patches_per_side, 
-                patch_size, patch_size, num_channels
-            )
-            
-            # Rearrange to (batch_size, num_channels, height, width)
-            reconstructed_images = reconstructed_patches.permute(0, 5, 1, 3, 2, 4)
-            reconstructed_images = reconstructed_images.contiguous().view(
-                batch_size, num_channels, 
-                num_patches_per_side * patch_size, 
-                num_patches_per_side * patch_size
-            )
- 
-            # Get original images for comparison
-            original_images = pixel_values
-            
-            # Create masked input for visualization using the actual mask
-            masked_images = pixel_values.clone()
-
-            # Apply mask to create masked visualization
-            # outputs.mask has shape (batch_size, sequence_length) where 1=masked, 0=visible
-            mask = outputs.mask  # Shape: (batch_size, num_patches)
-            
-            # Reshape mask to patch grid: (batch_size, num_patches_h, num_patches_w)
-            batch_size = mask.shape[0]
-            num_patches_per_side = 12  # 84/7 = 12
-            mask_2d = mask.view(batch_size, num_patches_per_side, num_patches_per_side)
-            
-            # Expand mask to full image resolution
-            patch_size = 7
-            mask_expanded = mask_2d.repeat_interleave(patch_size, dim=1).repeat_interleave(patch_size, dim=2)
-            # mask_expanded shape: (batch_size, 84, 84)
-            
-            # Apply mask to all channels
-            for b in range(batch_size):
-                for c in range(4):  # 4 channels
-                    masked_images[b, c][mask_expanded[b] == 1] = 0  # Set masked patches to black
+            # Create masked input visualization by zeroing out masked patches
+            masked_input = self.create_masked_visualization(pixel_values, mask)  # [B, T, H, W]
         
-        # Convert tensors to appropriate format for plotting
-        # Shape conversion: [B, C, H, W] -> [B, T, H, W] (treating C as T)
-        #original_for_plot = original_images.permute(0, 1, 2, 3)  # Keep as is for now
-        #reconstructed_for_plot = reconstructed_images.permute(0, 1, 2, 3) if reconstructed_images.dim() == 4 else reconstructed_images
-        #masked_for_plot = masked_images.permute(0, 1, 2, 3)
-
-        plot_mae_validation_samples(
-            masked_frames=masked_images,
-            reconstructed_frames=reconstructed_images,
-            true_frames=original_images,
-            epoch=int(epoch),
-            sample_indices=self.validation_sample_indices,
-            output_dir=self.plot_dir,
-            model_name="vitmae_pretrain"
-        )
+        # Generate plots using existing MAE plotting function
+        # Show: masked input -> reconstructed -> original (true)
+        try:
+            plot_mae_validation_samples(
+                masked_frames=masked_input,  # Show the actual masked input with zero patches
+                reconstructed_frames=reconstructed,
+                true_frames=state,    # Ground truth frames
+                epoch=epoch,
+                sample_indices=self.validation_sample_indices,
+                output_dir=self.plot_dir,
+                model_name="vitmae_pretrain"
+            )
+        except Exception as e:
+            print(f"Plotting failed: {e}")
         
+    def save_checkpoint(self, epoch: int, train_loss: float, val_loss: Optional[float]):
+        """
+        Save model checkpoint.
+        
+        Args:
+            epoch: Current epoch number
+            train_loss: Training loss for this epoch
+            val_loss: Validation loss for this epoch (None if no validation data)
+        """
+        checkpoint = {
+            'epoch': epoch,
+            'vitmae_state_dict': self.vit_mae.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'train_loss': train_loss,
+            'val_loss': val_loss,
+            'config': self.config
+        }
+        
+        if self.lr_scheduler is not None:
+            checkpoint['lr_scheduler_state_dict'] = self.lr_scheduler.state_dict()
+        
+        # Save latest checkpoint
+        latest_path = self.checkpoint_dir / "latest_checkpoint.pth"
+        torch.save(checkpoint, latest_path)
+        
+        # Use validation loss for best model selection, fallback to training loss
+        current_val_loss = val_loss if val_loss is not None else train_loss
+        
+        # Save best checkpoint if validation loss improved
+        if current_val_loss < self.best_val_loss:
+            self.best_val_loss = current_val_loss
+            best_path = self.checkpoint_dir / "best_checkpoint.pth"
+            torch.save(checkpoint, best_path)
+            print(f"New best model saved with validation loss: {current_val_loss:.6f}")
+                        
     def train(self):
         """
-        Run the complete training loop using Hugging Face Trainer.
-        
-        This method includes:
-        - Gradient health monitoring to detect vanishing/exploding gradients
-        - Validation plotting for visual inspection of reconstruction quality
-        - Comprehensive logging to wandb (if enabled)
-        - Initial gradient check before training starts
+        Run the complete training loop.
         """
-        print("🚀 Starting ViT MAE pretraining...")
-        print("📊 Gradient monitoring enabled:")
-        print(f"   - Check frequency: every {self.gradient_check_frequency} steps")
-        print(f"   - Vanishing threshold: {self.gradient_threshold}")
-        print("Number of parameters in model:", sum(p.numel() for p in self.model.parameters()))
-        print(f"Configuration: {self.training_args.num_train_epochs} epochs, "
-              f"batch size {self.training_args.per_device_train_batch_size}, "
-              f"lr {self.training_args.learning_rate}")
-        print(f"Device: {self.device}")
+        print("🚀 Starting ViTMAE pretraining...")
+        print(f"Configuration: {self.num_epochs} epochs, batch size {self.batch_size}, lr {self.learning_rate}")
+        print(f"Mask ratio: {self.mask_ratio}, Device: {self.device}")
+        print(f"Number of trainable parameters: {sum(p.numel() for p in self.vit_mae.parameters())}")
         
         # Initialize wandb if enabled
         if self.config['wandb']['enabled']:
             wandb.init(
                 project=self.config['wandb']['project'],
-                name=f"vitmae_pretraining-{time.strftime('%Y%m%d-%H%M%S')}",
-                config={
-                    'num_train_epochs': self.training_args.num_train_epochs,
-                    'per_device_train_batch_size': self.training_args.per_device_train_batch_size,
-                    'learning_rate': self.training_args.learning_rate,
-                    'model_type': 'vitmae_pretraining',
-                    'device': str(self.device)
-                }
+                name=f"vitmae_pretrain_{time.strftime('%Y%m%d_%H%M%S')}",
+                config=self.config
             )
             
-        # Create Trainer
-        trainer = Trainer(
-            model=self.model,
-            args=self.training_args,
-            train_dataset=self.train_dataset,
-            eval_dataset=self.val_dataset,
-            data_collator=self.data_collator,
-        )
-        
-        # Add callbacks for validation plotting and gradient monitoring
-        trainer.add_callback(ValidationPlottingCallback(self))
-        
-        # Add gradient monitoring callback
-        gradient_monitor = GradientMonitoringCallback(
-            self, 
-            check_frequency=self.gradient_check_frequency,
-            gradient_threshold=self.gradient_threshold
-        )
-        trainer.add_callback(gradient_monitor)
-        
-        # Perform initial gradient health check
-        self.check_initial_gradients()
-        
         start_time = time.time()
         
-        # Train the model
-        trainer.train()
-        
+        for epoch in range(self.num_epochs):
+            epoch_start_time = time.time()
+            
+            # Training
+            train_loss = self.train_epoch()
+            
+            # Validation
+            val_loss = self.validate_epoch()
+            
+            # Generate ViTMAE validation plots if needed
+            self.plot_vitmae_validation_predictions(epoch)
+            
+            # Learning rate scheduling
+            if self.lr_scheduler is not None:
+                step_scheduler(self.lr_scheduler, val_loss)
+                
+            # Get current learning rate
+            current_lr = get_current_lr(self.optimizer)
+            
+            # Calculate epoch time
+            epoch_time = time.time() - epoch_start_time
+            
+            # Print epoch summary
+            val_loss_str = f", Val Loss: {val_loss:.6f}" if val_loss is not None else ""
+            print(f"Epoch {epoch+1}/{self.num_epochs} - "
+                  f"Train Loss: {train_loss:.6f}{val_loss_str}, "
+                  f"LR: {current_lr:.8f}, Time: {epoch_time:.2f}s")
+            
+            # Log epoch-level metrics to wandb if enabled
+            if self.config['wandb']['enabled']:
+                log_dict = {
+                    "epoch": epoch + 1,
+                    "train_loss": train_loss,
+                    "learning_rate": current_lr,
+                    "epoch_time": epoch_time,
+                    **self.last_epoch_grad_stats  # Include epoch gradient statistics
+                }
+                if val_loss is not None:
+                    log_dict["val_loss"] = val_loss
+                wandb.log(log_dict)
+            
+            # Save checkpoint
+            self.save_checkpoint(epoch + 1, train_loss, val_loss)
+            
         # Training complete
         total_time = time.time() - start_time
         print(f"Training completed in {total_time:.2f}s")
-        
-        # Print gradient health summary
-        print("\n" + gradient_monitor.get_gradient_summary())
-        
-        # Save the final model
-        trainer.save_model("./mae-pretrain/final")
+        print(f"Best validation loss: {self.best_val_loss:.6f}")
         
         if self.config['wandb']['enabled']:
             wandb.finish()
 
 
-class DataloaderDataset:
-    """
-    Wrapper to convert PyTorch DataLoader to Dataset format for Hugging Face Trainer.
-    """
-    
-    def __init__(self, dataloader):
-        self.dataloader = dataloader
-        self.data = []
-        
-        # Convert dataloader to list of samples
-        for batch in dataloader:
-            # batch is tuple of (state, next_state, action, reward)
-            state, next_state, action, reward = batch
-            for i in range(state.shape[0]):  # Iterate through batch dimension
-                self.data.append((
-                    state[i],      # [T, H, W]
-                    next_state[i], # [T, H, W]
-                    action[i],     # scalar or [1]
-                    reward[i]      # scalar or [1]
-                ))
-    
-    def __len__(self):
-        return len(self.data)
-    
-    def __getitem__(self, idx):
-        return self.data[idx]
-
-
-class GradientMonitoringCallback(TrainerCallback):
-    """
-    Callback for monitoring gradient health during training to detect vanishing gradients.
-    """
-    
-    def __init__(self, mae_trainer, check_frequency=10, gradient_threshold=1e-6):
-        """
-        Initialize gradient monitoring callback.
-        
-        Args:
-            mae_trainer: The ViTMAETrainer instance
-            check_frequency: How often to check gradients (every N steps)
-            gradient_threshold: Threshold below which gradients are considered vanishing
-        """
-        self.mae_trainer = mae_trainer
-        self.check_frequency = check_frequency
-        self.gradient_threshold = gradient_threshold
-        self.gradient_history = []
-        self.step_count = 0
-        
-    def on_step_end(self, args, state, control, **kwargs):
-        """Called at the end of each training step."""
-        self.step_count += 1
-        
-        # Only check gradients at specified frequency
-        if self.step_count % self.check_frequency != 0:
-            return
-            
-        model = kwargs.get('model')
-        if model is None:
-            return
-            
-        # Calculate gradient statistics
-        grad_stats = self._calculate_gradient_stats(model)
-        
-        # Store gradient statistics
-        self.gradient_history.append({
-            'step': state.global_step,
-            'epoch': state.epoch,
-            **grad_stats
-        })
-        
-        # Check for vanishing gradients
-        self._check_vanishing_gradients(grad_stats, state)
-        
-        # Log to wandb if enabled
-        if self.mae_trainer.config['wandb']['enabled']:
-            wandb.log({
-                "gradients/mean_grad_norm": grad_stats['mean_grad_norm'],
-                "gradients/max_grad_norm": grad_stats['max_grad_norm'],
-                "gradients/min_grad_norm": grad_stats['min_grad_norm'],
-                "gradients/vanishing_ratio": grad_stats['vanishing_ratio'],
-                "gradients/layers_with_vanishing": grad_stats['layers_with_vanishing'],
-                "step": state.global_step
-            })
-    
-    def _calculate_gradient_stats(self, model):
-        """Calculate comprehensive gradient statistics."""
-        grad_norms = []
-        layer_grad_norms = {}
-        vanishing_count = 0
-        total_layers = 0
-        
-        for name, param in model.named_parameters():
-            if param.grad is not None:
-                # Calculate gradient norm for this parameter
-                grad_norm = param.grad.data.norm().item()
-                grad_norms.append(grad_norm)
-                
-                # Store per-layer gradient norms
-                layer_name = name.split('.')[0]  # Get top-level layer name
-                if layer_name not in layer_grad_norms:
-                    layer_grad_norms[layer_name] = []
-                layer_grad_norms[layer_name].append(grad_norm)
-                
-                # Check for vanishing gradients
-                if grad_norm < self.gradient_threshold:
-                    vanishing_count += 1
-                    
-                total_layers += 1
-        
-        if not grad_norms:
-            return {
-                'mean_grad_norm': 0.0,
-                'max_grad_norm': 0.0,
-                'min_grad_norm': 0.0,
-                'vanishing_ratio': 1.0,
-                'layers_with_vanishing': 0,
-                'layer_grad_norms': {}
-            }
-        
-        # Calculate per-layer statistics
-        layer_stats = {}
-        for layer_name, norms in layer_grad_norms.items():
-            layer_stats[layer_name] = {
-                'mean': sum(norms) / len(norms),
-                'max': max(norms),
-                'min': min(norms)
-            }
-        
-        return {
-            'mean_grad_norm': sum(grad_norms) / len(grad_norms),
-            'max_grad_norm': max(grad_norms),
-            'min_grad_norm': min(grad_norms),
-            'vanishing_ratio': vanishing_count / total_layers if total_layers > 0 else 1.0,
-            'layers_with_vanishing': vanishing_count,
-            'layer_grad_norms': layer_stats
-        }
-    
-    def _check_vanishing_gradients(self, grad_stats, state):
-        """Check for vanishing gradients and issue warnings."""
-        vanishing_ratio = grad_stats['vanishing_ratio']
-        mean_grad_norm = grad_stats['mean_grad_norm']
-        
-        # Issue warnings based on gradient health
-        if vanishing_ratio > 0.5:
-            print(f"⚠️  WARNING: High vanishing gradient ratio at step {state.global_step}: "
-                  f"{vanishing_ratio:.2%} of layers have gradients < {self.gradient_threshold}")
-        
-        if mean_grad_norm < self.gradient_threshold:
-            print(f"⚠️  WARNING: Very small mean gradient norm at step {state.global_step}: "
-                  f"{mean_grad_norm:.2e}")
-        
-        if vanishing_ratio > 0.8:
-            print(f"🚨 CRITICAL: Severe vanishing gradients detected at step {state.global_step}! "
-                  f"Consider adjusting learning rate, model architecture, or initialization.")
-        
-        # Log detailed layer information if many layers have vanishing gradients
-        if vanishing_ratio > 0.3:
-            print(f"Gradient details at step {state.global_step}:")
-            print(f"  Mean: {mean_grad_norm:.2e}, Max: {grad_stats['max_grad_norm']:.2e}, "
-                  f"Min: {grad_stats['min_grad_norm']:.2e}")
-            
-            # Show which layers have the smallest gradients
-            if grad_stats['layer_grad_norms']:
-                sorted_layers = sorted(
-                    grad_stats['layer_grad_norms'].items(),
-                    key=lambda x: x[1]['mean']
-                )
-                print("  Layers with smallest gradients:")
-                for layer_name, stats in sorted_layers[:3]:  # Show top 3 worst
-                    print(f"    {layer_name}: mean={stats['mean']:.2e}, "
-                          f"min={stats['min']:.2e}")
-    
-    def get_gradient_summary(self):
-        """Get a summary of gradient health throughout training."""
-        if not self.gradient_history:
-            return "No gradient data collected"
-        
-        # Calculate overall statistics
-        all_means = [entry['mean_grad_norm'] for entry in self.gradient_history]
-        all_vanishing_ratios = [entry['vanishing_ratio'] for entry in self.gradient_history]
-        
-        summary = f"""
-Gradient Health Summary:
-========================
-Total checks: {len(self.gradient_history)}
-Mean gradient norm - Average: {sum(all_means)/len(all_means):.2e}, Range: [{min(all_means):.2e}, {max(all_means):.2e}]
-Vanishing ratio - Average: {sum(all_vanishing_ratios)/len(all_vanishing_ratios):.2%}, Max: {max(all_vanishing_ratios):.2%}
-"""
-        return summary
-
-
-class ValidationPlottingCallback(TrainerCallback):
-    """
-    Callback for generating validation plots during training.
-    """
-    
-    def __init__(self, mae_trainer):
-        self.mae_trainer = mae_trainer
-    
-    def on_epoch_end(self, args, state, control, **kwargs):
-        """Called at the end of each epoch."""
-        self.mae_trainer.plot_vitmae_validation_predictions(state.epoch)
-
-
 def main():
     """Main function for standalone script execution."""
     
-    parser = argparse.ArgumentParser(description='Train ViT MAE model for video pretraining')
+    parser = argparse.ArgumentParser(description='Train ViTMAE model for video pretraining')
     parser.add_argument('--config', type=str, default=None,
                         help='Path to config file (default: project_root/config.yaml)')
     
@@ -636,8 +609,9 @@ def main():
     # Initialize trainer
     trainer = ViTMAETrainer(config_path=args.config)
     
-    # Initialize model and data
-    trainer.initialize_model()
+    # Initialize models and data
+    trainer.initialize_models()
+    trainer.initialize_optimizer()
     trainer.load_data()
     
     # Run training

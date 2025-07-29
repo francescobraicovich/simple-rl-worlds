@@ -154,10 +154,10 @@ def init_vit_mae(config_path: str = None):
  
     config = ViTMAEConfig(
             # encoder (ViT‐Base defaults would be hidden_size=768)
-            hidden_size=64,                # your “latent_dim”
-            num_hidden_layers=2,           # same depth as ViT‐Base
+            hidden_size=256,                # your “latent_dim”
+            num_hidden_layers=6,           # same depth as ViT‐Base
             num_attention_heads=8,          # 512/8 = 64‑dim per head
-            intermediate_size=128,         # 4× hidden_size
+            intermediate_size=512,         # 4× hidden_size
             hidden_act="gelu",
             hidden_dropout_prob=0.0,
             attention_probs_dropout_prob=0.0,
@@ -165,18 +165,20 @@ def init_vit_mae(config_path: str = None):
 
             # image & patch sizing
             image_size=84,                  # match your 84×84 frames
-            patch_size=7,                   # 84/7 = 12 patches per side
+            patch_size=3,                   # 84/3 = 28 patches per side
             num_channels=4,                 # stack of 4 grayscale frames
 
             # decoder (lightweight MAE decoder)
-            decoder_hidden_size=64,        # mirror encoder latent
-            decoder_num_hidden_layers=2,    # shallow “head”
+            decoder_hidden_size=256,        # mirror encoder latent
+            decoder_num_hidden_layers=6,    # shallow “head”
             decoder_num_attention_heads=16, # head_dim = 512/16 = 32
-            decoder_intermediate_size=128,
+            decoder_intermediate_size=512,
 
             # masking & loss
             mask_ratio=0.35,                # same 75% masking
             norm_pix_loss=False             # or True if you want pixel‐norm loss
+
+
         )
 
     model = ViTMAEForPreTraining(config)
