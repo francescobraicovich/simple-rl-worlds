@@ -321,6 +321,7 @@ class MAETrainer:
         """Generate MAE validation plots for the current epoch if needed."""
         # Import here to avoid issues with module-level imports
         from src.utils.plot import plot_mae_validation_samples, get_random_validation_samples, should_plot_validation
+        import random
         
         # Check if we should plot for this epoch
         if not should_plot_validation(epoch, self.plot_frequency):
@@ -339,45 +340,75 @@ class MAETrainer:
         self.encoder.eval()
         self.decoder.eval()
         
-        # Get a validation batch
-        val_iter = iter(self.val_dataloader)
-        batch = next(val_iter)
-        state, next_state, action, _ = batch
+        # Collect samples from multiple random batches
+        n_samples = 5
+        samples_per_batch = 1  # Take 1 sample per batch to ensure diversity
+        n_batches = min(n_samples, len(self.val_dataloader))
         
-        # Move to device - we use current state for MAE pretraining
-        state = state.to(self.device)  # [B, T, H, W]
+        # Randomly select batch indices
+        batch_indices = random.sample(range(len(self.val_dataloader)), n_batches)
+        
+        all_masked_frames = []
+        all_reconstructed_frames = []
+        all_true_frames = []
+        
+        # Convert dataloader to list for random access
+        val_batches = list(self.val_dataloader)
         
         with torch.no_grad():
-            # 1. Extract tubelets from the batch
-            tubelets = extract_tubelets(state)  # [B, N, PATCH_T, PATCH_H, PATCH_W]
-            B, N, PATCH_T, PATCH_H, PATCH_W = tubelets.shape
-            
-            # 2. Sample a mask from uniform distribution over tubelet dimension
-            mask = generate_random_mask(B, N, self.mask_ratio, self.device)  # [B, N] boolean
-            
-            # 3. Clone tubelets and zero out masked ones to create masked input
-            masked_tubelets = tubelets.clone()
-            # Expand mask to match tubelet dimensions
-            mask_expanded = mask.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # [B, N, 1, 1, 1]
-            mask_expanded = mask_expanded.expand(-1, -1, PATCH_T, PATCH_H, PATCH_W)  # [B, N, PATCH_T, PATCH_H, PATCH_W]
-            masked_tubelets[mask_expanded] = 0.0
-            
-            # 4. Use reassemble_tubelets to fold masked tubelets back into tensor
-            masked_input = reassemble_tubelets(masked_tubelets)  # [B, T, H, W]
-            
-            # 5. Pass reassembled tensor through encoder to get latent representations
-            latent_repr = self.encoder(masked_input)  # [B, latent_dim]
-            
-            # 6. Pass through decoder to get reconstructions
-            reconstructed = self.decoder(latent_repr)  # [B, T, H, W]
+            for batch_idx in batch_indices:
+                batch = val_batches[batch_idx]
+                state, next_state, action, _ = batch
+                
+                # Move to device - we use current state for MAE pretraining
+                state = state.to(self.device)  # [B, T, H, W]
+                
+                # Take only the first sample from this batch
+                state_sample = state[:samples_per_batch]  # [1, T, H, W]
+                
+                # 1. Extract tubelets from the batch
+                tubelets = extract_tubelets(state_sample)  # [1, N, PATCH_T, PATCH_H, PATCH_W]
+                B, N, PATCH_T, PATCH_H, PATCH_W = tubelets.shape
+                
+                # 2. Sample a mask from uniform distribution over tubelet dimension
+                mask = generate_random_mask(B, N, self.mask_ratio, self.device)  # [1, N] boolean
+                
+                # 3. Clone tubelets and zero out masked ones to create masked input
+                masked_tubelets = tubelets.clone()
+                # Expand mask to match tubelet dimensions
+                mask_expanded = mask.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # [1, N, 1, 1, 1]
+                mask_expanded = mask_expanded.expand(-1, -1, PATCH_T, PATCH_H, PATCH_W)  # [1, N, PATCH_T, PATCH_H, PATCH_W]
+                masked_tubelets[mask_expanded] = 0.0
+                
+                # 4. Use reassemble_tubelets to fold masked tubelets back into tensor
+                masked_input = reassemble_tubelets(masked_tubelets)  # [1, T, H, W]
+                
+                # 5. Pass reassembled tensor through encoder to get latent representations
+                latent_repr = self.encoder(masked_input)  # [1, latent_dim]
+                
+                # 6. Pass through decoder to get reconstructions
+                reconstructed = self.decoder(latent_repr)  # [1, T, H, W]
+                
+                # Collect samples
+                all_masked_frames.append(masked_input)
+                all_reconstructed_frames.append(reconstructed)
+                all_true_frames.append(state_sample)
+        
+        # Concatenate all samples
+        masked_frames = torch.cat(all_masked_frames, dim=0)  # [n_batches, T, H, W]
+        reconstructed_frames = torch.cat(all_reconstructed_frames, dim=0)  # [n_batches, T, H, W]
+        true_frames = torch.cat(all_true_frames, dim=0)  # [n_batches, T, H, W]
+        
+        # Generate plots with sample indices for the concatenated tensor
+        sample_indices = list(range(len(batch_indices)))  # [0, 1, 2, ...]
         
         # Generate plots
         plot_mae_validation_samples(
-            masked_frames=masked_input,
-            reconstructed_frames=reconstructed,
-            true_frames=state,
+            masked_frames=masked_frames,
+            reconstructed_frames=reconstructed_frames,
+            true_frames=true_frames,
             epoch=epoch,
-            sample_indices=self.validation_sample_indices,
+            sample_indices=sample_indices,
             output_dir=self.plot_dir,
             model_name="mae_pretrain"
         )
