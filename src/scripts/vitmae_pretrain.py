@@ -36,6 +36,8 @@ from src.utils.init_models import init_vit_mae, load_config
 from src.scripts.collect_load_data import DataLoadingPipeline
 from src.utils.set_device import set_device
 from src.utils.scheduler_utils import create_lr_scheduler, step_scheduler, get_current_lr
+from transformers import get_scheduler
+
 
 
 class ViTMAETrainer:
@@ -112,21 +114,38 @@ class ViTMAETrainer:
         self.optimizer = optim.AdamW(
             trainable_params,
             lr=self.learning_rate,
-            weight_decay=self.weight_decay
+            weight_decay=self.weight_decay,
+            betas=(0.9, 0.95) # Recommended for ViT pre-training
         )
         
         # Initialize learning rate scheduler if configured
-        scheduler_config = self.training_config.get('lr_scheduler', {})
-        self.lr_scheduler = create_lr_scheduler(
-            self.optimizer, 
-            scheduler_config, 
-            self.num_epochs
+        #scheduler_config = self.training_config.get('lr_scheduler', {})
+        #self.lr_scheduler = create_lr_scheduler(
+        #    self.optimizer, 
+        #    scheduler_config, 
+        #    self.num_epochs
+        #)
+
+        # Calculate total training steps for the scheduler
+        num_training_steps = self.num_epochs * 65
+        # Use 5-10% of total steps for warmup
+        num_warmup_steps = int(num_training_steps * 0.05) 
+
+        print(f"Total training steps: {num_training_steps}")
+        print(f"Warmup steps: {num_warmup_steps}")
+
+        # Create the learning rate scheduler with warmup
+        self.lr_scheduler = get_scheduler(
+            name="linear", # or "cosine"
+            optimizer=self.optimizer,
+            num_warmup_steps=num_warmup_steps,
+            num_training_steps=num_training_steps
         )
         
-        if self.lr_scheduler is not None:
-            print(f"Initialized {scheduler_config.get('type', 'cosine')} learning rate scheduler")
-        else:
-            print("No learning rate scheduler configured")
+        #if self.lr_scheduler is not None:
+        #    print(f"Initialized {scheduler_config.get('type', 'cosine')} learning rate scheduler")
+        #else:
+        #    print("No learning rate scheduler configured")
             
     def load_data(self):
         """Load training and validation data using DataLoadingPipeline."""
@@ -361,6 +380,8 @@ class ViTMAETrainer:
         
         for batch_idx, batch in enumerate(self.train_dataloader):
             loss, grad_stats = self.train_step(batch)
+            self.lr_scheduler.step()
+
             total_loss += loss
             num_batches += 1
             
@@ -557,8 +578,8 @@ class ViTMAETrainer:
             self.plot_vitmae_validation_predictions(epoch)
             
             # Learning rate scheduling
-            if self.lr_scheduler is not None:
-                step_scheduler(self.lr_scheduler, val_loss)
+            #if self.lr_scheduler is not None:
+            #    step_scheduler(self.lr_scheduler, val_loss)
                 
             # Get current learning rate
             current_lr = get_current_lr(self.optimizer)
