@@ -51,8 +51,8 @@ def _initialize_environment(config: dict):
     # Get environment name from config
     env_name = config['environment']['name']
 
-    ppo_config = config.get('ppo_agent', {})
-    action_repetition_k = ppo_config.get('action_repetition_k', 1)
+    ppo_config = config['data_collection'].get('ppo_agent')
+    action_repetition_k = ppo_config.get('action_repetition_k')
 
     # if env_name starts with 'ALE-', we need to strip 
     is_ale = env_name.startswith('ALE/')
