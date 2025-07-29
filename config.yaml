@@ -14,16 +14,16 @@ data_and_patching:
 
 # --- Data Collection & Dataset Management ---
 data_collection:
-  num_episodes: 20
+  num_episodes: 40
   max_steps_per_episode: 2000
-  random_action_percentage: 0.2 # Percentage of actions to be random (0.0 = no random actions)
+  random_action_percentage: 0.5 # Percentage of actions to be random (0.0 = no random actions)
   load_path: "car_racing_rep_4.pth"
   filename: "car_racing_rep_4.pth"
   validation_split: 0.15
   ppo_agent:
     load: false # Whether to load a pre-trained PPO agent
     n_envs: 10 # Number of parallel environments for PPO training (default: CPU count)
-    action_repetition_k: 4
+    action_repetition_k: 8
     learning_rate: 0.0003
     total_train_timesteps: 500000 # Timesteps to train PPO before data collection (reduced for testing)
     n_steps: 128       # PPO n_steps parameter
@@ -66,8 +66,8 @@ training:
     ema_decay: 0.999 # Exponential moving average decay for model parameters
     gradient_clipping: 1.0 # Maximum norm for gradient clipping
     load_mae_weights: true # Whether to load pretrained MAE weights for encoder and decoder
-    freeze_encoder: true # Whether to freeze encoder parameters during training
-    freeze_decoder: true # Whether to freeze decoder parameters during training
+    freeze_encoder: false # Whether to freeze encoder parameters during training
+    freeze_decoder: false # Whether to freeze decoder parameters during training
     lr_scheduler:
       enabled: false # Whether to use learning rate scheduling
       type: "cosine" # Type of scheduler: "cosine", "step", "exponential", "plateau"

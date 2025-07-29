@@ -71,11 +71,6 @@ class FullPipelineRunner:
                 'description': 'Pre-training encoder using Masked Autoencoder (MAE) approach'
             },
             {
-                'name': 'jepa_pretrain',
-                'script': 'jepa_pretrain.py',
-                'description': 'Pre-training encoder and predictor using JEPA self-supervised learning'
-            },
-            {
                 'name': 'encoder_decoder',
                 'script': 'train_encoder_decoder.py',
                 'description': 'End-to-end training of encoder, predictor, and decoder'
@@ -291,13 +286,13 @@ Examples:
   python full_pipeline.py --only data_collection
   
   # Run only pretraining stages
-  python full_pipeline.py --only mae_pretrain jepa_pretrain
+  python full_pipeline.py --only mae_pretrain
   
   # Run only representation metrics analysis
   python full_pipeline.py --only representation_metrics
   
   # Skip pretraining stages
-  python full_pipeline.py --skip mae_pretrain jepa_pretrain
+  python full_pipeline.py --skip mae_pretrain
   
   # Skip specific stages
   python full_pipeline.py --skip encoder_decoder dynamics_reward_predictor
@@ -314,13 +309,13 @@ Examples:
                        help='Path to config.yaml file')
     
     parser.add_argument('--skip', nargs='+', default=None,
-                       choices=['model_init', 'data_collection', 'mae_pretrain', 'jepa_pretrain', 
+                       choices=['model_init', 'data_collection', 'mae_pretrain', 
                                'encoder_decoder', 'jepa', 'jepa_decoder', 'reward_predictor',
                                'dynamics_reward_predictor', 'representation_metrics'],
                        help='Stages to skip during execution')
     
     parser.add_argument('--only', nargs='+', default=None,
-                       choices=['model_init', 'data_collection', 'mae_pretrain', 'jepa_pretrain',
+                       choices=['model_init', 'data_collection', 'mae_pretrain',
                                'encoder_decoder', 'jepa', 'jepa_decoder', 'reward_predictor',
                                'dynamics_reward_predictor', 'representation_metrics'],
                        help='Run only these stages (ignores --skip)')
