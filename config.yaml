@@ -41,7 +41,7 @@ latent_dim: 256 # Dimension of the embedding space for the transformer model
 training:
   pretraining:
     num_epochs: 200 # Number of epochs for MAE pretraining
-    batch_size: 4 # Batch size for MAE pretraining
+    batch_size: 32 # Batch size for MAE pretraining
     learning_rate: 0.0001 # Learning rate for the MAE optimizer
     weight_decay: 0.0001 # Weight decay for the MAE optimizer
     gradient_clipping: 10.0 # Maximum norm for gradient clipping
