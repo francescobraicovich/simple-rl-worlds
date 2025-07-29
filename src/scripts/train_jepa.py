@@ -93,6 +93,10 @@ class JEPATrainer:
         self.jepa_weights_path = "weights/jepa_pretraining/best_checkpoint.pth"
         self.freeze_encoder = self.training_config.get('freeze_encoder', False)
         
+        # MAE pretraining configuration
+        self.load_mae_weights = self.training_config.get('load_mae_weights', False)
+        self.mae_weights_path = "weights/mae_pretraining/best_checkpoint.pth"
+        
     def initialize_models(self):
         """Initialize encoder, predictor, and target encoder models."""
         # Initialize main models
@@ -102,8 +106,11 @@ class JEPATrainer:
         # Initialize target encoder as a copy of the main encoder
         self.target_encoder = copy.deepcopy(self.encoder).to(self.device)
         
-        # Load JEPA pretrained weights if configured
-        if self.load_jepa_weights:
+        # Load MAE pretrained weights if configured (takes priority over JEPA weights)
+        if self.load_mae_weights:
+            self.load_mae_pretrained_weights()
+        # Load JEPA pretrained weights if configured (and MAE weights not loaded)
+        elif self.load_jepa_weights:
             self.load_jepa_pretrained_weights()
             
         # Freeze encoder if configured
@@ -158,6 +165,34 @@ class JEPATrainer:
                 
         except Exception as e:
             print(f"Error loading JEPA checkpoint: {e}")
+            print("Proceeding with randomly initialized weights...")
+            
+    def load_mae_pretrained_weights(self):
+        """Load pretrained weights from MAE checkpoint."""
+        mae_checkpoint_path = Path(self.mae_weights_path)
+        
+        if not mae_checkpoint_path.exists():
+            print(f"Warning: MAE checkpoint not found at {mae_checkpoint_path}")
+            print("Proceeding with randomly initialized weights...")
+            return
+            
+        print(f"Loading MAE pretrained weights from {mae_checkpoint_path}")
+        
+        try:
+            checkpoint = torch.load(mae_checkpoint_path, map_location=self.device)
+            
+            # Load encoder weights
+            if 'encoder_state_dict' in checkpoint:
+                self.encoder.load_state_dict(checkpoint['encoder_state_dict'])
+                print("✓ Loaded pretrained encoder weights from MAE")
+            else:
+                print("Warning: No encoder_state_dict found in MAE checkpoint")
+                
+            # Update target encoder to match the loaded encoder
+            self.target_encoder = copy.deepcopy(self.encoder).to(self.device)
+                
+        except Exception as e:
+            print(f"Error loading MAE checkpoint: {e}")
             print("Proceeding with randomly initialized weights...")
             
     def freeze_model(self, model, model_name):
@@ -469,11 +504,18 @@ def main():
     parser = argparse.ArgumentParser(description='Train JEPA models')
     parser.add_argument('--config', type=str, default=None,
                        help='Path to config.yaml file')
+    parser.add_argument('--mae-weights-path', type=str, 
+                       help='Path to MAE pretrained weights checkpoint')
     
     args = parser.parse_args()
     
     # Create trainer and run training
     trainer = JEPATrainer(config_path=args.config)
+    
+    # Override MAE weights path if provided
+    if args.mae_weights_path:
+        trainer.mae_weights_path = args.mae_weights_path
+        
     trainer.train()
 
 
