@@ -24,6 +24,7 @@ from typing import Tuple, Optional
 import torch
 import torch.optim as optim
 import wandb
+import torch.nn.functional as F
 
 # Set MPS fallback for unsupported operations
 os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
@@ -38,7 +39,43 @@ from src.utils.set_device import set_device
 from src.utils.scheduler_utils import create_lr_scheduler, step_scheduler, get_current_lr
 from transformers import get_scheduler
 
-
+class MNISTVideoDataset:
+    """
+    Custom dataset that converts MNIST images to video-like sequences for ViTMAE training.
+    Each MNIST sample is converted to [4, 84, 84] format by:
+    1. Resizing 28x28 to 84x84
+    2. Repeating the single channel 4 times to create temporal dimension
+    """
+    
+    def __init__(self, mnist_dataset):
+        self.mnist_dataset = mnist_dataset
+        
+    def __len__(self):
+        return len(self.mnist_dataset)
+        
+    def __getitem__(self, idx):
+        image, label = self.mnist_dataset[idx]
+        
+        # Convert PIL image to tensor if needed and ensure it's float
+        if not torch.is_tensor(image):
+            from torchvision import transforms
+            transform = transforms.ToTensor()
+            image = transform(image)
+        
+        # image is now [1, 28, 28], convert to [1, 84, 84]
+        image = F.interpolate(image.unsqueeze(0), size=(84, 84), mode='bilinear', align_corners=False)
+        image = image.squeeze(0)  # [1, 84, 84]
+        
+        # Repeat to create 4 temporal frames: [1, 84, 84] -> [4, 84, 84]
+        state = image.repeat(4, 1, 1)  # [4, 84, 84]
+        
+        # For ViTMAE we only need the state, but to match the existing interface
+        # we return (state, next_state, action, reward) where everything except state is dummy
+        next_state = state.clone()  # Dummy next_state
+        action = torch.tensor(0)    # Dummy action
+        reward = torch.tensor(0.0)  # Dummy reward
+        
+        return state, next_state, action, reward
 
 class ViTMAETrainer:
     """
@@ -153,15 +190,91 @@ class ViTMAETrainer:
             self.batch_size,
             self.config_path
         )
-
-        # Get training and validation dataloaders
-        self.train_dataloader, self.val_dataloader = data_pipeline.run_pipeline()
+        scheduler_config = self.training_config.get('lr_scheduler', {})
+        self.lr_scheduler = create_lr_scheduler(
+            self.optimizer, 
+            scheduler_config, 
+            self.num_epochs
+        )
         
-        print(f"Loaded {len(self.train_dataloader)} training batches")
-        if self.val_dataloader is not None:
-            print(f"Loaded {len(self.val_dataloader)} validation batches")
+        if self.lr_scheduler is not None:
+            print(f"Initialized {scheduler_config.get('type', 'cosine')} learning rate scheduler")
         else:
-            print("No validation data available")
+            print("No learning rate scheduler configured")
+
+    def load_mnist_data(self):
+        """Load MNIST data and convert to video-like format matching existing data shape."""
+        from torchvision import datasets, transforms
+        from torch.utils.data import DataLoader
+        
+        print("Loading MNIST data for ViTMAE testing...")
+        
+        # Simple transform - just convert to tensor, we'll handle resizing in the dataset
+        transform = transforms.ToTensor()
+        
+        # Load MNIST train and test sets
+        train_dataset = datasets.MNIST(
+            root='./mnist_data', 
+            train=True, 
+            download=True, 
+            transform=transform
+        )
+        
+        test_dataset = datasets.MNIST(
+            root='./mnist_data', 
+            train=False, 
+            download=True, 
+            transform=transform
+        )
+        
+        # Wrap with our custom dataset class
+        train_video_dataset = MNISTVideoDataset(train_dataset)
+        test_video_dataset = MNISTVideoDataset(test_dataset)
+        
+        # Create dataloaders
+        self.train_dataloader = DataLoader(
+            train_video_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=0,  # Set to 0 to avoid multiprocessing issues
+            drop_last=True
+        )
+        
+        self.val_dataloader = DataLoader(
+            test_video_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=0,  # Set to 0 to avoid multiprocessing issues
+            drop_last=True
+        )
+        
+        print("Loaded MNIST data:")
+        print(f"  Training batches: {len(self.train_dataloader)}")
+        print(f"  Validation batches: {len(self.val_dataloader)}")
+        print(f"  Data shape per batch: [batch_size={self.batch_size}, temporal=4, height=84, width=84]")
+            
+    def load_data(self, use_mnist=True):
+        """Load training and validation data. Use MNIST for testing or original data pipeline."""
+        if use_mnist:
+            self.load_mnist_data()
+        else:
+            # Use original data pipeline
+            data_pipeline = DataLoadingPipeline(
+                self.batch_size,
+                self.config_path
+            )
+
+            # Get training and validation dataloaders
+            self.train_dataloader, self.val_dataloader = data_pipeline.run_pipeline()
+            
+            print(f"Loaded {len(self.train_dataloader)} training batches")
+            if self.val_dataloader is not None:
+                print(f"Loaded {len(self.val_dataloader)} validation batches")
+            else:
+                print("No validation data available")
+
+
+
     
     def preprocess_frames_for_vitmae(self, state: torch.Tensor) -> torch.Tensor:
         """
@@ -495,13 +608,14 @@ class ViTMAETrainer:
             
             # Create masked input visualization by zeroing out masked patches
             masked_input = self.create_masked_visualization(pixel_values, mask)  # [B, T, H, W]
+            reconstructed_img_clamped = torch.clamp(reconstructed, 0, 1)
         
         # Generate plots using existing MAE plotting function
         # Show: masked input -> reconstructed -> original (true)
         try:
             plot_mae_validation_samples(
                 masked_frames=masked_input,  # Show the actual masked input with zero patches
-                reconstructed_frames=reconstructed,
+                reconstructed_frames=reconstructed_img_clamped,
                 true_frames=state,    # Ground truth frames
                 epoch=epoch,
                 sample_indices=self.validation_sample_indices,
@@ -624,6 +738,8 @@ def main():
     parser = argparse.ArgumentParser(description='Train ViTMAE model for video pretraining')
     parser.add_argument('--config', type=str, default=None,
                         help='Path to config file (default: project_root/config.yaml)')
+    parser.add_argument('--use-mnist', action='store_true',
+                        help='Use MNIST data instead of original data for testing ViTMAE learning')
     
     args = parser.parse_args()
     
@@ -633,7 +749,7 @@ def main():
     # Initialize models and data
     trainer.initialize_models()
     trainer.initialize_optimizer()
-    trainer.load_data()
+    trainer.load_data(use_mnist=args.use_mnist)
     
     # Run training
     trainer.train()

@@ -175,7 +175,7 @@ def init_vit_mae(config_path: str = None):
             decoder_intermediate_size=256,
 
             # masking & loss
-            mask_ratio=0.75,                # same 75% masking
+            mask_ratio=0.35,                # same 75% masking
             norm_pix_loss=True             # or True if you want pixel‐norm loss
 
 
