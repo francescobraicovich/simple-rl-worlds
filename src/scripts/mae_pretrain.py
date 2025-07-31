@@ -200,7 +200,7 @@ class MAETrainer:
                     model_name="mae_pretrain"
                 )
                 
-                print(f"Generated validation plots for epoch {epoch}")
+                #print(f"Generated validation plots for epoch {epoch}")
                 
         except Exception as e:
             print(f"Warning: Failed to generate validation plots for epoch {epoch}: {e}")
@@ -432,7 +432,7 @@ class MAETrainer:
             self.best_val_loss = current_loss
             best_path = self.checkpoint_dir / "best_checkpoint.pth"
             torch.save(checkpoint, best_path)
-            print(f"New best checkpoint saved with loss: {current_loss:.6f}")
+            #print(f"New best checkpoint saved with loss: {current_loss:.6f}")
             
     def train(self):
         """
