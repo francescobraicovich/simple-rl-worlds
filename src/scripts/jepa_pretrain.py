@@ -39,7 +39,7 @@ from src.models.jepa_pretrain_predictor import JEPAPretrainPredictor
 from src.scripts.collect_load_data import DataLoadingPipeline
 from src.utils.set_device import set_device
 from src.utils.scheduler_utils import create_lr_scheduler, step_scheduler, get_current_lr
-from src.utils.mask import extract_tubelets, reassemble_tubelets, generate_random_mask
+from utils.masking import extract_tubelets, reassemble_tubelets, generate_random_mask
 
 
 class JEPATrainer:
