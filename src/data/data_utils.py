@@ -51,8 +51,8 @@ def _initialize_environment(config: dict):
     # Get environment name from config
     env_name = config['environment']['name']
 
-    ppo_config = config.get('ppo_agent', {})
-    action_repetition_k = ppo_config.get('action_repetition_k', 1)
+    ppo_config = config['data_collection'].get('ppo_agent')
+    action_repetition_k = ppo_config.get('action_repetition_k')
 
     # if env_name starts with 'ALE-', we need to strip 
     is_ale = env_name.startswith('ALE/')
@@ -68,12 +68,18 @@ def _initialize_environment(config: dict):
         if is_ale:
             # For ALE environments, we can use 'rgb_array' directly
             env = gym.make(env_name, render_mode=render_mode, repeat_action_probability=0.0, frameskip=action_repetition_k)
+        elif env_name == 'CarRacing-v3':
+            # For CarRacing-v3, set continuous to False for discrete action space
+            env = gym.make(env_name, render_mode=render_mode, continuous=False)
         else:
             env = gym.make(env_name, render_mode=render_mode)
     except Exception as e:
         print(f"Could not create env with render_mode='rgb_array' ({e}). Trying render_mode=None.")
         render_mode = None
-        env = gym.make(env_name, render_mode=render_mode)
+        if env_name == 'CarRacing-v3':
+            env = gym.make(env_name, render_mode=render_mode, continuous=False)
+        else:
+            env = gym.make(env_name, render_mode=render_mode)
 
     # Apply preprocessing wrappers
     img_h = config['data_and_patching'].get('image_height')
