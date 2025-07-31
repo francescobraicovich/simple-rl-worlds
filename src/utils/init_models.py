@@ -2,12 +2,40 @@ import yaml
 import os
 from typing import Dict, Any
 
-from ..models.encoder import Encoder
+from ..models.encoder import VisionTransformerEncoder
 from ..models.predictor import MLPHistoryPredictor
 from ..models.decoder import Decoder
 from ..models.reward_predictor import MLPRewardPredictor
 from ..models.vicreg import VICRegLoss
 from ..data.data_utils import _initialize_environment
+from dataclasses import dataclass
+
+@dataclass
+class ViTConfig:
+    # encoder
+    hidden_size: int = 128
+    num_hidden_layers: int = 4
+    num_attention_heads: int = 8
+    intermediate_size: int = 512
+    hidden_act: str = "gelu"
+    hidden_dropout_prob: float = 0.0
+    attention_probs_dropout_prob: float = 0.0
+    layer_norm_eps: float = 1e-12
+
+    # image & patch
+    image_size: int = 84
+    patch_size: int = 7
+    num_channels: int = 4
+
+    # decoder (ViT‑MAE)
+    decoder_hidden_size: int = 128
+    decoder_num_hidden_layers: int = 4
+    decoder_num_attention_heads: int = 16
+    decoder_intermediate_size: int = 512
+
+    # masking & loss
+    mask_ratio: float = 0.35
+
 
 def load_config(config_path: str = None) -> Dict[str, Any]:
     """
@@ -29,7 +57,7 @@ def load_config(config_path: str = None) -> Dict[str, Any]:
     return config
 
 
-def init_encoder(config_path: str = None) -> Encoder:
+def init_encoder(config_path: str = None) -> VisionTransformerEncoder:
     """
     Initialize the ConvEncoder model from configuration.
 
@@ -39,13 +67,9 @@ def init_encoder(config_path: str = None) -> Encoder:
     Returns:
         Initialized ConvEncoder model.
     """
-    config = load_config(config_path)
-    latent_dim = config['latent_dim']
+    config = ViTConfig() 
+    encoder = VisionTransformerEncoder(config)
 
-    encoder = Encoder(
-        latent_dim=latent_dim,
-    )
-    
     return encoder
 
 
@@ -90,10 +114,10 @@ def init_decoder(config_path: str = None) -> Decoder:
     Returns:
         Initialized HybridConvTransformerDecoder model.
     """
-    config = load_config(config_path)
+    config = ViTConfig()  # Use ViTConfig for decoder as well
     
     decoder = Decoder(
-        latent_dim=config['latent_dim'],  # Use global latent_dim from config
+        config
     )
     
     return decoder
