@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """
-Masked Autoencoder (MAE) Pretraining Script
+MAE Pretraining Script
 
-This script implements self-supervised pretraining using Masked Autoencoder approach.
-The main objective is to train encoder and decoder models to reconstruct masked
-video tubelets, learning powerful representations through reconstruction.
+This script implements self-supervised pretraining of Vision Transformer encoder and 
+decoder models using Masked Autoencoder (MAE) approach. The main objective is to train:
+1. An encoder to produce powerful visual representations from unmasked patches
+2. A decoder to reconstruct masked patches from encoded representations
 
-The training process:
-1. Extract tubelets from video sequences
-2. Randomly mask a subset of tubelets
-3. Encode masked input through encoder
-4. Decode latent representations to reconstruct original tubelets
-5. Compute reconstruction loss only on masked tubelets
+The training uses masked reconstruction loss where a large portion of image patches
+are masked and the model learns to reconstruct them from the visible patches.
 """
 
 import os
@@ -24,21 +21,19 @@ from pathlib import Path
 from typing import Tuple, Optional
 
 import torch
-import torch.nn as nn
 import torch.optim as optim
 import wandb
-import numpy as np
 
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-# Local project imports (must be after path modification)
-from src.utils.init_models import init_encoder, init_decoder, load_config  # noqa: E402
-from src.scripts.collect_load_data import DataLoadingPipeline  # noqa: E402
-from src.utils.set_device import set_device  # noqa: E402
-from src.utils.scheduler_utils import create_lr_scheduler, step_scheduler, get_current_lr  # noqa: E402
-from src.utils.mask import extract_tubelets, reassemble_tubelets, generate_random_mask  # noqa: E402
+from src.utils.init_models import init_encoder, init_decoder, load_config
+from src.scripts.collect_load_data import DataLoadingPipeline
+from src.utils.set_device import set_device
+from src.utils.scheduler_utils import create_lr_scheduler, step_scheduler
+from src.utils.masking import random_masking, patchify, compute_reconstruction_loss, unpatchify, get_masked_image
+from src.utils.plot import plot_mae_validation_samples
 
 
 class MAETrainer:
@@ -46,11 +41,10 @@ class MAETrainer:
     Trainer class for Masked Autoencoder (MAE) pretraining.
     
     This class handles the complete pretraining pipeline including:
-    - Model initialization (encoder, decoder)
+    - Model initialization (encoder and decoder)
     - Data loading and preprocessing
-    - Tubelet extraction and masking
-    - Training and validation loops with reconstruction loss
-    - Optimization of encoder and decoder parameters
+    - Masked reconstruction training and validation loops
+    - Random patch masking and reconstruction loss computation
     - Checkpointing and logging
     """
     
@@ -64,7 +58,7 @@ class MAETrainer:
         self.config_path = config_path
         self.config = load_config(config_path)
         
-        # Training parameters
+        # Training parameters from pretraining section
         self.training_config = self.config['training']['pretraining']
         self.num_epochs = self.training_config['num_epochs']
         self.batch_size = self.training_config['batch_size']
@@ -83,8 +77,7 @@ class MAETrainer:
         # Training components
         self.optimizer = None
         self.lr_scheduler = None
-        self.criterion = nn.L1Loss()  # Mean Absolute Error for reconstruction
-
+        
         # Data
         self.train_dataloader = None
         self.val_dataloader = None
@@ -94,23 +87,123 @@ class MAETrainer:
         self.checkpoint_dir = Path("weights/mae_pretraining")
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         
+        # Step counter for batch-level logging
+        self.global_step = 0
+        
         # Plotting configuration
-        self.plot_frequency = 1 # Plot every 5 epochs
+        self.plot_frequency = 1  # Plot every epoch for MAE
         self.plot_dir = "evaluation_plots/decoder_plots/mae_pretrain"
-        self.validation_sample_indices = None  # Will be set once data is loaded
+        self.val_sample_indices = None  # Will be set once during first validation
         
-        # Gradient logging configuration
-        self.gradient_log_frequency = self.training_config.get('gradient_log_frequency', 10)  # Log every N batches
+    def compute_gradient_vanishing_ratio(self) -> float:
+        """
+        Compute gradient vanishing ratio as the ratio of small gradients to total gradients.
         
-        # Vanishing gradient detection configuration
-        self.vanishing_threshold = self.training_config.get('vanishing_threshold', 1e-5)
-        self.exploding_threshold = self.training_config.get('exploding_threshold', 10.0)
-        self.vanishing_warning_ratio = self.training_config.get('vanishing_warning_ratio', 0.5)
-        self.exploding_warning_ratio = self.training_config.get('exploding_warning_ratio', 0.1)
+        Returns:
+            Ratio of gradients with magnitude < 1e-7 to total gradients
+        """
+        total_params = 0
+        small_grad_params = 0
         
-        # WandB configuration with safety checks
-        self.wandb_enabled = self.config.get('wandb', {}).get('enabled', False)
-        self.wandb_project = self.config.get('wandb', {}).get('project', 'mae-pretraining')
+        for model in [self.encoder, self.decoder]:
+            for param in model.parameters():
+                if param.grad is not None:
+                    grad_magnitude = param.grad.abs()
+                    total_params += grad_magnitude.numel()
+                    small_grad_params += (grad_magnitude < 1e-7).sum().item()
+        
+        if total_params == 0:
+            return 0.0
+        return small_grad_params / total_params
+    
+    def plot_validation_samples(self, epoch: int):
+        """
+        Generate and save validation plots showing masked input, reconstruction, and ground truth.
+        
+        Args:
+            epoch: Current epoch number
+        """
+        if self.val_dataloader is None:
+            print(f"Skipping validation plots for epoch {epoch}: No validation data available")
+            return
+            
+        try:
+            self.encoder.eval()
+            self.decoder.eval()
+            
+            with torch.no_grad():
+                # Get a batch from validation data
+                val_iter = iter(self.val_dataloader)
+                batch = next(val_iter)
+                state, _, _, _ = batch
+                
+                # Move to device
+                state = state.to(self.device)
+                batch_size = state.shape[0]
+                
+                # Select sample indices for consistent plotting (first time only)
+                if self.val_sample_indices is None:
+                    n_samples = min(5, batch_size)
+                    self.val_sample_indices = list(range(n_samples))
+                
+                # Select only the samples we want to plot
+                plot_states = state[self.val_sample_indices]
+                
+                # 1. Patch embedding
+                x = self.encoder.patch_embed(plot_states)  # [B, N, D]
+                
+                # 2. Random masking (use same seed for consistent masking)
+                torch.manual_seed(1)  # For consistent masking across epochs
+                x_vis, mask, ids_keep, ids_restore = random_masking(x, self.mask_ratio)
+                
+                # 3. Encode visible patches only
+                x_encoded = self.encoder(plot_states, ids_keep)  # [B, N_vis+1, D]
+                
+                # Remove CLS token for decoder
+                x_encoded = x_encoded[:, 1:, :]  # [B, N_vis, D]
+                
+                # 4. Decode to reconstruct all patches
+                x_reconstructed = self.decoder(x_encoded, ids_restore)  # [B, N, P*P*C]
+                
+                # 5. Convert patches back to images for visualization
+                # Get the ground truth images
+                true_frames = plot_states  # [B, C, H, W]
+                
+                # Convert reconstructed patches to images
+                reconstructed_frames = unpatchify(
+                    x_reconstructed, 
+                    self.encoder.config.patch_size, 
+                    self.encoder.config.image_size
+                )  # [B, C, H, W]
+                
+                # Create masked images for visualization
+                masked_frames = get_masked_image(
+                    plot_states, 
+                    mask, 
+                    self.encoder.config.patch_size
+                )  # [B, C, H, W]
+                
+                # Convert to proper format for plotting (take first channel if stacked)
+                #if true_frames.shape[1] > 1:  # If we have stacked frames
+                #    true_frames = true_frames[:, 0:1, :, :]  # Take first channel
+                #    reconstructed_frames = reconstructed_frames[:, 0:1, :, :]
+                #    masked_frames = masked_frames[:, 0:1, :, :]
+                
+                # Plot the samples
+                plot_mae_validation_samples(
+                    masked_frames=masked_frames,
+                    reconstructed_frames=reconstructed_frames,
+                    true_frames=true_frames,
+                    epoch=epoch,
+                    sample_indices=list(range(len(self.val_sample_indices))),
+                    output_dir=self.plot_dir,
+                    model_name="mae_pretrain"
+                )
+                
+                print(f"Generated validation plots for epoch {epoch}")
+                
+        except Exception as e:
+            print(f"Warning: Failed to generate validation plots for epoch {epoch}: {e}")
         
     def initialize_models(self):
         """Initialize encoder and decoder models."""
@@ -118,19 +211,21 @@ class MAETrainer:
         self.encoder = init_encoder(self.config_path).to(self.device)
         self.decoder = init_decoder(self.config_path).to(self.device)
         
-        print(f"Initialized encoder with {sum(p.numel() for p in self.encoder.parameters())} parameters")
-        print(f"Initialized decoder with {sum(p.numel() for p in self.decoder.parameters())} parameters")
+        print(f"Initialized encoder with {sum(p.numel() for p in self.encoder.parameters()):,} parameters")
+        print(f"Initialized decoder with {sum(p.numel() for p in self.decoder.parameters()):,} parameters")
         
     def initialize_optimizer(self):
-        """Initialize the AdamW optimizer and learning rate scheduler for all trainable parameters."""
-        # Combine parameters from encoder and decoder
-        trainable_params = list(self.encoder.parameters()) + list(self.decoder.parameters())
+        """Initialize optimizer and learning rate scheduler."""
+        # Combine all trainable parameters
+        all_params = list(self.encoder.parameters()) + list(self.decoder.parameters())
         
         self.optimizer = optim.AdamW(
-            trainable_params,
+            all_params,
             lr=self.learning_rate,
             weight_decay=self.weight_decay
         )
+        
+        print(f"Initialized AdamW optimizer with lr={self.learning_rate}, weight_decay={self.weight_decay}")
         
         # Initialize learning rate scheduler if configured
         scheduler_config = self.training_config.get('lr_scheduler', {})
@@ -144,363 +239,143 @@ class MAETrainer:
             print(f"Initialized {scheduler_config.get('type', 'cosine')} learning rate scheduler")
         else:
             print("No learning rate scheduler configured")
-            
+        
     def load_data(self):
         """Load training and validation data using DataLoadingPipeline."""
-        data_pipeline = DataLoadingPipeline(
-            self.batch_size,
-            self.config_path
+        # Initialize data loading pipeline (loads existing data only)
+        pipeline = DataLoadingPipeline(
+            batch_size=self.batch_size,
+            config_path=self.config_path
         )
 
-        # Get training and validation dataloaders
-        self.train_dataloader, self.val_dataloader = data_pipeline.run_pipeline()
+        # Run the pipeline to get dataloaders from existing data
+        self.train_dataloader, self.val_dataloader = pipeline.run_pipeline()
         
-        print(f"Loaded {len(self.train_dataloader)} training batches")
-        if self.val_dataloader is not None:
-            print(f"Loaded {len(self.val_dataloader)} validation batches")
-        else:
-            print("No validation data available")
-            
-    def log_gradients(self):
+    def train_step(self, batch: Tuple[torch.Tensor, ...]) -> Tuple[float, float]:
         """
-        Log gradient statistics for all layers to wandb.
-        This helps monitor gradient flow and identify training issues including vanishing gradients.
-        """
-        # Thresholds for vanishing gradient detection
-        vanishing_threshold = self.vanishing_threshold
-        exploding_threshold = self.exploding_threshold
-        
-        vanishing_count = 0
-        exploding_count = 0
-        total_layers = 0
-        
-        # Log encoder gradients
-        for name, param in self.encoder.named_parameters():
-            if param.grad is not None:
-                # Compute gradient statistics
-                grad_norm = param.grad.norm().item()
-                grad_mean = param.grad.mean().item()
-                grad_std = param.grad.std().item()
-                grad_max = param.grad.max().item()
-                grad_min = param.grad.min().item()
-                
-                # Check for vanishing/exploding gradients
-                total_layers += 1
-                if grad_norm < vanishing_threshold:
-                    vanishing_count += 1
-                elif grad_norm > exploding_threshold:
-                    exploding_count += 1
-                
-                # Log to wandb with encoder prefix
-                wandb.log({
-                    f"gradients/encoder_{name}_norm": grad_norm,
-                    f"gradients/encoder_{name}_mean": grad_mean,
-                    f"gradients/encoder_{name}_std": grad_std,
-                    f"gradients/encoder_{name}_max": grad_max,
-                    f"gradients/encoder_{name}_min": grad_min,
-                    f"gradients/encoder_{name}_vanishing": float(grad_norm < vanishing_threshold),
-                    f"gradients/encoder_{name}_exploding": float(grad_norm > exploding_threshold),
-                })
-        
-        # Log decoder gradients
-        for name, param in self.decoder.named_parameters():
-            if param.grad is not None:
-                # Compute gradient statistics
-                grad_norm = param.grad.norm().item()
-                grad_mean = param.grad.mean().item()
-                grad_std = param.grad.std().item()
-                grad_max = param.grad.max().item()
-                grad_min = param.grad.min().item()
-                
-                # Check for vanishing/exploding gradients
-                total_layers += 1
-                if grad_norm < vanishing_threshold:
-                    vanishing_count += 1
-                elif grad_norm > exploding_threshold:
-                    exploding_count += 1
-                
-                # Log to wandb with decoder prefix
-                wandb.log({
-                    f"gradients/decoder_{name}_norm": grad_norm,
-                    f"gradients/decoder_{name}_mean": grad_mean,
-                    f"gradients/decoder_{name}_std": grad_std,
-                    f"gradients/decoder_{name}_max": grad_max,
-                    f"gradients/decoder_{name}_min": grad_min,
-                    f"gradients/decoder_{name}_vanishing": float(grad_norm < vanishing_threshold),
-                    f"gradients/decoder_{name}_exploding": float(grad_norm > exploding_threshold),
-                })
-        
-        # Log overall gradient statistics
-        all_params = list(self.encoder.parameters()) + list(self.decoder.parameters())
-        total_norm = 0.0
-        total_params = 0
-        
-        for param in all_params:
-            if param.grad is not None:
-                param_norm = param.grad.data.norm(2)
-                total_norm += param_norm.item() ** 2
-                total_params += param.numel()
-        
-        total_norm = total_norm ** (1. / 2)
-        
-        # Calculate vanishing/exploding gradient ratios
-        vanishing_ratio = vanishing_count / total_layers if total_layers > 0 else 0.0
-        exploding_ratio = exploding_count / total_layers if total_layers > 0 else 0.0
-        
-        wandb.log({
-            "gradients/total_grad_norm": total_norm,
-            "gradients/total_params": total_params,
-            "gradients/vanishing_count": vanishing_count,
-            "gradients/exploding_count": exploding_count,
-            "gradients/total_layers": total_layers,
-            "gradients/vanishing_ratio": vanishing_ratio,
-            "gradients/exploding_ratio": exploding_ratio,
-            "gradients/vanishing_threshold": vanishing_threshold,
-            "gradients/exploding_threshold": exploding_threshold,
-        })
-        
-        # Print warnings for vanishing/exploding gradients
-        if vanishing_ratio > self.vanishing_warning_ratio:
-            print(f"⚠️  WARNING: {vanishing_ratio:.1%} of layers have vanishing gradients (norm < {vanishing_threshold})")
-        if exploding_ratio > self.exploding_warning_ratio:
-            print(f"⚠️  WARNING: {exploding_ratio:.1%} of layers have exploding gradients (norm > {exploding_threshold})")
-            
-    def check_vanishing_gradients(self) -> dict:
-        """
-        Check for vanishing and exploding gradients across all model parameters.
-        
-        Returns:
-            Dictionary containing gradient health statistics
-        """
-        vanishing_count = 0
-        exploding_count = 0
-        total_layers = 0
-        min_grad_norm = float('inf')
-        max_grad_norm = 0.0
-        grad_norms = []
-        
-        # Check all parameters in both encoder and decoder
-        all_named_params = list(self.encoder.named_parameters()) + list(self.decoder.named_parameters())
-        
-        for name, param in all_named_params:
-            if param.grad is not None:
-                grad_norm = param.grad.norm().item()
-                grad_norms.append(grad_norm)
-                
-                total_layers += 1
-                min_grad_norm = min(min_grad_norm, grad_norm)
-                max_grad_norm = max(max_grad_norm, grad_norm)
-                
-                if grad_norm < self.vanishing_threshold:
-                    vanishing_count += 1
-                elif grad_norm > self.exploding_threshold:
-                    exploding_count += 1
-        
-        # Handle case where no gradients are available
-        if total_layers == 0:
-            return {
-                'vanishing_count': 0,
-                'exploding_count': 0,
-                'total_layers': 0,
-                'vanishing_ratio': 0.0,
-                'exploding_ratio': 0.0,
-                'min_grad_norm': 0.0,
-                'max_grad_norm': 0.0,
-                'mean_grad_norm': 0.0,
-                'std_grad_norm': 0.0,
-                'median_grad_norm': 0.0,
-                'has_vanishing_problem': False,
-                'has_exploding_problem': False,
-            }
-        
-        # Calculate statistics
-        vanishing_ratio = vanishing_count / total_layers if total_layers > 0 else 0.0
-        exploding_ratio = exploding_count / total_layers if total_layers > 0 else 0.0
-        
-        grad_norms = np.array(grad_norms)
-        
-        return {
-            'vanishing_count': vanishing_count,
-            'exploding_count': exploding_count,
-            'total_layers': total_layers,
-            'vanishing_ratio': vanishing_ratio,
-            'exploding_ratio': exploding_ratio,
-            'min_grad_norm': min_grad_norm if min_grad_norm != float('inf') else 0.0,
-            'max_grad_norm': max_grad_norm,
-            'mean_grad_norm': np.mean(grad_norms) if len(grad_norms) > 0 else 0.0,
-            'std_grad_norm': np.std(grad_norms) if len(grad_norms) > 0 else 0.0,
-            'median_grad_norm': np.median(grad_norms) if len(grad_norms) > 0 else 0.0,
-            'has_vanishing_problem': vanishing_ratio > self.vanishing_warning_ratio,
-            'has_exploding_problem': exploding_ratio > self.exploding_warning_ratio,
-        }
-            
-    def train_step(self, batch: Tuple[torch.Tensor, ...], batch_idx: int = 0) -> float:
-        """
-        Perform a single training step with MAE reconstruction loss and input noise injection.
+        Perform a single MAE training step.
         
         Args:
             batch: Tuple containing (state, next_state, action, reward)
-            batch_idx: Current batch index for logging purposes
             
         Returns:
-            Reconstruction loss for this batch
+            Tuple of (loss value, gradient vanishing ratio) for this batch
         """
-        state, next_state, action, reward = batch
-
-        # Move to device - we use current state for MAE pretraining
-        state = state.to(self.device)  # [B, T, H, W]
+        state, _, _, _ = batch  # Use current state for reconstruction
         
-        # --- NOISE INJECTION (denoising autoencoder style) ---
-        # Add a small Gaussian noise to the input only
-        noise_std = 0
-        noise = torch.randn_like(state) * noise_std
-        noisy_state = (state + noise).clamp(0.0, 1.0)  # keep values in valid range
-        # --------------------------------------------------------
-
-        # 1. Extract tubelets from the noisy input
-        tubelets = extract_tubelets(noisy_state)  # [B, N, PATCH_T, PATCH_H, PATCH_W]
-        B, N, PATCH_T, PATCH_H, PATCH_W = tubelets.shape
-
-        # 2. Sample a mask from uniform distribution over tubelet dimension
-        mask = generate_random_mask(B, N, self.mask_ratio, self.device)  # [B, N] boolean
-
-        # 3. Clone tubelets and zero out masked ones to create masked input
-        masked_tubelets = tubelets.clone()
-        mask_expanded = mask.view(B, N, 1, 1, 1).expand(-1, -1, PATCH_T, PATCH_H, PATCH_W)
-        masked_tubelets[mask_expanded] = 0.0
-
-        # 4. Reassemble masked tubelets back into [B, T, H, W]
-        masked_input = reassemble_tubelets(masked_tubelets)
-
-        # 5. Encode masked input
-        latent_repr = self.encoder(masked_input)  # [B, latent_dim]
-
-        # 6. Decode to reconstruct full frames
-        reconstructed = self.decoder(latent_repr)  # [B, T, H, W]
-
-        # 7. Compute MSE loss over only the masked regions (on clean targets)
-        #    Build a pixel-level mask for loss weighting
-        pixel_mask = reassemble_tubelets(mask_expanded.float())  # [B, T, H, W]
-
-        # Isolate masked regions in both original (clean) and reconstructed
-        masked_original     = state * pixel_mask
-        masked_reconstructed = reconstructed * pixel_mask
-
-        # Scale the loss so that it’s the average only over masked pixels
-        num_masked = pixel_mask.sum()
-        if num_masked > 0:
-            # MSE over masked pixels, normalized to full-pixel count
-            loss = self.criterion(masked_reconstructed, masked_original) \
-                * (pixel_mask.numel() / num_masked)
-        else:
-            # Fallback: full-frame reconstruction if nothing was masked
-            loss = self.criterion(reconstructed, state)
-
-        # 8. Backward pass and optimizer step
-        loss.backward()
-
-        # Optionally log gradients
-        if self.wandb_enabled and batch_idx % self.gradient_log_frequency == 0:
-            self.log_gradients()
-
-        # Apply gradient clipping if configured
-        if self.gradient_clipping is not None:
-            params = list(self.encoder.parameters()) + list(self.decoder.parameters())
-            torch.nn.utils.clip_grad_norm_(params, self.gradient_clipping)
-
-        self.optimizer.step()
+        # Move to device
+        state = state.to(self.device)
+        
+        # Forward pass
         self.optimizer.zero_grad()
-
-        return loss.item()
-
+        
+        # 1. Patch embedding (encoder's first step)
+        x = self.encoder.patch_embed(state)  # [B, N, D]
+        
+        # 2. Random masking
+        x_vis, mask, ids_keep, ids_restore = random_masking(x, self.mask_ratio)
+        
+        # 3. Encode visible patches only
+        x_encoded = self.encoder(state, ids_keep)  # [B, N_vis+1, D] (includes CLS token)
+        
+        # Remove CLS token for decoder
+        x_encoded = x_encoded[:, 1:, :]  # [B, N_vis, D]
+        
+        # 4. Decode to reconstruct all patches
+        x_reconstructed = self.decoder(x_encoded, ids_restore)  # [B, N, P*P*C]
+        
+        # 5. Compute reconstruction loss on masked patches only
+        # Create target patches from original images
+        target_patches = patchify(state, self.encoder.config.patch_size)  # [B, N, P*P*C]
+        
+        # Compute loss only on masked patches
+        loss = compute_reconstruction_loss(x_reconstructed, target_patches, mask)
+        
+        # Backward pass
+        loss.backward()
+        
+        # Compute gradient vanishing ratio before clipping
+        grad_vanishing_ratio = self.compute_gradient_vanishing_ratio()
+        
+        # Gradient clipping if configured
+        if self.gradient_clipping is not None:
+            trainable_params = list(self.encoder.parameters()) + list(self.decoder.parameters())
+            torch.nn.utils.clip_grad_norm_(trainable_params, self.gradient_clipping)
+        
+        self.optimizer.step()
+        
+        # Log batch metrics to wandb
+        self.global_step += 1
+        if wandb.run is not None:
+            wandb.log({
+                "batch_loss": loss.item(),
+                "gradient_vanishing_ratio": grad_vanishing_ratio,
+                "global_step": self.global_step
+            })
+        
+        return loss.item(), grad_vanishing_ratio
         
     def validate_step(self, batch: Tuple[torch.Tensor, ...]) -> float:
         """
-        Perform a single validation step with MAE reconstruction loss.
+        Perform a single validation step.
         
         Args:
             batch: Tuple containing (state, next_state, action, reward)
             
         Returns:
-            Reconstruction loss for this batch
+            Loss value for this batch
         """
-        state, next_state, action, reward = batch
-
-        # Move to device - we use current state for MAE pretraining
-        state = state.to(self.device)  # [B, T, H, W]
+        state, _, _, _ = batch  # Use current state for reconstruction
+        
+        # Move to device
+        state = state.to(self.device)
         
         with torch.no_grad():
-            # 1. Extract tubelets from the batch
-            tubelets = extract_tubelets(state)  # [B, N, PATCH_T, PATCH_H, PATCH_W]
-            B, N, PATCH_T, PATCH_H, PATCH_W = tubelets.shape
+            # 1. Patch embedding
+            x = self.encoder.patch_embed(state)  # [B, N, D]
             
-            # 2. Sample a mask from uniform distribution over tubelet dimension
-            mask = generate_random_mask(B, N, self.mask_ratio, self.device)  # [B, N] boolean
+            # 2. Random masking
+            x_vis, mask, ids_keep, ids_restore = random_masking(x, self.mask_ratio)
             
-            # 3. Clone tubelets and zero out masked ones to create masked input
-            masked_tubelets = tubelets.clone()
-            # Expand mask to match tubelet dimensions
-            mask_expanded = mask.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # [B, N, 1, 1, 1]
-            mask_expanded = mask_expanded.expand(-1, -1, PATCH_T, PATCH_H, PATCH_W)  # [B, N, PATCH_T, PATCH_H, PATCH_W]
-            masked_tubelets[mask_expanded] = 0.0
+            # 3. Encode visible patches only
+            x_encoded = self.encoder(state, ids_keep)  # [B, N_vis+1, D]
             
-            # 4. Use reassemble_tubelets to fold masked tubelets back into tensor
-            masked_input = reassemble_tubelets(masked_tubelets)  # [B, T, H, W]
+            # Remove CLS token for decoder
+            x_encoded = x_encoded[:, 1:, :]  # [B, N_vis, D]
             
-            # 5. Pass reassembled tensor through encoder to get latent representations
-            latent_repr = self.encoder(masked_input)  # [B, latent_dim]
+            # 4. Decode to reconstruct all patches
+            x_reconstructed = self.decoder(x_encoded, ids_restore)  # [B, N, P*P*C]
             
-            # 6. Pass through decoder to get reconstructions
-            reconstructed = self.decoder(latent_repr)  # [B, T, H, W]
-            
-            # 7. Compute MSE loss between original and reconstructed, but only over masked regions
-            # Since encoder/decoder works on full frames, we compute loss on the full reconstruction
-            # but weight it by the mask to focus on masked regions
-            
-            # Create a mask at the pixel level for the original tubelets
-            pixel_mask = reassemble_tubelets(mask_expanded.float())  # [B, T, H, W]
-            
-            # Compute reconstruction loss only on masked regions
-            masked_original = state * pixel_mask
-            masked_reconstructed = reconstructed * pixel_mask
-            
-            # Calculate loss only on the masked (non-zero) regions
-            # We need to account for the fact that most pixels are now zero
-            num_masked_pixels = pixel_mask.sum()
-            if num_masked_pixels > 0:
-                loss = self.criterion(masked_reconstructed, masked_original) * (pixel_mask.numel() / num_masked_pixels)
-            else:
-                loss = self.criterion(reconstructed, state)  # Fallback to full reconstruction loss
-            
+            # 5. Compute reconstruction loss on masked patches only
+            target_patches = patchify(state, self.encoder.config.patch_size)  # [B, N, P*P*C]
+            loss = compute_reconstruction_loss(x_reconstructed, target_patches, mask)
+        
         return loss.item()
         
-    def train_epoch(self) -> float:
+    def train_epoch(self) -> Tuple[float, float]:
         """
         Train for one epoch.
         
         Returns:
-            Average training loss for the epoch
+            Tuple of (average training loss, average gradient vanishing ratio) for the epoch
         """
         self.encoder.train()
         self.decoder.train()
         
         total_loss = 0.0
+        total_grad_vanishing = 0.0
         num_batches = 0
         
-        for batch_idx, batch in enumerate(self.train_dataloader):
-            loss = self.train_step(batch, batch_idx)
+        for batch in self.train_dataloader:
+            loss, grad_vanishing_ratio = self.train_step(batch)
             total_loss += loss
+            total_grad_vanishing += grad_vanishing_ratio
             num_batches += 1
             
-            # Log batch-level metrics to wandb if enabled
-            if self.wandb_enabled:
-                wandb.log({
-                    "batch_loss": loss,
-                    "batch": batch_idx
-                })
-                
-        avg_loss = total_loss / num_batches
-        return avg_loss
+        avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+        avg_grad_vanishing = total_grad_vanishing / num_batches if num_batches > 0 else 0.0
+        
+        return avg_loss, avg_grad_vanishing
         
     def validate_epoch(self) -> Optional[float]:
         """
@@ -523,73 +398,7 @@ class MAETrainer:
             total_loss += loss
             num_batches += 1
             
-        avg_loss = total_loss / num_batches
-        return avg_loss
-        
-    def plot_mae_validation_predictions(self, epoch: int):
-        """Generate MAE validation plots for the current epoch if needed."""
-        # Import here to avoid issues with module-level imports
-        from src.utils.plot import plot_mae_validation_samples, get_random_validation_samples, should_plot_validation
-        
-        # Check if we should plot for this epoch
-        if not should_plot_validation(epoch, self.plot_frequency):
-            return
-            
-        if self.val_dataloader is None:
-            return
-            
-        # Get validation sample indices (consistent across epochs)
-        if self.validation_sample_indices is None:
-            self.validation_sample_indices, _, _, _ = get_random_validation_samples(
-                self.val_dataloader, n_samples=5, seed=42
-            )
-        
-        # Set models to eval mode
-        self.encoder.eval()
-        self.decoder.eval()
-        
-        # Get a validation batch
-        val_iter = iter(self.val_dataloader)
-        batch = next(val_iter)
-        state, next_state, action, _ = batch
-        
-        # Move to device - we use current state for MAE pretraining
-        state = state.to(self.device)  # [B, T, H, W]
-        
-        with torch.no_grad():
-            # 1. Extract tubelets from the batch
-            tubelets = extract_tubelets(state)  # [B, N, PATCH_T, PATCH_H, PATCH_W]
-            B, N, PATCH_T, PATCH_H, PATCH_W = tubelets.shape
-            
-            # 2. Sample a mask from uniform distribution over tubelet dimension
-            mask = generate_random_mask(B, N, self.mask_ratio, self.device)  # [B, N] boolean
-            
-            # 3. Clone tubelets and zero out masked ones to create masked input
-            masked_tubelets = tubelets.clone()
-            # Expand mask to match tubelet dimensions
-            mask_expanded = mask.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)  # [B, N, 1, 1, 1]
-            mask_expanded = mask_expanded.expand(-1, -1, PATCH_T, PATCH_H, PATCH_W)  # [B, N, PATCH_T, PATCH_H, PATCH_W]
-            masked_tubelets[mask_expanded] = 0.0
-            
-            # 4. Use reassemble_tubelets to fold masked tubelets back into tensor
-            masked_input = reassemble_tubelets(masked_tubelets)  # [B, T, H, W]
-            
-            # 5. Pass reassembled tensor through encoder to get latent representations
-            latent_repr = self.encoder(masked_input)  # [B, latent_dim]
-            
-            # 6. Pass through decoder to get reconstructions
-            reconstructed = self.decoder(latent_repr)  # [B, T, H, W]
-        
-        # Generate plots
-        plot_mae_validation_samples(
-            masked_frames=masked_input,
-            reconstructed_frames=reconstructed,
-            true_frames=state,
-            epoch=epoch,
-            sample_indices=self.validation_sample_indices,
-            output_dir=self.plot_dir,
-            model_name="mae_pretrain"
-        )
+        return total_loss / num_batches if num_batches > 0 else 0.0
         
     def save_checkpoint(self, epoch: int, train_loss: float, val_loss: Optional[float]):
         """
@@ -598,7 +407,7 @@ class MAETrainer:
         Args:
             epoch: Current epoch number
             train_loss: Training loss for this epoch
-            val_loss: Validation loss for this epoch (None if no validation data)
+            val_loss: Validation loss for this epoch (can be None)
         """
         checkpoint = {
             'epoch': epoch,
@@ -617,116 +426,87 @@ class MAETrainer:
         latest_path = self.checkpoint_dir / "latest_checkpoint.pth"
         torch.save(checkpoint, latest_path)
         
-        # Use validation loss for best model selection, fallback to training loss
-        current_val_loss = val_loss if val_loss is not None else train_loss
-        
-        # Save best checkpoint if validation loss improved
-        if current_val_loss < self.best_val_loss:
-            self.best_val_loss = current_val_loss
+        # Save best checkpoint based on validation loss (or training loss if no validation)
+        current_loss = val_loss if val_loss is not None else train_loss
+        if current_loss < self.best_val_loss:
+            self.best_val_loss = current_loss
             best_path = self.checkpoint_dir / "best_checkpoint.pth"
             torch.save(checkpoint, best_path)
+            print(f"New best checkpoint saved with loss: {current_loss:.6f}")
             
-            # Also save individual model state dicts for easy loading
-            torch.save(self.encoder.state_dict(), self.checkpoint_dir / "best_encoder.pth")
-            torch.save(self.decoder.state_dict(), self.checkpoint_dir / "best_decoder.pth")
-                        
     def train(self):
         """
-        Run the complete training loop.
+        Run the complete MAE pretraining process.
         """
-        print("🚀 Starting MAE pretraining...")
-        print(f"Configuration: {self.num_epochs} epochs, batch size {self.batch_size}, lr {self.learning_rate}")
-        print(f"Mask ratio: {self.mask_ratio}, Device: {self.device}")
+        print("="*60)
+        print("Starting MAE Pretraining")
+        print("="*60)
         
-        # Initialize wandb if enabled
-        if self.wandb_enabled:
+        # Initialize everything
+        self.initialize_models()
+        self.initialize_optimizer()
+        self.load_data()
+        
+        # Initialize wandb if configured
+        wandb_config = self.config.get('wandb', {})
+        if wandb_config.get('enabled', False):
             wandb.init(
-                project=self.wandb_project,
-                name=f"mae_pretraining-{time.strftime('%Y%m%d-%H%M%S')}",
-                config={
-                    **self.training_config,
-                    'model_type': 'mae_pretraining',
-                    'device': str(self.device)
-                }
+                project=wandb_config.get('project', 'mae-pretraining'),
+                entity=wandb_config.get('entity'),
+                name=f"mae-{time.strftime('%Y%m%d-%H%M%S')}",
+                config=self.config
             )
-            
-        start_time = time.time()
         
+        # Training loop
         for epoch in range(self.num_epochs):
             epoch_start_time = time.time()
             
-            # Training
-            train_loss = self.train_epoch()
-            
-            # Check for vanishing gradients every few epochs (after training when gradients are available)
-            grad_stats = None
-            if (epoch + 1) % 5 == 0:  # Check every 5 epochs
-                # Ensure models are in train mode for gradient checking
-                self.encoder.train()
-                self.decoder.train()
-                grad_stats = self.check_vanishing_gradients()
-            
-            # Validation
+            # Train
+            train_loss, avg_grad_vanishing = self.train_epoch()
+
+            # Validate
             val_loss = self.validate_epoch()
-            
-            # Generate MAE validation plots if needed
-            self.plot_mae_validation_predictions(epoch)
-            
-            # Learning rate scheduling
-            if self.lr_scheduler is not None:
-                step_scheduler(self.lr_scheduler, val_loss)
-                
-            # Get current learning rate
-            current_lr = get_current_lr(self.optimizer)
-            
-            # Calculate epoch time
+
             epoch_time = time.time() - epoch_start_time
             
-            # Print epoch summary
-            val_loss_str = f", Val Loss: {val_loss:.6f}" if val_loss is not None else ""
-            print(f"Epoch {epoch+1}/{self.num_epochs} - "
-                  f"Train Loss: {train_loss:.6f}{val_loss_str}")
-            
-            # Print gradient health check results if available
-            if grad_stats is not None and (grad_stats['has_vanishing_problem'] or grad_stats['has_exploding_problem']):
-                print(f"📊 Gradient Health Check (Epoch {epoch+1}):")
-                print(f"   Vanishing: {grad_stats['vanishing_ratio']:.1%} ({grad_stats['vanishing_count']}/{grad_stats['total_layers']} layers)")
-                print(f"   Exploding: {grad_stats['exploding_ratio']:.1%} ({grad_stats['exploding_count']}/{grad_stats['total_layers']} layers)")
-                print(f"   Grad norm range: [{grad_stats['min_grad_norm']:.2e}, {grad_stats['max_grad_norm']:.2e}]")
-                print(f"   Mean grad norm: {grad_stats['mean_grad_norm']:.2e}")
+            # Log to wandb
+            log_dict = {
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "avg_gradient_vanishing_ratio": avg_grad_vanishing,
+                "epoch_time": epoch_time,
+                "learning_rate": self.optimizer.param_groups[0]['lr']
+            }
+            if val_loss is not None:
+                log_dict["val_loss"] = val_loss
                 
-                # Log gradient health to wandb
-                if self.wandb_enabled:
-                    wandb.log({
-                        "gradient_health/vanishing_ratio": grad_stats['vanishing_ratio'],
-                        "gradient_health/exploding_ratio": grad_stats['exploding_ratio'],
-                        "gradient_health/mean_grad_norm": grad_stats['mean_grad_norm'],
-                        "gradient_health/min_grad_norm": grad_stats['min_grad_norm'],
-                        "gradient_health/max_grad_norm": grad_stats['max_grad_norm'],
-                        "gradient_health/has_vanishing_problem": grad_stats['has_vanishing_problem'],
-                        "gradient_health/has_exploding_problem": grad_stats['has_exploding_problem'],
-                    })            
-            # Log epoch-level metrics to wandb if enabled
-            if self.wandb_enabled:
-                log_dict = {
-                    "epoch": epoch + 1,
-                    "train_loss": train_loss,
-                    "learning_rate": current_lr,
-                    "epoch_time": epoch_time
-                }
-                if val_loss is not None:
-                    log_dict["val_loss"] = val_loss
+            if wandb.run is not None:
                 wandb.log(log_dict)
-            
+                
+            # Terminal output (minimal)
+            if val_loss is not None:
+                # Base message
+                message = f"Epoch {epoch+1}/{self.num_epochs} - Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}, Grad Vanishing: {avg_grad_vanishing:.4f}"
+                print(message)
+            else:
+                # Base message for no validation
+                message = f"Epoch {epoch+1}/{self.num_epochs} - Train Loss: {train_loss:.6f}, Val Loss: N/A, Grad Vanishing: {avg_grad_vanishing:.4f}"
+                print(message)
+                
             # Save checkpoint
-            self.save_checkpoint(epoch + 1, train_loss, val_loss)
+            self.save_checkpoint(epoch, train_loss, val_loss)
             
-        # Training complete
-        total_time = time.time() - start_time
-        print(f"Training completed in {total_time:.2f}s")
-        print(f"Best validation loss: {self.best_val_loss:.6f}")
-        
-        if self.wandb_enabled:
+            # Generate validation plots
+            if (epoch + 1) % self.plot_frequency == 0:
+                self.plot_validation_samples(epoch)
+            
+            # Step learning rate scheduler
+            if self.lr_scheduler is not None:
+                # Use validation loss for plateau scheduler, otherwise step normally
+                step_scheduler(self.lr_scheduler, val_loss)
+            
+        # Close wandb run
+        if wandb.run is not None:
             wandb.finish()
 
 
@@ -734,21 +514,14 @@ def main():
     """Main function for standalone script execution."""
     import argparse
     
-    parser = argparse.ArgumentParser(description='Train MAE model for video pretraining')
+    parser = argparse.ArgumentParser(description='Train MAE pretraining models')
     parser.add_argument('--config', type=str, default=None,
-                        help='Path to config file (default: project_root/config.yaml)')
+                       help='Path to config.yaml file')
     
     args = parser.parse_args()
     
-    # Initialize trainer
+    # Create trainer and run training
     trainer = MAETrainer(config_path=args.config)
-    
-    # Initialize models and data
-    trainer.initialize_models()
-    trainer.initialize_optimizer()
-    trainer.load_data()
-    
-    # Run training
     trainer.train()
 
 
